@@ -142,6 +142,8 @@ function ensureLayout() {
   layoutKey = key
   laidOutScore = state.score
   layout = layoutChart(state.score, { width, measure, display })
+  // The caret may not have moved, but what is under it just changed.
+  lastCaret = -1
 }
 
 /* ---------------- input ---------------- */

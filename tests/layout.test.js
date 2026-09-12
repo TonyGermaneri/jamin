@@ -71,4 +71,16 @@ layout = layoutChart(score, { width: 600, measure, display })
 check('blank line height', layout.lines[1].height, 18 * 1.2)
 check('blank line has no tokens', layout.lines[1].tokens.length, 0)
 
+// Lines carrying a phrase dot get headroom so the marks clear the capitals.
+score = parseScore('.C7{walk} F\nC7 F', { beatsPerBar: 4 })
+layout = layoutChart(score, { width: 600, measure, display })
+check('marked line reserves headroom', layout.lines[0].markSpace > 0, true)
+check('plain line reserves none', layout.lines[1].markSpace, 0)
+near('text starts below the marks', layout.lines[0].textTop, layout.lines[0].top + layout.lines[0].markSpace)
+check('token rects start below the marks', layout.lines[0].tokens[0].y, layout.lines[0].textTop)
+check('the dot fits above the glyphs', layout.lines[0].markSpace > layout.lines[0].fontSize * 0.1, true)
+const marked = caretRect(layout, 1, measure)
+check('caret sits in the text band', marked.y >= layout.lines[0].textTop, true)
+
+
 console.log(failed === 0 ? 'layout: all checks passed' : `layout: ${failed} FAILED`)

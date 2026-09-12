@@ -1,0 +1,258 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>jamin app check</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vuetify@3.13.4/dist/vuetify.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" />
+    <link rel="stylesheet" href="../../src/styles/app.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "vue": "https://cdn.jsdelivr.net/npm/vue@3.5.42/dist/vue.esm-browser.js",
+          "vuetify": "https://cdn.jsdelivr.net/npm/vuetify@3.13.4/dist/vuetify.esm.js",
+          "vue3-sfc-loader": "https://cdn.jsdelivr.net/npm/vue3-sfc-loader@0.9.5/dist/vue3-sfc-loader.esm.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <script type="module">
+      /*
+       * Mounts the real App.vue -- compiled by the real Vue SFC compiler, against
+       * the real Vuetify build -- so the templates are checked for real: wrong
+       * prop names, components that do not exist, bad slot usage.
+       *
+       * Only the bundler is simulated. Vite's job here is resolving bare
+       * specifiers and CSS imports, which the import map and <link> tags cover.
+       */
+      import * as Vue from 'vue'
+      import * as Vuetify from 'vuetify'
+      import { loadModule } from 'vue3-sfc-loader'
+
+      const results = []
+      const problems = []
+      const ok = (name, pass, detail = '') => results.push({ name, pass: !!pass, detail: String(detail) })
+
+      // The browser bundle groups these into namespaces; the npm package splits
+      // them into `vuetify/components` and `vuetify/directives` subpaths.
+      const components = Vuetify.components
+      const directives = Vuetify.directives
+      ok('vuetify components found', Object.keys(components).length > 50, Object.keys(components).length + ' components')
+
+      // Every component the templates use must actually exist in this Vuetify.
+      const sources = await Promise.all(
+        ['../../src/App.vue', '../../src/components/ChordCanvas.vue', '../../src/components/SettingsDialog.vue', '../../src/components/PhraseBook.vue']
+          .map((p) => fetch(p).then((r) => r.text()))
+      )
+      const used = new Set()
+      for (const source of sources) {
+        for (const match of source.matchAll(/<(v-[a-z0-9-]+)/g)) used.add(match[1])
+      }
+      const pascal = (tag) => tag.split('-').map((s) => s[0].toUpperCase() + s.slice(1)).join('')
+      const missing = [...used].filter((tag) => !components[pascal(tag)])
+      ok('every <v-*> tag exists in Vuetify', missing.length === 0, missing.join(', ') || [...used].length + ' tags checked')
+
+      /*
+       * Vue does not warn about a prop that does not exist -- it just becomes a
+       * stray DOM attribute and silently does nothing. So check every attribute
+       * we pass to a Vuetify component against that component's real props.
+       */
+      // `key` and `ref` are Vue's own reserved attributes, not component props.
+      const NATIVE = new Set(['key', 'ref', 'class', 'style', 'id', 'title', 'href', 'target', 'role', 'tabindex', 'aria-label', 'aria-hidden', 'spellcheck', 'autocomplete', 'autocapitalize', 'autocorrect', 'placeholder', 'type'])
+      const strays = []
+      // Consume each attribute together with its quoted value, so words inside
+      // a label are never mistaken for prop names.
+      const ATTR = /([:@#]?[a-zA-Z][\w:.-]*)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/g
+      for (const source of sources) {
+        for (const tag of source.matchAll(/<(v-[a-z0-9-]+)((?:\s[^>]*?)?)\/?>/g)) {
+          const component = components[pascal(tag[1])]
+          if (!component || !component.props) continue
+          const props = new Set(Object.keys(component.props).map((k) => k.toLowerCase()))
+          ATTR.lastIndex = 0
+          let attr
+          while ((attr = ATTR.exec(tag[2]))) {
+            let name = attr[1]
+            if (name.startsWith('@') || name.startsWith('#') || name.startsWith('v-')) continue
+            if (name.startsWith(':')) name = name.slice(1)
+            name = name.split('.')[0]
+            if (NATIVE.has(name) || name.startsWith('data-') || name.startsWith('aria-')) continue
+            const camel = name.replace(/-([a-z])/g, (_, c) => c.toUpperCase()).toLowerCase()
+            if (!props.has(camel)) strays.push(`${tag[1]}[${name}]`)
+          }
+        }
+      }
+      ok('no unknown props passed to Vuetify components', strays.length === 0, strays.join(' ') || 'all attributes are real props')
+
+      // The same goes for the global defaults block in src/plugins/vuetify.js.
+      const pluginSource = await fetch('../../src/plugins/vuetify.js').then((r) => r.text())
+      const defaultsBlock = pluginSource.slice(pluginSource.indexOf('defaults:'))
+      const badDefaults = []
+      for (const entry of defaultsBlock.matchAll(/(V[A-Za-z]+):\s*\{([^}]*)\}/g)) {
+        const component = components[entry[1]]
+        if (!component || !component.props) { badDefaults.push(entry[1] + '(unknown component)'); continue }
+        const props = new Set(Object.keys(component.props).map((k) => k.toLowerCase()))
+        for (const key of entry[2].matchAll(/([a-zA-Z][a-zA-Z0-9]*)\s*:/g)) {
+          if (!props.has(key[1].toLowerCase())) badDefaults.push(`${entry[1]}.${key[1]}`)
+        }
+      }
+      ok('plugin defaults name real props', badDefaults.length === 0, badDefaults.join(' ') || 'ok')
+
+      const vuetify = Vuetify.createVuetify({
+        components,
+        directives,
+        theme: { defaultTheme: 'jamin', themes: { jamin: { dark: true, colors: { background: '#0b0d14', surface: '#12151f', primary: '#7c5cff', secondary: '#22d3ee', error: '#ff5470' } } } },
+        defaults: {
+          VTextField: { variant: 'outlined', density: 'compact', hideDetails: 'auto' },
+          VSelect: { variant: 'outlined', density: 'compact', hideDetails: 'auto' },
+          VSlider: { density: 'compact', hideDetails: true, thumbSize: 14, trackSize: 3 },
+          VSwitch: { density: 'compact', hideDetails: true, color: 'primary' },
+          VBtn: { variant: 'tonal' },
+        },
+      })
+
+      const options = {
+        moduleCache: { vue: Vue },
+        getFile: async (url) => {
+          const res = await fetch(url)
+          if (!res.ok) throw new Error(`${url} ${res.status}`)
+          return { getContentData: (binary) => (binary ? res.arrayBuffer() : res.text()), type: '.' + url.split('.').pop() }
+        },
+        addStyle: (text) => {
+          const style = document.createElement('style')
+          style.textContent = text
+          document.head.appendChild(style)
+        },
+        handleModule: async (type, getContentData, path, opts) => {
+          // Plain .js modules load natively so they share one module registry
+          // (and therefore one Vue, one store) with this page.
+          if (type === '.js') return await import(new URL(path, location.href).href)
+          if (type === '.css') { opts.addStyle(await getContentData(false)); return {} }
+          if (type === '.json') return JSON.parse(await getContentData(false))
+          return undefined
+        },
+        log: (level, ...args) => {
+          if (level === 'error' || level === 'warn') problems.push(`sfc-${level}: ${args.join(' ')}`)
+        },
+      }
+
+      let app = null
+      try {
+        const App = Vue.defineAsyncComponent(() => loadModule('../../src/App.vue', options))
+        app = Vue.createApp({ render: () => Vue.h(App) })
+        app.config.warnHandler = (msg, _vm, trace) => problems.push(`vue-warn: ${msg}`)
+        app.config.errorHandler = (err) => problems.push(`vue-error: ${err && err.message ? err.message : err}`)
+        app.use(vuetify)
+        app.mount('#app')
+        ok('App.vue compiles and mounts', true)
+      } catch (err) {
+        ok('App.vue compiles and mounts', false, err && err.message ? err.message : String(err))
+      }
+
+      const settle = (ms) => new Promise((r) => setTimeout(r, ms))
+      await settle(1800)
+
+      /* ---------- is the chart actually there? ---------- */
+      const root = document.querySelector('.jamin-root')
+      ok('chart root mounted', !!root)
+      const canvases = document.querySelectorAll('.jamin-root canvas')
+      ok('two canvas layers', canvases.length === 2, canvases.length)
+      const field = document.querySelector('.jamin-input')
+      ok('hidden textarea present', !!field)
+      if (field) {
+        ok('textarea holds the chart text', field.value.includes('Cmaj7'), JSON.stringify(field.value.slice(0, 24)))
+        const box = field.getBoundingClientRect()
+        ok('chart fills the viewport', Math.round(box.width) === window.innerWidth && Math.round(box.height) === window.innerHeight,
+          `${Math.round(box.width)}x${Math.round(box.height)} vs ${window.innerWidth}x${window.innerHeight}`)
+      }
+      const painted = canvases[1] && canvases[1].getContext('2d').getImageData(0, 0, canvases[1].width, Math.min(400, canvases[1].height)).data
+      if (painted) {
+        let lit = 0
+        for (let i = 3; i < painted.length; i += 4) if (painted[i] > 8) lit++
+        ok('chart painted itself', lit > 2000, `${lit} px`)
+      }
+      ok('toolbar rendered', !!document.querySelector('.jamin-chrome .v-btn'))
+      ok('readout rendered', !!document.querySelector('.jamin-readout'))
+
+      /* ---------- typing goes in and comes back out ---------- */
+      if (field) {
+        field.focus()
+        field.value = 'A- C B5 Dii'
+        field.dispatchEvent(new Event('input', { bubbles: true }))
+        await settle(300)
+        const { state } = await import('../../src/store.js')
+        ok('typing reaches the store', state.text === 'A- C B5 Dii', state.text)
+        ok('typing reparses', state.score.events.length === 4, state.score.events.length)
+        ok('chords parsed from typing', state.score.tokens.map((t) => t.chord && t.chord.ok).every(Boolean))
+        ok('inversion parsed from typing', state.score.tokens[3].chord.inversion === 2, state.score.tokens[3].chord.inversion)
+      }
+
+      /* ---------- the dialogs ---------- */
+      const { state } = await import('../../src/store.js')
+      state.ui.settings = true
+      await settle(700)
+      const tabs = [...document.querySelectorAll('.v-tab')].map((t) => t.textContent.trim())
+      ok('settings dialog opens', !!document.querySelector('.jamin-settings'), tabs.join('/'))
+      ok('all eight settings tabs render', tabs.length >= 8, tabs.join('/'))
+      ok('midi selects render', document.querySelectorAll('.jamin-settings .v-select').length >= 6,
+        document.querySelectorAll('.jamin-settings .v-select').length)
+
+      const visited = []
+      for (const tab of ['transport', 'chords', 'display', 'themes', 'shaders', 'accompany', 'help']) {
+        state.ui.settingsTab = tab
+        await settle(260)
+        const shown = document.querySelectorAll('.jamin-settings .v-window-item--active *').length
+        visited.push(`${tab}:${shown}`)
+        if (shown < 3) problems.push(`tab ${tab} rendered almost nothing`)
+      }
+      ok('every settings tab renders content', problems.filter((p) => p.startsWith('tab ')).length === 0, visited.join(' '))
+
+      state.ui.settingsTab = 'themes'
+      await settle(300)
+      const swatches = document.querySelectorAll('.jamin-theme-swatch')
+      ok('theme gallery renders', swatches.length === 8, swatches.length)
+      swatches[2] && swatches[2].click()
+      await settle(300)
+      ok('picking a theme changes the settings', state.settings.theme.id === 'amber-crt', state.settings.theme.id)
+
+      state.ui.settings = false
+      await settle(400)
+      state.ui.phrases = true
+      await settle(500)
+      ok('phrase book opens', [...document.querySelectorAll('.v-tab')].some((t) => t.textContent.includes('Library')))
+      state.ui.phrasesTab = 'about'
+      await settle(260)
+      state.ui.phrasesTab = 'library'
+      await settle(260)
+      state.ui.phrases = false
+      await settle(300)
+
+      /* ---------- binding a phrase rewrites the chart ---------- */
+      const store = await import('../../src/store.js')
+      store.setText('C F G')
+      await settle(200)
+      store.state.phrases = [{ name: 'riff', notes: [{ at: 0, note: 60, velocity: 90, duration: 24 }], lengthPulses: 96, sourcePcs: [0, 4, 7], sourceChord: 'C' }]
+      store.bindPhrase('riff', 0)
+      await settle(250)
+      ok('binding writes the dot into the chart', store.state.text === '.C{riff} F G', store.state.text)
+      ok('the bound chord is marked', store.state.score.tokens[0].phraseChange === true)
+      ok('the phrase carries forward', store.state.score.events.map((e) => e.phraseId).join(',') === 'riff,riff,riff',
+        store.state.score.events.map((e) => e.phraseId).join(','))
+      ok('the textarea mirrors the rewrite', field.value === '.C{riff} F G', field.value)
+
+      const dictionary = await import('../../src/core/chordDictionary.js')
+      await dictionary.loadChordDictionary()
+      ok('chord dictionary loads', dictionary.nameForSet([0, 4, 7]) === 'Major Triad', dictionary.nameForSet([0, 4, 7]))
+      ok('dictionary names a dominant 9', dictionary.nameForSet([0, 4, 7, 10, 14]) === 'Dominant 7 (9)', dictionary.nameForSet([0, 4, 7, 10, 14]))
+      ok('dictionary search works', dictionary.searchChords('half-dim', 5).length > 0)
+      store.setText('Cmaj7')
+      await settle(200)
+      ok('readout names the typed chord', store.describeAt(2).includes('Major 7'), store.describeAt(2))
+
+      window.__results = { results, warnings: problems }
+      window.__done = true
+    </script>
+  </body>
+</html>

@@ -87,7 +87,7 @@ function paintToken(ctx, line, rect, colors, state) {
 
   if (state.kind === 'active' && state.progress >= 0) {
     const barHeight = Math.max(2, line.fontSize * 0.04)
-    const y = line.top + line.height - barHeight * 2
+    const y = line.top + line.height - barHeight * 2.2
     ctx.fillStyle = colors.accent
     ctx.globalAlpha = 0.22
     ctx.fillRect(rect.x, y, rect.w, barHeight)
@@ -103,9 +103,10 @@ function drawMarks(ctx, line, colors, status, display) {
     const token = rect.token
     if (!token.phraseChange && !token.phraseRef) continue
     const state = status(token)
-    const radius = Math.max(2, line.fontSize * 0.045)
+    // Both marks live in the headroom the layout reserved above the text.
+    const radius = Math.max(2, line.fontSize * 0.04)
     const cx = rect.bodyX + rect.bodyW / 2
-    const cy = line.top + line.fontSize * 0.14
+    const cy = line.top + line.markSpace - radius * 1.8
 
     ctx.beginPath()
     ctx.arc(cx, cy, radius, 0, Math.PI * 2)
@@ -119,7 +120,7 @@ function drawMarks(ctx, line, colors, status, display) {
       ctx.font = `${size}px ${display.font}`
       ctx.textAlign = 'center'
       ctx.globalAlpha = 0.7
-      ctx.fillText(token.phraseRef, cx, cy - radius * 2)
+      ctx.fillText(token.phraseRef, cx, cy - radius * 2.2)
       ctx.textAlign = 'left'
       ctx.font = font
     }
@@ -137,5 +138,5 @@ function drawSelection(ctx, line, selection, colors, layout, measure) {
   const x1 = layout.padding + measure(line.text.slice(0, startCol)) * line.scale
   const x2 = layout.padding + measure(line.text.slice(0, endCol)) * line.scale
   ctx.fillStyle = colors.selection
-  ctx.fillRect(x1, line.top + line.height * 0.05, Math.max(2, x2 - x1), line.fontSize * 1.05)
+  ctx.fillRect(x1, line.textTop, Math.max(2, x2 - x1), line.fontSize * 1.05)
 }

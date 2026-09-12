@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>jamin · MIDI ports</title>
+    <style>body { font: 13px ui-monospace, monospace; background: #07080c; color: #dde; padding: 20px } h2 { font-size: 12px; opacity: .5; letter-spacing: .08em }</style>
+  </head>
+  <body>
+    <pre id="out">sampling…</pre>
+    <script type="module">
+      /*
+       * Troubleshooting page: what ports exist, and which of them already have
+       * traffic on them.  Worth checking before blaming the app -- a virtual bus
+       * that already carries a clock will move the chart on its own, which is
+       * correct behaviour and very confusing if you do not know it is happening.
+       */
+      const access = await navigator.requestMIDIAccess({ sysex: false })
+      const inputs = [...access.inputs.values()]
+      const outputs = [...access.outputs.values()]
+
+      const counts = new Map()
+      for (const port of inputs) {
+        counts.set(port.id, { total: 0, kinds: new Set() })
+        port.addEventListener('midimessage', (event) => {
+          const entry = counts.get(port.id)
+          entry.total++
+          const status = event.data[0]
+          entry.kinds.add(status >= 0xf0 ? '0x' + status.toString(16) : '0x' + (status & 0xf0).toString(16))
+        })
+      }
+
+      const SECONDS = 2
+      await new Promise((r) => setTimeout(r, SECONDS * 1000))
+
+      const describe = (port) => {
+        const entry = counts.get(port.id)
+        const rate = entry.total / SECONDS
+        const clock = entry.kinds.has('0xf8') ? `  ← clock, about ${Math.round((rate / 24) * 60)} bpm` : ''
+        const busy = entry.total ? `  ${entry.total} msg in ${SECONDS}s [${[...entry.kinds].join(' ')}]${clock}` : '  quiet'
+        return `  ${port.name.padEnd(28)}${busy}`
+      }
+
+      document.getElementById('out').textContent =
+        `INPUTS (${inputs.length})\n` + inputs.map(describe).join('\n') +
+        `\n\nOUTPUTS (${outputs.length})\n` + outputs.map((p) => '  ' + p.name).join('\n')
+
+      window.__ports = { inputs: inputs.map((p) => p.name), outputs: outputs.map((p) => p.name) }
+      window.__results = { results: [{ name: 'ports listed', pass: inputs.length + outputs.length > 0, detail: `${inputs.length} in / ${outputs.length} out` }], warnings: [] }
+      window.__done = true
+    </script>
+  </body>
+</html>

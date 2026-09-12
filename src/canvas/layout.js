@@ -14,6 +14,9 @@
 
 export const REFERENCE_SIZE = 100
 export const BASELINE_RATIO = 0.78
+// Extra headroom, as a fraction of the font size, on lines carrying a phrase
+// dot or label -- otherwise the marks land on top of the capital letters.
+export const MARK_SPACE = 0.3
 
 /**
  * @param {object} score result of parseScore
@@ -39,7 +42,9 @@ export function layoutChart(score, ctx) {
     }
 
     const scale = fontSize / REFERENCE_SIZE
-    const height = fontSize * display.lineHeight
+    const marked = line.tokens.some((i) => score.tokens[i].phraseChange || score.tokens[i].phraseRef)
+    const markSpace = marked ? fontSize * MARK_SPACE : 0
+    const height = fontSize * display.lineHeight + markSpace
     const laid = {
       index: line.index,
       start: line.start,
@@ -49,7 +54,9 @@ export function layoutChart(score, ctx) {
       scale,
       top,
       height,
-      baseline: top + fontSize * BASELINE_RATIO,
+      markSpace,
+      textTop: top + markSpace,
+      baseline: top + markSpace + fontSize * BASELINE_RATIO,
       width: referenceWidth * scale,
       tokens: [],
       runs: [],
@@ -73,8 +80,8 @@ export function layoutChart(score, ctx) {
         token,
         x,
         w: measure(token.text) * scale,
-        y: top,
-        h: height,
+        y: top + markSpace,
+        h: height - markSpace,
         bodyX: padding + measure(bodyPrefix) * scale,
         bodyW: measure(token.body || token.text) * scale,
       }
@@ -109,7 +116,7 @@ export function caretRect(layout, index, measure) {
   if (!line) return { x: layout.padding, y: layout.padding, h: 20 }
   const column = Math.max(0, Math.min(line.text.length, index - line.start))
   const x = layout.padding + measure(line.text.slice(0, column)) * line.scale
-  return { x, y: line.top + line.height * 0.08, h: line.fontSize * 1.02, line }
+  return { x, y: line.textTop + line.fontSize * 0.04, h: line.fontSize * 1.02, line }
 }
 
 /** Character index nearest a point, for click-to-place-caret. */

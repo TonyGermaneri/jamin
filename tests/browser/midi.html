@@ -1,0 +1,162 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><title>jamin midi chain</title></head>
+  <body>
+    <pre id="out"></pre>
+    <script type="module">
+      /*
+       * End-to-end: real clock bytes on a real port -> player -> real notes out.
+       *
+       * Everything is confined to the IAC virtual loopback buses. The scripted
+       * half sends clock, transport and notes out of a quiet bus and reads them
+       * back off its own input. The last section then listens (only listens) to
+       * whatever live clock is already running on another bus, which is the real
+       * DAW case. No hardware port is ever written to, and every note sounded is
+       * released before the page finishes.
+       */
+      import { MidiEngine } from '../../src/core/midi.js'
+      import { Player } from '../../src/core/player.js'
+      import { parseScore } from '../../src/core/score.js'
+      import { defaultSettings } from '../../src/core/settings.js'
+
+      const results = []
+      const ok = (name, pass, detail = '') => results.push({ name, pass: !!pass, detail: String(detail) })
+      const settle = (ms) => new Promise((r) => setTimeout(r, ms))
+
+      const engine = new MidiEngine()
+      const enabled = await engine.enable()
+      ok('midi enabled', enabled, engine.error || engine.state)
+
+      const settings = defaultSettings()
+      settings.chords.smartVoicing = false
+      settings.chords.bassNote = false
+      const player = new Player(engine, settings)
+      player.setScore(parseScore('C F G Am', { beatsPerBar: 4 }))
+
+      const changes = []
+      player.onEventChange = (event) => changes.push(event.chord.text)
+
+      engine.onTick = (pulse) => player.tick(pulse)
+      engine.onTransport = (kind) => player.transport(kind)
+
+      /* ---------- everything stays on the virtual bus ---------- */
+      // Pick a bus that nothing else is talking on -- an IAC bus carrying a live
+      // clock would merge with the one this test sends, which is correct
+      // behaviour but makes for a useless assertion.
+      const busPairs = engine.outputs
+        .filter((out) => /IAC/i.test(out.name))
+        .map((out) => ({ out, in: engine.inputs.find((i) => i.name === out.name) }))
+        .filter((pair) => pair.in)
+
+      const traffic = new Map()
+      for (const pair of busPairs) {
+        traffic.set(pair.in.id, 0)
+        engine.access.inputs
+          .get(pair.in.id)
+          .addEventListener('midimessage', () => traffic.set(pair.in.id, traffic.get(pair.in.id) + 1))
+      }
+      await settle(600)
+      const quiet = busPairs.find((pair) => traffic.get(pair.in.id) === 0)
+      const busy = busPairs.find((pair) => traffic.get(pair.in.id) > 0)
+
+      const busOut = quiet && quiet.out
+      const busIn = quiet && quiet.in
+      ok('a quiet loopback bus is available', !!busOut && !!busIn,
+        busPairs.map((p) => `${p.out.name}:${traffic.get(p.in.id)} msgs`).join(', '))
+      if (!busOut || !busIn) {
+        window.__results = { results, warnings: ['no loopback bus; skipped'] }
+        window.__done = true
+        throw new Error('no loopback bus')
+      }
+
+      const output = engine.output(busOut.id)
+      const input = engine.access.inputs.get(busIn.id)
+
+      // addEventListener, not onmidimessage: the engine owns that property and
+      // rewrites it on every port statechange, which opening a port causes.
+      const heard = []
+      const raw = []
+      input.addEventListener('midimessage', (event) => {
+        const status = event.data[0]
+        raw.push(status)
+        if ((status & 0xf0) === 0x90 || (status & 0xf0) === 0x80) {
+          heard.push([(status & 0xf0) === 0x90 && event.data[2] > 0 ? 'on' : 'off', event.data[1]])
+        }
+      })
+
+      // Prove the loopback works before blaming anything else -- and do it while
+      // the engine is still deaf, or this clock byte would auto-start playback
+      // and the chord would come back round the loop with it.
+      output.send([0xf8])
+      await settle(250)
+      ok('the bus loops back exactly once', raw.length === 1, `${raw.length} messages returned`)
+      raw.length = 0
+
+      // Bind for real, by port id -- not "any input", which would also pick up
+      // the clock this studio's other gear is putting out.
+      settings.midi.chordOutputId = busOut.id
+      settings.midi.chordChannel = 0
+      engine.clockInputId = busIn.id
+
+      const clock = (bytes) => output.send(bytes)
+
+      /* ---------- run the clock ---------- */
+      clock([0xfa])
+      await settle(150)
+      ok('start puts us in motion', engine.running === true)
+      for (let i = 0; i < 96; i++) clock([0xf8])       // one bar of 4/4
+      await settle(700)
+      ok('one bar advanced the chart', changes.join(',') === 'C,F', changes.join(','))
+      ok('pulse count is exact', engine.pulse === 96, engine.pulse)
+
+      ok('real MIDI notes reached a real port', heard.length > 0, JSON.stringify(heard.slice(0, 8)))
+      const ons = heard.filter((h) => h[0] === 'on').map((h) => h[1])
+      ok('the C major triad went out', ons.slice(0, 3).join(',') === '60,64,67', ons.slice(0, 6).join(','))
+      ok('the C was released when F arrived', heard.some((h) => h[0] === 'off' && h[1] === 60))
+      ok('F followed it', ons.slice(3, 6).join(',') === '65,69,72', ons.slice(3, 6).join(','))
+
+      // Song position: jump to bar 3 (32 sixteenths in).
+      changes.length = 0
+      clock([0xf2, 32, 0])
+      for (let i = 0; i < 4; i++) clock([0xf8])
+      await settle(300)
+      ok('song position jumps the chart', changes[0] === 'G', changes.join(','))
+
+      clock([0xfc])
+      await settle(300)
+      ok('stop reported', engine.running === false)
+      const trailing = heard.filter((h) => h[0] === 'on').length - heard.filter((h) => h[0] === 'off').length
+      ok('every note sounded was released', trailing === 0, `${trailing} left hanging`)
+
+      /* ---------- lock onto a clock we did not generate ---------- */
+      // This is the real case: a running DAW, clock already in flight, no Start
+      // message in sight. Listen only; nothing is sent to this bus.
+      if (busy) {
+        player.setScore(parseScore('C F G Am', { beatsPerBar: 4 }))
+        changes.length = 0
+        engine.pulse = 0
+        engine.running = false
+        engine._sawStop = false
+        engine.lastClockAt = 0
+        engine.clockInputId = busy.in.id
+
+        const before = engine.pulse
+        await settle(2000)
+        const advanced = engine.pulse - before
+        ok('locked onto the live clock on ' + busy.in.name, engine.running === true && advanced > 24,
+          `${advanced} pulses in 2s`)
+        ok('tempo read off the live clock', engine.bpm > 30 && engine.bpm < 300, `${engine.bpm.toFixed(1)} bpm`)
+        ok('the chart followed the live clock', changes.length > 0, changes.join(','))
+        const expected = (advanced / 24) * (60 / 2)
+        ok('pulse rate matches the reported tempo', Math.abs(expected - engine.bpm) < 12,
+          `derived ${expected.toFixed(1)} vs reported ${engine.bpm.toFixed(1)}`)
+      }
+
+      engine.panic()
+      window.__results = { results, warnings: [] }
+      document.getElementById('out').textContent = results
+        .map((r) => `${r.pass ? 'ok  ' : 'FAIL'} ${r.name}${r.detail ? '   (' + r.detail + ')' : ''}`).join('\n')
+      window.__done = true
+    </script>
+  </body>
+</html>

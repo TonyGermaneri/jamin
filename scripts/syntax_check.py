@@ -25,6 +25,8 @@ def source_of(path):
     text = re.sub(r"(?m)^export default ", "const __d = ", text)
     text = re.sub(r"(?m)^export\s+(?=(const|let|var|function|class|async))", "", text)
     text = re.sub(r"(?m)^export\s*\{[^}]*\}\s*;?\s*$", "", text)
+    # `new Function` is not a module, so import.meta would be a syntax error here.
+    text = text.replace("import.meta.url", '"file:///"')
     return text
 
 failed = []

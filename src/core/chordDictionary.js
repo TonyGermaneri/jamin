@@ -6,7 +6,10 @@
  * what it thinks you typed ("Dominant 7 (9)"), and so a verbose spelling that
  * the rule parser chokes on can still be resolved by name.
  *
- * Loaded lazily -- it is ~190KB and nothing depends on it before first paint.
+ * Fetched lazily -- it is ~190KB and nothing depends on it before first paint.
+ * Fetched rather than imported so it stays out of the JS bundle and does not
+ * depend on a bundler's JSON handling; `new URL(..., import.meta.url)` is what
+ * Vite rewrites to the hashed asset path at build time.
  *
  * @see https://github.com/ChordDictionary/SetTheory
  */
@@ -17,12 +20,14 @@ let pending = null
 export async function loadChordDictionary() {
   if (data) return data
   if (!pending) {
-    pending = import('../data/chordSets.json')
-      .then((module) => {
-        data = module.default || module
+    pending = fetch(new URL('../data/chordSets.json', import.meta.url))
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(response.status))))
+      .then((loaded) => {
+        data = loaded
         return data
       })
       .catch(() => {
+        // Chord naming is a nicety; losing it must never stop the chart.
         data = { sets: {}, byName: {} }
         return data
       })

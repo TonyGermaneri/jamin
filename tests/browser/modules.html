@@ -1,0 +1,175 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>jamin module checks</title>
+    <style>
+      body { margin: 0; background: #07080c; color: #eee; font: 13px ui-monospace, monospace; }
+      canvas { display: block; }
+      #stage { position: relative; width: 900px; height: 420px; }
+      #stage canvas { position: absolute; inset: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="stage">
+      <canvas id="gl" width="900" height="420"></canvas>
+      <canvas id="tx" width="900" height="420"></canvas>
+    </div>
+    <pre id="out"></pre>
+
+    <script type="module">
+      import { parseScore } from '../../src/core/score.js'
+      import { parseChord } from '../../src/core/chordParser.js'
+      import { layoutChart, createMeasurer, caretRect, indexAtPoint } from '../../src/canvas/layout.js'
+      import { drawChart } from '../../src/canvas/textRenderer.js'
+      import { GlRenderer } from '../../src/canvas/glRenderer.js'
+      import { MidiEngine } from '../../src/core/midi.js'
+      import { defaultSettings } from '../../src/core/settings.js'
+      import { hexToRgb, THEMES } from '../../src/core/themes.js'
+
+      const results = []
+      const warnings = []
+      const ok = (name, pass, detail = '') => results.push({ name, pass: !!pass, detail: String(detail) })
+
+      const settings = defaultSettings()
+      const score = parseScore('.Cmaj7{walk} A-7 D-7 G7\nCmaj7 Cmaj7 F-7 Bb7\nC6/9 | Ab7 G7alt', {
+        beatsPerBar: 4,
+      })
+
+      /* ---------- WebGL: does the shader actually compile and draw? ---------- */
+      const glCanvas = document.getElementById('gl')
+      const renderer = new GlRenderer(glCanvas)
+      ok('GlRenderer constructs', renderer.ok, renderer.error || '')
+      ok('no shader error', !renderer.error, renderer.error || '')
+
+      let pixels = null
+      if (renderer.ok) {
+        const context = renderer.gl
+        ok('webgl2 context', context instanceof WebGL2RenderingContext || !!context)
+        ok('uniform locations resolved', !!renderer.u.uRects && !!renderer.u.uMeta && !!renderer.u.uAccent)
+
+        renderer.resize(900, 420, 1)
+        const theme = THEMES[0]
+        renderer.render({
+          time: 2.5,
+          dpr: 1,
+          beat: 0.1,
+          bar: 0.25,
+          attack: 0.2,
+          running: true,
+          colors: { bg: hexToRgb(theme.bg), accent: hexToRgb(theme.accent), accentAlt: hexToRgb(theme.accentAlt) },
+          params: settings.shader,
+          regions: [
+            { x: 40, y: 30, w: 240, h: 90, state: 0, progress: 0.45, energy: 1, seed: 0.3 },
+            { x: 320, y: 30, w: 200, h: 90, state: -1, progress: 0.45, energy: 1, seed: 0.6 },
+            { x: 560, y: 30, w: 200, h: 90, state: 1, progress: 0.5, energy: 0.5, seed: 0.9 },
+          ],
+        })
+        ok('no GL error after draw', context.getError() === context.NO_ERROR, 'gl error ' + context.getError())
+
+        const read = (x, y) => {
+          const buf = new Uint8Array(4)
+          context.readPixels(x, 420 - y, 1, 1, context.RGBA, context.UNSIGNED_BYTE, buf)
+          return buf
+        }
+        const inside = read(160, 75)       // middle of the active chord
+        const corner = read(870, 400)      // far away from everything
+        const lum = (p) => p[0] + p[1] + p[2]
+        pixels = { inside: [...inside], corner: [...corner] }
+        ok('active region is lit', lum(inside) > lum(corner) + 12, `inside=${lum(inside)} corner=${lum(corner)}`)
+        ok('background is not black', lum(corner) > 0, `corner=${lum(corner)}`)
+
+        // Turning everything down must actually turn it off.
+        renderer.render({
+          time: 2.5, dpr: 1, beat: 0.1, bar: 0.25, attack: 0, running: true,
+          colors: { bg: hexToRgb(theme.bg), accent: hexToRgb(theme.accent), accentAlt: hexToRgb(theme.accentAlt) },
+          params: { ...settings.shader, intensity: 0, pulse: 0, scan: 0, grain: 0, warp: 0, chroma: 0 },
+          regions: [{ x: 40, y: 30, w: 240, h: 90, state: 0, progress: 0.45, energy: 1, seed: 0.3 }],
+        })
+        const off = read(160, 75)
+        ok('intensity 0 mutes the effects', Math.abs(lum(off) - lum(read(870, 400))) < 24, `off=${lum(off)}`)
+      }
+
+      /* ---------- layout with real font metrics ---------- */
+      const measure = createMeasurer(settings.display.font)
+      ok('measurer returns real widths', measure('Cmaj7') > 0 && measure('Cmaj7') > measure('C'))
+      ok('measurement is linear-ish', Math.abs(measure('CC') - measure('C') * 2) < measure('C') * 0.2)
+
+      const layout = layoutChart(score, { width: 900, measure, display: settings.display })
+      ok('three lines laid out', layout.lines.length === 3, layout.lines.length)
+      ok('lines fill the width', layout.lines.every((l) => Math.abs(l.width - (900 - settings.display.padding * 2)) < 2 || l.fontSize >= settings.display.maxFontSize - 0.01),
+        layout.lines.map((l) => Math.round(l.width)).join(','))
+      ok('lines size independently', new Set(layout.lines.map((l) => Math.round(l.fontSize))).size > 1,
+        layout.lines.map((l) => Math.round(l.fontSize)).join(','))
+      ok('every token has a rect', layout.lines.reduce((n, l) => n + l.tokens.length, 0) === score.tokens.length)
+      ok('runs cover every character', layout.lines.every((line) => {
+        let cursor = 0
+        for (const run of line.runs) { if (run.from !== cursor) return false; cursor = run.to }
+        return cursor === line.text.length
+      }))
+
+      let roundTrips = 0
+      for (let i = 0; i <= score.text.length; i++) {
+        if (score.text[i] === '\n') continue
+        const rect = caretRect(layout, i, measure)
+        if (indexAtPoint(layout, rect.x, rect.y + rect.h * 0.5, measure) === i) roundTrips++
+      }
+      const caretTotal = score.text.length + 1 - (score.text.split('\n').length - 1)
+      ok('caret <-> click round trip', roundTrips >= caretTotal - 2, `${roundTrips}/${caretTotal}`)
+
+      /* ---------- the text layer actually paints ---------- */
+      const ctx = document.getElementById('tx').getContext('2d')
+      const theme = settings.theme
+      const colors = {
+        bg: theme.bg, fg: theme.fg, accent: theme.accent, accentAlt: theme.accentAlt,
+        error: theme.error, separator: theme.dim, selection: 'rgba(124,92,255,0.25)',
+        caret: theme.accent, dimInactive: 0.55,
+      }
+      const activeToken = score.events[1].tokens[0]
+      drawChart(ctx, {
+        layout, colors, display: settings.display,
+        status: (token) => {
+          if (token.type === 'error') return { kind: 'error', glow: 0, progress: -1 }
+          if (token.eventIndex === 1) return { kind: 'active', glow: 0.9, progress: 0.45 }
+          if (token.eventIndex === 2) return { kind: 'next', glow: 0.45, progress: -1 }
+          if (token.eventIndex === 0) return { kind: 'past', glow: 0.5, progress: -1 }
+          return { kind: 'idle', glow: 0, progress: -1 }
+        },
+        selection: [0, 0], caret: 5, caretVisible: true, measure,
+        width: 900, height: 420, dpr: 1, scroll: 0,
+      })
+      const painted = ctx.getImageData(0, 0, 900, 420).data
+      let lit = 0
+      for (let i = 3; i < painted.length; i += 4) if (painted[i] > 8) lit++
+      ok('text layer painted pixels', lit > 2000, `${lit} non-transparent pixels`)
+
+      // The highlighted word must be painted inside the rect of the word the user typed.
+      const rect = layout.lines[0].tokens.find((r) => r.tokenIndex === activeToken)
+      ok('active token has a rect', !!rect)
+      if (rect) {
+        const sample = ctx.getImageData(Math.round(rect.x), Math.round(rect.y), Math.max(1, Math.round(rect.w)), Math.round(rect.h)).data
+        let inked = 0
+        for (let i = 3; i < sample.length; i += 4) if (sample[i] > 40) inked++
+        ok('highlighted word is inked in place', inked > 40, `${inked} px in the token rect`)
+        ok('token rect matches the typed text', score.tokens[activeToken].text === 'A-7', score.tokens[activeToken].text)
+      }
+
+      /* ---------- Web MIDI ---------- */
+      ok('Web MIDI present', typeof navigator.requestMIDIAccess === 'function')
+      const engineInstance = new MidiEngine()
+      const enabled = await engineInstance.enable()
+      ok('enable() resolves without throwing', enabled === true || engineInstance.state === 'denied' || engineInstance.state === 'unsupported',
+        `state=${engineInstance.state} error=${engineInstance.error || ''}`)
+      if (enabled) {
+        ok('ports enumerated', Array.isArray(engineInstance.inputs) && Array.isArray(engineInstance.outputs),
+          `${engineInstance.inputs.length} in / ${engineInstance.outputs.length} out`)
+      }
+
+      window.__results = { results, warnings, pixels }
+      document.getElementById('out').textContent = results
+        .map((r) => `${r.pass ? 'ok  ' : 'FAIL'} ${r.name}${r.detail ? '   (' + r.detail + ')' : ''}`)
+        .join('\n')
+      window.__done = true
+    </script>
+  </body>
+</html>

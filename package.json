@@ -9,7 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "chords": "python3 scripts/build_chord_sets.py",
-    "test": "python3 scripts/test.py"
+    "test": "python3 scripts/test.py",
+    "test:browser": "python3 scripts/browser_test.py tests/browser/modules.html tests/browser/app.html tests/browser/midi.html"
   },
   "dependencies": {
     "@mdi/font": "^7.4.47",
