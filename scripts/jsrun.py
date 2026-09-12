@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""Run ES modules through macOS JavaScriptCore (osascript -l JavaScript).
+
+There is no Node on this machine, so this strips `import`/`export` keywords,
+concatenates the requested modules in order, appends a test script and runs the
+whole thing through JXA.  Only useful for the pure-logic modules (no DOM, no
+Web MIDI).
+
+    python3 scripts/jsrun.py src/core/chordParser.js tests/chords.test.js
+"""
+import re
+import subprocess
+import sys
+import tempfile
+
+def strip(path):
+    src = open(path, encoding="utf-8").read()
+    src = re.sub(r"(?m)^\s*import[^\n]*\n", "", src)
+    src = re.sub(r"(?m)^export default ", "const __default = ", src)
+    src = re.sub(r"(?m)^export\s+(?=(const|let|var|function|class|async))", "", src)
+    src = re.sub(r"(?m)^export\s*\{[^}]*\}\s*;?\s*$", "", src)
+    return src
+
+def main():
+    blob = "\n".join(strip(p) for p in sys.argv[1:])
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+        fh.write(blob)
+        path = fh.name
+    proc = subprocess.run(["osascript", "-l", "JavaScript", path], capture_output=True, text=True)
+    sys.stdout.write(proc.stdout)
+    sys.stderr.write(proc.stderr)
+    sys.exit(proc.returncode)
+
+main()

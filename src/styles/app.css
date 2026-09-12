@@ -1,0 +1,123 @@
+html,
+body,
+#app {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* The chart owns the window. Chrome floats over it and gets out of the way. */
+.jamin-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+.jamin-layer {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.jamin-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  font: 16px/1 monospace;
+  white-space: pre;
+  overflow: hidden;
+  -webkit-text-fill-color: transparent;
+}
+
+.jamin-input::selection {
+  background: transparent;
+}
+
+.jamin-chrome {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  z-index: 5;
+  transition: opacity 240ms ease;
+}
+
+.jamin-chrome.is-idle {
+  opacity: 0.18;
+}
+
+.jamin-readout {
+  position: absolute;
+  left: 14px;
+  bottom: 10px;
+  z-index: 5;
+  display: flex;
+  gap: 14px;
+  align-items: baseline;
+  font: 12px/1.4 ui-monospace, "SF Mono", monospace;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  transition: opacity 240ms ease;
+}
+
+.jamin-readout .label {
+  opacity: 0.45;
+}
+
+.jamin-scroll-hint {
+  position: absolute;
+  right: 6px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.v-overlay__content .v-card {
+  backdrop-filter: blur(18px);
+}
+
+.jamin-settings .v-window {
+  min-height: 430px;
+}
+
+.jamin-theme-swatch {
+  cursor: pointer;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  transition: transform 120ms ease, border-color 120ms ease;
+}
+
+.jamin-theme-swatch:hover {
+  transform: translateY(-2px);
+}
+
+.jamin-theme-swatch.is-active {
+  border-color: currentColor;
+}
+
+.jamin-swatch-bar {
+  height: 34px;
+  display: flex;
+}
+
+.jamin-mono {
+  font-family: ui-monospace, "SF Mono", monospace;
+}
