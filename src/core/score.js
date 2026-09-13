@@ -138,7 +138,7 @@ export function parseScore(text, opts = {}) {
     lineIndex++
   }
 
-  resolvePhraseSections(events)
+  resolvePhraseSections(events, opts)
 
   return {
     text: src,
@@ -238,10 +238,23 @@ export function sameChord(a, b) {
 }
 
 /**
- * A phrase binding sticks until the next chord wearing a dot.  Walk the events
- * once and stamp each with whatever phrase is currently in force.
+ * Work out which phrase is playing where.
+ *
+ * By default one phrase plays for the whole song and the chart stays free of
+ * markup. Turn per-chord articulations on and a phrase instead sticks from the
+ * chord wearing a dot until the next one -- which is what the dots in the text
+ * are for.
  */
-function resolvePhraseSections(events) {
+function resolvePhraseSections(events, opts) {
+  if (!opts.perChordPhrases) {
+    const songPhrase = opts.songPhrase || null
+    for (const event of events) {
+      event.phraseId = songPhrase
+      event.sectionStart = 0
+    }
+    return
+  }
+
   let current = null
   let sectionStart = 0
   for (const event of events) {

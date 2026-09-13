@@ -326,12 +326,19 @@ async function retryMidi() {
             <div class="text-caption text-medium-emphasis mb-3">
               Mr. Accompany Me. Bind your keyboard as the accompaniment input, arm the red
               button, and play one chord's worth of music. The phrase lands in the phrase
-              book; bind it to a chord and it follows the chart, re-pointed at each new
-              chord by voice leading.
+              book; choose it and it plays over the whole song, re-pointed at each chord by
+              voice leading. Turn on per-chord articulations below if you want different
+              phrases on different chords.
             </div>
             <v-row dense>
               <v-col cols="12" md="6">
                 <v-switch v-model="state.settings.accompany.enabled" label="Play bound phrases" />
+                <v-switch
+                  v-model="state.settings.accompany.perChordPhrases"
+                  label="Per-chord articulations"
+                  hint="Off: one phrase plays the whole song. On: bind different phrases to individual chords, marked with a dot."
+                  persistent-hint
+                />
                 <v-switch v-model="state.settings.accompany.monitor" label="Hear your keyboard through the accompaniment output" />
                 <v-switch v-model="state.settings.accompany.keepBass" label="Keep the bass note under a phrase" />
               </v-col>

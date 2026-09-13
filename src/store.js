@@ -12,7 +12,7 @@ import { reactive, watch } from 'vue'
 import { MidiEngine } from './core/midi.js'
 import { Player } from './core/player.js'
 import { parseScore } from './core/score.js'
-import { loadSettings, saveSettings, defaultSettings, TEXT_KEY, SAMPLE_CHART } from './core/settings.js'
+import { loadSettings, saveSettings, defaultSettings, TEXT_KEY, SONG_PHRASE_KEY, SAMPLE_CHART } from './core/settings.js'
 import {
   loadPhrases,
   savePhrases,
@@ -35,6 +35,8 @@ import {
   exportProgressions,
 } from './core/progressions.js'
 import { themeById } from './core/themes.js'
+import { detectKey, preferFlatKey } from './core/key.js'
+import { mod12 } from './core/voiceLeading.js'
 import { loadLicks, lickReport, licksForChord, searchLicks, defaultVocabularyUrl } from './core/licks.js'
 import { loadChordDictionary, nameForSet } from './core/chordDictionary.js'
 import { describeChord } from './core/chordParser.js'
@@ -43,6 +45,7 @@ export const engine = new MidiEngine()
 
 export const state = reactive({
   text: '',
+  songPhrase: null,
   score: parseScore(''),
   settings: loadSettings(),
   phrases: [],
@@ -62,6 +65,7 @@ export const state = reactive({
     chord: '',
     chordName: '',
     caretChord: '',
+    key: null,
     caret: 0,
     selection: [0, 0],
     phrase: null,
@@ -143,6 +147,7 @@ engine.onPortsChanged = (inputs, outputs) => {
 
 export async function initApp() {
   state.text = readStoredText()
+  state.songPhrase = readStoredSongPhrase()
   reparse()
   loadPhraseBook()
   state.progressions = loadProgressions()
@@ -161,6 +166,14 @@ export async function initApp() {
   const build = () => ensureLicks()
   if (typeof requestIdleCallback === 'function') requestIdleCallback(build, { timeout: 4000 })
   else setTimeout(build, 1200)
+}
+
+function readStoredSongPhrase() {
+  try {
+    return localStorage.getItem(SONG_PHRASE_KEY) || null
+  } catch {
+    return null
+  }
 }
 
 function readStoredText() {
@@ -253,6 +266,8 @@ export function reparse() {
   state.score = parseScore(state.text, {
     beatsPerBar: state.settings.transport.beatsPerBar,
     mergeRepeats: chords.mergeRepeats,
+    perChordPhrases: state.settings.accompany.perChordPhrases,
+    songPhrase: state.songPhrase,
     conventions: {
       omitThirdOnDominant11: chords.omitThirdOnDominant11,
       omitElevenOnThirteen: chords.omitElevenOnThirteen,
@@ -260,6 +275,7 @@ export function reparse() {
   })
   player.setScore(state.score)
   if (!engine.running) state.status.eventIndex = -1
+  state.status.key = detectKey(state.score)
 }
 
 function refreshChordName() {
@@ -294,6 +310,25 @@ export function describeAt(index) {
   return ''
 }
 
+/**
+ * Move the whole chart. Spelling follows the key it lands in, so going up a
+ * semitone from F gives Gb rather than F#, and down from C gives B rather than
+ * Cb.
+ */
+export function transposeSong(semitones) {
+  if (!semitones || !state.text.trim()) return
+  const current = state.status.key
+  const preferFlat = current
+    ? preferFlatKey(mod12(current.tonicPc + semitones), current.mode)
+    : usesFlats(state.text)
+
+  const next = transposeChart(state.text, semitones, { preferFlat })
+  if (next === state.text) return
+  setText(next)
+  const landed = state.status.key
+  toast(landed ? `Transposed to ${landed.name}` : `Transposed ${semitones > 0 ? 'up' : 'down'}`)
+}
+
 /* ------------------------------------------------------------------ *
  * Theme + settings
  * ------------------------------------------------------------------ */
@@ -326,7 +361,13 @@ watch(
 )
 
 watch(
-  () => [state.settings.transport.beatsPerBar, state.settings.chords.mergeRepeats, state.settings.chords.omitThirdOnDominant11, state.settings.chords.omitElevenOnThirteen],
+  () => [
+    state.settings.transport.beatsPerBar,
+    state.settings.chords.mergeRepeats,
+    state.settings.chords.omitThirdOnDominant11,
+    state.settings.chords.omitElevenOnThirteen,
+    state.settings.accompany.perChordPhrases,
+  ],
   () => reparse()
 )
 
@@ -385,11 +426,30 @@ export function renamePhrase(oldName, newName) {
 }
 
 /**
- * Attach a phrase to a chord by editing the chart: the dot the user sees above
- * the word is the character that creates the binding, so bindings travel with
- * the text.
+ * Put a phrase to work.
+ *
+ * Normally that means the whole song: one phrase, no markup in the chart. With
+ * per-chord articulations on it instead edits the chart, because the dot the
+ * user sees above the word is the character that creates the binding -- so those
+ * bindings travel with the text.
  */
+export function setSongPhrase(phraseName) {
+  state.songPhrase = phraseName || null
+  try {
+    if (state.songPhrase) localStorage.setItem(SONG_PHRASE_KEY, state.songPhrase)
+    else localStorage.removeItem(SONG_PHRASE_KEY)
+  } catch {
+    /* ignore */
+  }
+  reparse()
+  toast(phraseName ? `${phraseName} → whole song` : 'Phrase cleared')
+}
+
 export function bindPhrase(phraseName, tokenIndex) {
+  if (!state.settings.accompany.perChordPhrases) {
+    setSongPhrase(phraseName)
+    return
+  }
   const token = state.score.tokens[tokenIndex ?? currentTokenIndex()]
   if (!token) {
     toast('No chord to bind to')
@@ -594,7 +654,7 @@ export function insertProgression(progression, { mode = 'caret', targetPc = null
   toast(`${progression.name} → chart`)
 }
 
-export function importProgressionJson(json) {
+export function importProgressionJson(json, { targetPc = null, spelling = 'auto' } = {}) {
   const result = parseProgressionImport(json)
   if (!result.ok) {
     toast(result.error || 'Nothing imported')
@@ -603,6 +663,9 @@ export function importProgressionJson(json) {
   const existing = allProgressions()
   const added = result.progressions.map((item) => ({
     ...item,
+    // Transposed on the way in, if a key was asked for, so what lands in the
+    // library is already in the key you want to read it in.
+    text: targetPc === null ? item.text : renderProgression(item, targetPc, spelling),
     name: uniqueProgressionName(existing.concat(state.progressions), cleanName(item.name)),
     createdAt: Date.now(),
   }))

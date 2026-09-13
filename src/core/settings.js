@@ -10,6 +10,7 @@ import { THEMES, SHADER_DEFAULTS } from './themes.js'
 export const STORAGE_KEY = 'jamin.settings.v1'
 export const TEXT_KEY = 'jamin.chart.v1'
 export const PHRASE_KEY = 'jamin.phrases.v1'
+export const SONG_PHRASE_KEY = 'jamin.songPhrase.v1'
 
 export function defaultSettings() {
   const theme = THEMES[0]
@@ -76,6 +77,9 @@ export function defaultSettings() {
       monitor: true,
       quantize: 0, // pulses; 6 = 16th notes
       captureMode: 'once', // once | continuous
+      // Off by default: one phrase plays for the whole song. Turn it on to bind
+      // a different phrase to individual chords, marked with a dot.
+      perChordPhrases: false,
     },
   }
 }

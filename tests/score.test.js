@@ -43,14 +43,14 @@ check('token text', s.tokens[1].text, 'Dii')
 check('inversion parsed', s.tokens[1].chord.inversion, 2)
 
 // phrase marks
-s = parseScore('.C7{walk} F G .Am{riff} Bb', { beatsPerBar: 4 })
+s = parseScore('.C7{walk} F G .Am{riff} Bb', { beatsPerBar: 4, perChordPhrases: true })
 check('phrase change flags', s.events.map(e => e.phraseChange), [true, false, false, true, false])
 check('phrase sections', s.events.map(e => e.phraseId), ['walk', 'walk', 'walk', 'riff', 'riff'])
 check('dot stripped from body', s.tokens[0].body, 'C7')
 check('body range', [s.tokens[0].bodyStart, s.tokens[0].bodyEnd], [1, 3])
 
 // bare dot clears the phrase
-s = parseScore('.C{riff} F .G A', { beatsPerBar: 4 })
+s = parseScore('.C{riff} F .G A', { beatsPerBar: 4, perChordPhrases: true })
 check('phrase cleared', s.events.map(e => e.phraseId), ['riff', 'riff', null, null])
 
 // multi-line
@@ -93,5 +93,16 @@ check('no-chord is silent', s.events[1].chord.silent, true)
 check('no-chord is not an error token', s.tokens[1].type, 'chord')
 check('adjacent no-chords merge', parseScore('N.C. N.C. C', { beatsPerBar: 4 }).events.length, 2)
 
+
+
+// one phrase for the whole song is the default; dots only matter when asked for
+s = parseScore('.C7{walk} F G', { beatsPerBar: 4, songPhrase: 'riff' })
+check('the song phrase covers every chord', s.events.map(e => e.phraseId), ['riff', 'riff', 'riff'])
+check('dots are ignored in that mode', s.events[0].phraseId, 'riff')
+check('the dot is still parsed, just not acted on', s.tokens[0].phraseChange, true)
+s = parseScore('.C7{walk} F G', { beatsPerBar: 4 })
+check('no song phrase, no phrase', s.events.map(e => e.phraseId), [null, null, null])
+s = parseScore('.C7{walk} F G', { beatsPerBar: 4, perChordPhrases: true, songPhrase: 'riff' })
+check('per-chord mode uses the dots, not the song phrase', s.events.map(e => e.phraseId), ['walk', 'walk', 'walk'])
 
 console.log(failed === 0 ? 'score: all checks passed' : `score: ${failed} FAILED`)

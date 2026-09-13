@@ -94,7 +94,7 @@ const phrase = {
   ],
 }
 player.getPhrase = (name) => (name === 'arp' ? phrase : null)
-player.setScore(parseScore('.C{arp} F', { beatsPerBar: 4 }))
+player.setScore(parseScore('.C{arp} F', { beatsPerBar: 4, perChordPhrases: true }))
 for (let p = 1; p <= 191; p++) player.tick(p)
 const played = engine.log.filter(l => l[0] === 'on').map(l => l[1])
 check('phrase replaces the block chord', played.length, 6)
@@ -194,7 +194,7 @@ const arp = {
   ],
 }
 player.getPhrase = (n) => (n === 'arp' ? arp : null)
-player.setScore(parseScore('.C7{arp} F7 Bb7 Eb7', { beatsPerBar: 4 }))
+player.setScore(parseScore('.C7{arp} F7 Bb7 Eb7', { beatsPerBar: 4, perChordPhrases: true }))
 for (let p = 1; p <= 383; p++) player.tick(p)
 
 const sounded = engine.log.filter(l => l[0] === 'on').map(l => l[1])
@@ -213,6 +213,28 @@ for (let i = 1; i < 4; i++) {
   worst = Math.max(worst, Math.abs(sounded[i * 4] - sounded[(i - 1) * 4]))
 }
 check('and never jumps more than a tritone between chords', worst <= 6, true)
+
+
+// --- by default one phrase covers the whole song, with no dots in the chart ---
+engine = new FakeEngine(); settings = makeSettings(); player = new Player(engine, settings)
+player.getPhrase = (n) => (n === 'arp' ? arp : null)
+player.setScore(parseScore('C7 F7 Bb7', { beatsPerBar: 4, songPhrase: 'arp' }))
+for (let p = 1; p <= 287; p++) player.tick(p)
+check('the phrase plays on every chord', engine.log.filter(l => l[0] === 'on').length, 12)
+
+// The same chart with no song phrase plays block chords instead.
+engine = new FakeEngine(); settings = makeSettings(); player = new Player(engine, settings)
+player.getPhrase = (n) => (n === 'arp' ? arp : null)
+player.setScore(parseScore('C7 F7 Bb7', { beatsPerBar: 4 }))
+for (let p = 1; p <= 95; p++) player.tick(p)
+check('no phrase means block chords', engine.log.filter(l => l[0] === 'on').map(l => l[1]), [60, 64, 67, 70])
+
+// Dots are inert unless per-chord articulations are on.
+engine = new FakeEngine(); settings = makeSettings(); player = new Player(engine, settings)
+player.getPhrase = (n) => (n === 'arp' ? arp : null)
+player.setScore(parseScore('.C7{arp} F7', { beatsPerBar: 4 }))
+for (let p = 1; p <= 95; p++) player.tick(p)
+check('a dot alone does not bind', engine.log.filter(l => l[0] === 'on').map(l => l[1]), [60, 64, 67, 70])
 
 
 console.log(failed === 0 ? 'player: all checks passed' : `player: ${failed} FAILED`)

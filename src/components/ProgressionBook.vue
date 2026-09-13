@@ -30,6 +30,7 @@ const renaming = ref(null)
 const renameTo = ref('')
 const newName = ref('')
 const importText = ref('')
+const importPc = ref(null)
 
 // A ready-made slice of Chordonomicon. The data stays theirs; we only convert.
 const CHORDONOMICON_URL =
@@ -112,7 +113,7 @@ function saveCurrent(text, label) {
 }
 
 function runImport() {
-  const result = importProgressionJson(importText.value)
+  const result = importProgressionJson(importText.value, { targetPc: importPc.value, spelling: spelling.value })
   if (result.ok) {
     importText.value = ''
     state.ui.progressionsTab = 'library'
@@ -265,9 +266,28 @@ function runExport() {
               variant="outlined"
               density="compact"
               hide-details="auto"
-              class="jamin-mono mb-2"
+              class="jamin-mono mb-3"
             />
-            <v-btn size="small" prepend-icon="mdi-import" :disabled="!importText.trim()" @click="runImport">Import</v-btn>
+            <div class="d-flex align-center flex-wrap" style="gap: 8px">
+              <v-btn size="small" prepend-icon="mdi-import" :disabled="!importText.trim()" @click="runImport">Import</v-btn>
+              <v-select
+                v-model="importPc"
+                :items="keyOptions"
+                label="Transpose to"
+                style="max-width: 200px"
+              />
+              <v-select
+                v-model="spelling"
+                :disabled="importPc === null"
+                :items="[{ title: 'Auto', value: 'auto' }, { title: '♯', value: 'sharps' }, { title: '♭', value: 'flats' }]"
+                label="Spell"
+                style="max-width: 110px"
+              />
+            </div>
+            <div class="text-caption text-medium-emphasis mt-2">
+              Everything imported is moved so its first chord is the root you pick. Leave it on
+              “As written” to keep the keys they came in.
+            </div>
 
             <v-divider class="my-5" />
 

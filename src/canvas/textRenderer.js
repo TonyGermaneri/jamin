@@ -10,7 +10,7 @@
 import { caretRect } from './layout.js'
 
 export function drawChart(ctx, options) {
-  const { layout, colors, display, status, selection, caret, caretVisible, measure } = options
+  const { layout, colors, display, status, selection, caret, caretVisible, measure, showMarks = true } = options
   const { width, height, dpr, scroll = 0 } = options
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, -scroll * dpr)
@@ -23,7 +23,7 @@ export function drawChart(ctx, options) {
     ctx.font = `${line.fontSize}px ${display.font}`
     drawSelection(ctx, line, selection, colors, layout, measure)
     drawLine(ctx, line, colors, status)
-    drawMarks(ctx, line, colors, status, display)
+    if (showMarks) drawMarks(ctx, line, colors, status, display)
   }
 
   if (caretVisible && caret !== null && caret !== undefined) {

@@ -74,16 +74,20 @@ onBeforeUnmount(() => {
   if (gl) gl.dispose()
 })
 
-// Text can change from outside the editor -- binding a phrase rewrites the
-// chart -- so mirror it back into the textarea without losing the caret.
+// Text can change from outside the editor -- inserting a progression rewrites
+// the chart -- so mirror it back into the textarea. Keep the whole selection,
+// not just the caret: collapsing it would throw away a selection the user made
+// for something else. Assigning `.value` resets the selection, hence the
+// read-then-restore.
 watch(
   () => state.text,
   (next) => {
     const field = input.value
     if (!field || field.value === next) return
-    const at = Math.min(field.selectionStart, next.length)
+    const start = Math.min(field.selectionStart, next.length)
+    const end = Math.min(field.selectionEnd, next.length)
     field.value = next
-    field.setSelectionRange(at, at)
+    field.setSelectionRange(start, end)
     layoutKey = ''
   }
 )
@@ -312,6 +316,9 @@ function frame(now) {
     display: state.settings.display,
     status: status.of,
     selection: selection.value,
+    // Dots mean nothing unless per-chord articulations are on, so don't draw
+    // marks the chart is not acting on.
+    showMarks: state.settings.accompany.perChordPhrases,
     caret: caret.value,
     caretVisible: focused.value && (now % 1060 < 620 || dragging),
     measure,

@@ -19,6 +19,9 @@ SUITES = [
         "src/core/progressions.js",
     ], "tests/progressions.test.js"),
     ([
+        "src/core/chordParser.js", "src/core/score.js", "src/core/key.js",
+    ], "tests/key.test.js"),
+    ([
         "tests/fixtures/chordonomicon-vocab.js", "src/core/chordParser.js", "src/core/score.js",
         "src/core/importers.js", "src/core/progressions.js",
     ], "tests/importers.test.js"),

@@ -56,6 +56,9 @@ watch(
 
 const target = computed(() => currentToken())
 const chord = computed(() => targetChord())
+const perChord = computed(() => state.settings.accompany.perChordPhrases)
+const bindLabel = computed(() => (perChord.value ? `bind to ${target.value ? target.value.body : '—'}` : 'use for the whole song'))
+const canBind = computed(() => !perChord.value || !!target.value)
 
 // Depend on the loaded catalogue explicitly so the list refreshes when it lands.
 const matchingLicks = computed(() => {
@@ -165,15 +168,21 @@ function roll(phrase, width = 260, height = 54) {
 
               <v-text-field v-model="name" label="Name" class="mb-3" />
               <div class="d-flex flex-wrap" style="gap: 8px">
-                <v-btn size="small" color="primary" :disabled="!target" @click="keepAndBind">
-                  Keep and bind to {{ target ? target.body : '—' }}
+                <v-btn size="small" color="primary" :disabled="!canBind" @click="keepAndBind">
+                  Keep and {{ bindLabel }}
                 </v-btn>
                 <v-btn size="small" @click="keepOnly">Keep only</v-btn>
                 <v-btn size="small" variant="text" @click="discard">Discard</v-btn>
               </div>
               <div class="text-caption text-medium-emphasis mt-3">
-                Binding writes <code>.{{ target ? target.body : 'chord' }}{{ '{' + (name || 'name') + '}' }}</code>
-                into the chart. It applies from there until the next dotted chord.
+                <span v-if="perChord">
+                  Binding writes <code>.{{ target ? target.body : 'chord' }}{{ '{' + (name || 'name') + '}' }}</code>
+                  into the chart. It applies from there until the next dotted chord.
+                </span>
+                <span v-else>
+                  It will play over every chord in the song. Turn on per-chord articulations
+                  in settings to bind phrases to individual chords instead.
+                </span>
               </div>
             </div>
           </v-window-item>
@@ -214,12 +223,13 @@ function roll(phrase, width = 260, height = 54) {
                 <template #append>
                   <v-btn
                     size="x-small"
-                    variant="text"
-                    :disabled="!target"
-                    :title="target ? `Bind to ${target.body}` : 'No chord to bind to'"
+                    :variant="state.songPhrase === phrase.name ? 'flat' : 'text'"
+                    :color="state.songPhrase === phrase.name ? 'primary' : undefined"
+                    :disabled="!canBind"
+                    :title="bindLabel"
                     @click="bindPhrase(phrase.name)"
                   >
-                    Bind
+                    {{ !perChord && state.songPhrase === phrase.name ? 'Playing' : 'Use' }}
                   </v-btn>
                   <v-btn
                     icon="mdi-rename-outline"
@@ -233,13 +243,16 @@ function roll(phrase, width = 260, height = 54) {
             </v-list>
 
             <v-divider class="my-3" />
-            <div class="d-flex" style="gap: 8px">
-              <v-btn size="small" :disabled="!target" @click="bindPhrase(null)">
-                Clear phrase at {{ target ? target.body : '—' }}
+            <div class="d-flex align-center flex-wrap" style="gap: 8px">
+              <v-btn size="small" :disabled="!canBind" @click="bindPhrase(null)">
+                {{ perChord ? `Clear the phrase at ${target ? target.body : '—'}` : 'Play no phrase' }}
               </v-btn>
-              <v-btn size="small" variant="text" :disabled="!target" @click="unbindPhrase()">
+              <v-btn v-if="perChord" size="small" variant="text" :disabled="!target" @click="unbindPhrase()">
                 Remove the dot entirely
               </v-btn>
+              <span v-if="!perChord" class="text-caption text-medium-emphasis">
+                {{ state.songPhrase ? `Playing “${state.songPhrase}” over the whole song.` : 'No phrase is playing.' }}
+              </span>
             </div>
           </v-window-item>
 
@@ -323,8 +336,8 @@ function roll(phrase, width = 260, height = 54) {
                 <v-list-item-title>{{ lick.name }}</v-list-item-title>
                 <v-list-item-subtitle class="text-caption">{{ describeLick(lick) }}</v-list-item-subtitle>
                 <template #append>
-                  <v-btn size="x-small" variant="tonal" class="mr-1" :disabled="!target" @click="adoptLick(lick, true)">
-                    Keep and bind
+                  <v-btn size="x-small" variant="tonal" class="mr-1" :disabled="!canBind" @click="adoptLick(lick, true)">
+                    Keep and use
                   </v-btn>
                   <v-btn size="x-small" variant="text" @click="adoptLick(lick, false)">Keep</v-btn>
                 </template>
@@ -359,9 +372,11 @@ function roll(phrase, width = 260, height = 54) {
                 was over the previous chord, so a repeating figure walks rather than leaps.
               </p>
               <p class="mb-3">
-                A phrase applies from the chord it is bound to until the next chord wearing
-                a dot. The dot you see above a chord is literally the <code>.</code> in the
-                text — bindings live in the chart, so they survive copy, paste and reload.
+                By default one phrase plays for the whole song and the chart stays free of
+                markup. Turn on <em>per-chord articulations</em> in settings and a phrase
+                instead applies from the chord it is bound to until the next chord wearing a
+                dot — the dot you see above a chord is literally the <code>.</code> in the
+                text, so those bindings survive copy, paste and reload.
               </p>
               <p class="mb-3">
                 The Licks tab is a catalogue of 1,900 phrases from Impro-Visor, each written

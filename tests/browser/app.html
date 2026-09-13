@@ -168,6 +168,15 @@
       }
 
       const settle = (ms) => new Promise((r) => setTimeout(r, ms))
+      // Programmatic text changes reach the textarea through a watcher, so wait
+      // for the mirror before touching the caret -- otherwise the watcher lands
+      // afterwards and moves it, which made this suite flaky.
+      const mirrored = async () => {
+        const field = document.querySelector('.jamin-input')
+        const store = await import('../../src/store.js')
+        for (let i = 0; i < 60 && field && field.value !== store.state.text; i++) await settle(16)
+        await settle(32)
+      }
       await settle(1800)
 
       /*
@@ -262,8 +271,9 @@
 
       /* ---------- binding a phrase rewrites the chart ---------- */
       const store = await import('../../src/store.js')
+      state.settings.accompany.perChordPhrases = true
       store.setText('C F G')
-      await settle(200)
+      await settle(250)
       store.state.phrases = [{ name: 'riff', notes: [{ at: 0, note: 60, velocity: 90, duration: 24 }], lengthPulses: 96, sourcePcs: [0, 4, 7], sourceChord: 'C' }]
       store.bindPhrase('riff', 0)
       await settle(250)
@@ -272,6 +282,8 @@
       ok('the phrase carries forward', store.state.score.events.map((e) => e.phraseId).join(',') === 'riff,riff,riff',
         store.state.score.events.map((e) => e.phraseId).join(','))
       ok('the textarea mirrors the rewrite', field.value === '.C{riff} F G', field.value)
+      state.settings.accompany.perChordPhrases = false
+      await settle(200)
 
       /* ---------- notation: the new spellings, in the real chart ---------- */
       store.setText('Fs7 As5 Csmin7 A/Cs Fsus4 N.C. C:maj7 C:maj(9) Ano3d')
@@ -289,6 +301,7 @@
       store.setText('.G7 Cmaj7')
       await settle(250)
       // "Current chord" is the one under the cursor while stopped.
+      await mirrored()
       field.focus()
       field.setSelectionRange(2, 2)
       await settle(150)
@@ -320,9 +333,9 @@
       const beforeAdopt = state.phrases.length
       store.adoptLick(forG7[0], true)
       await settle(300)
-      ok('bound to the chord under the cursor', state.text.startsWith('.G7{'), state.text)
       is('adopting adds it to the library', state.phrases.length, beforeAdopt + 1)
-      ok('and binds it to the chord', state.text.includes('{' + state.phrases[0].name + '}'), state.text)
+      is('and it plays over the whole song, leaving the chart alone', state.text, '.G7 Cmaj7')
+      is('as the song phrase', state.songPhrase, state.phrases[0].name)
       is('the bound phrase resolves', store.player.getPhrase(state.phrases[0].name) !== null, true)
       ok('it carries the chord it was written over', state.phrases[0].sourceChord === forG7[0].sourceChord,
         state.phrases[0].sourceChord)
@@ -351,7 +364,7 @@
       ok('the same degrees over every root', new Set(perChord).size === 1, perChord.join(' | '))
       // And the cursor still decides after an edit -- the playing index would be stale.
       store.setText('Dm7 G7 Cmaj7')
-      await settle(250)
+      await mirrored()
       field.setSelectionRange(5, 5)
       await settle(200)
       is('cursor on the second chord', store.targetChord().text, 'G7')
@@ -406,6 +419,68 @@
       await store.ensureLicks({ force: true })
       await settle(400)
 
+      /* ---------- key detection and transposing the song ---------- */
+      store.setText('D-7 G7 Cmaj7 Cmaj7')
+      await settle(250)
+      is('the key is detected', state.status.key.name, 'C')
+      ok('and it is confident about it', state.status.key.confidence > 0.2, state.status.key.confidence)
+      ok('the readout shows it', document.querySelector('.jamin-readout').textContent.includes('key'),
+        document.querySelector('.jamin-readout').textContent.trim().slice(0, 80))
+
+      store.transposeSong(-1)
+      await settle(250)
+      // B major is a sharp key, so it is spelled with sharps.
+      is('down a semitone, spelled for where it lands', state.text, 'C#-7 F#7 Bmaj7 Bmaj7')
+      is('and the key follows', state.status.key.name, 'B')
+      store.transposeSong(1)
+      await settle(250)
+      is('back up again', state.status.key.name, 'C')
+      store.transposeSong(5)
+      await settle(250)
+      is('up a fourth is a flat key', state.text, 'G-7 C7 Fmaj7 Fmaj7')
+      is('named as such', state.status.key.name, 'F')
+      store.transposeSong(-5)
+      await settle(250)
+
+      const transposeButtons = [...document.querySelectorAll('.jamin-chrome .v-btn')]
+        .filter((b) => /accidental/.test(b.innerHTML))
+      is('two transpose buttons in the toolbar', transposeButtons.length, 2)
+      transposeButtons[1].click()
+      await settle(300)
+      // Up a semitone from C is Db major, not C# major -- five flats beats seven sharps.
+      is('the sharp button transposes up', state.status.key.name, 'Db')
+      transposeButtons[0].click()
+      await settle(300)
+      is('the flat button transposes down', state.status.key.name, 'C')
+
+      /* ---------- one phrase for the whole song, by default ---------- */
+      is('per-chord articulations are off by default', state.settings.accompany.perChordPhrases, false)
+      store.setText('C7 F7 Bb7')
+      await settle(250)
+      store.state.phrases = [{
+        name: 'riff', rootPc: 0, sourcePcs: [0, 4, 7, 10], sourceChord: 'C7', lengthPulses: 96,
+        notes: [{ at: 0, note: 60, velocity: 90, duration: 12 }],
+      }]
+      store.bindPhrase('riff')
+      await settle(250)
+      is('binding leaves the chart alone', state.text, 'C7 F7 Bb7')
+      is('and sets the song phrase', state.songPhrase, 'riff')
+      is('every chord gets it', state.score.events.map((e) => e.phraseId), ['riff', 'riff', 'riff'])
+      store.bindPhrase(null)
+      await settle(200)
+      is('clearing it clears every chord', state.score.events.map((e) => e.phraseId), [null, null, null])
+
+      // Turned on, dots come back.
+      state.settings.accompany.perChordPhrases = true
+      await settle(250)
+      store.bindPhrase('riff')
+      await settle(250)
+      ok('now it writes a dot', state.text.startsWith('.C7{riff}'), state.text)
+      state.settings.accompany.perChordPhrases = false
+      store.setText('C7 F7 Bb7')
+      store.bindPhrase(null)
+      await settle(250)
+
       /* ---------- the progression library ---------- */
       store.setText('C F G')
       await settle(200)
@@ -425,6 +500,7 @@
       is('preview as written', store.renderProgression(iiVI, null), 'D-7 G7 Cmaj7 Cmaj7')
 
       // Insert at the cursor, into a real selection published by the canvas.
+      await mirrored()
       field.focus()
       field.setSelectionRange(2, 3)
       await settle(120)
@@ -482,6 +558,13 @@
       await settle(150)
 
       // Import a foreign shape, then export ours.
+      const toKey = store.importProgressionJson('[{"title":"Into Eb","chords":["D-7","G7","C"]}]', { targetPc: 3 })
+      await settle(150)
+      ok('imports can be transposed on the way in', toKey.ok)
+      is('into the key asked for', store.state.progressions[0].text, 'Eb-7 Ab7 Db')
+      store.deleteProgression(store.state.progressions[0].name)
+      await settle(120)
+
       const imported = store.importProgressionJson('[{"title":"From the wild","chords":["D-7","G7","C"],"genre":"jazz"}]')
       await settle(150)
       ok('imported a foreign shape', imported.ok && store.state.progressions[0].text === 'D-7 G7 C',

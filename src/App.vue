@@ -4,7 +4,7 @@ import ChordCanvas from './components/ChordCanvas.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import PhraseBook from './components/PhraseBook.vue'
 import ProgressionBook from './components/ProgressionBook.vue'
-import { state, initApp, armCapture, disarmCapture, panic, toggleInternalTransport, engine } from './store.js'
+import { state, initApp, armCapture, disarmCapture, panic, toggleInternalTransport, transposeSong, engine } from './store.js'
 
 const idle = ref(false)
 let idleTimer = null
@@ -81,6 +81,20 @@ function toggleArm() {
           @click="toggleInternalTransport"
         />
         <v-btn
+          icon="mdi-music-accidental-flat"
+          size="small"
+          variant="text"
+          title="Transpose the whole chart down a semitone"
+          @click="transposeSong(-1)"
+        />
+        <v-btn
+          icon="mdi-music-accidental-sharp"
+          size="small"
+          variant="text"
+          title="Transpose the whole chart up a semitone"
+          @click="transposeSong(1)"
+        />
+        <v-btn
           icon="mdi-record-circle-outline"
           size="small"
           variant="text"
@@ -109,9 +123,16 @@ function toggleArm() {
       >
         <span><span class="label">bar </span>{{ state.status.bar }}<span class="label">.</span>{{ state.status.beat }}</span>
         <span><span class="label">bpm </span>{{ state.status.bpm }}</span>
+        <span v-if="state.status.key">
+          <span class="label">key </span>{{ state.status.key.name }}<span
+            v-if="state.status.key.confidence < 0.25"
+            class="label"
+          >?</span>
+        </span>
         <span v-if="state.status.chord"><span class="label">now </span>{{ state.status.chord }}</span>
         <span v-if="state.status.chordName" style="opacity: 0.6">{{ state.status.chordName }}</span>
         <span v-if="state.status.phrase"><span class="label">phrase </span>{{ state.status.phrase }}</span>
+        <span v-else-if="state.songPhrase"><span class="label">phrase </span>{{ state.songPhrase }}</span>
         <span v-if="state.status.caretChord" style="opacity: 0.55"><span class="label">typing </span>{{ state.status.caretChord }}</span>
         <span v-if="state.ui.armed" style="color: #ff5470">● capturing</span>
         <span v-if="!state.status.running" class="label">stopped — waiting for the DAW</span>
