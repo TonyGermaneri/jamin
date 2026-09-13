@@ -42,12 +42,14 @@ function wake() {
 }
 
 const midiTone = computed(() => {
+  if (state.host.active) return 'success'
   if (state.midi.state === 'ready') return state.settings.midi.clockInputId ? 'success' : 'warning'
   if (state.midi.state === 'denied' || state.midi.state === 'unsupported') return 'error'
   return 'grey'
 })
 
 const midiHint = computed(() => {
+  if (state.host.active) return 'Following the host — its transport, its tempo, its playhead'
   if (state.midi.state === 'unsupported') return 'Web MIDI is unavailable in this browser'
   if (state.midi.state === 'denied') return 'MIDI permission was refused — click to retry'
   if (!state.settings.midi.clockInputId) return 'No clock source bound — click to pick one'
@@ -60,7 +62,9 @@ function portName(id) {
   return port ? port.name : '—'
 }
 
-const noClockBound = computed(() => !state.settings.midi.clockInputId || state.midi.state !== 'ready')
+const noClockBound = computed(
+  () => !state.host.active && (!state.settings.midi.clockInputId || state.midi.state !== 'ready'),
+)
 
 const accent = computed(() => (state.accentPhrase ? accentPhrase() : null))
 const accentTitle = computed(() => {
@@ -74,7 +78,7 @@ const readoutColor = computed(() => state.settings.theme.fg)
 function openMidi() {
   state.ui.settingsTab = 'midi'
   state.ui.settings = true
-  if (state.midi.state === 'denied' || state.midi.state === 'idle') engine.enable()
+  if (!state.host.active && (state.midi.state === 'denied' || state.midi.state === 'idle')) engine.enable()
 }
 
 function toggleArm() {

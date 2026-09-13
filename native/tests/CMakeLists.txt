@@ -19,4 +19,13 @@ if(APPLE AND TARGET jamin-boot AND TARGET JaminPlugin_AU)
              COMMAND jamin-boot
                      "$<TARGET_BUNDLE_CONTENT_DIR:JaminPlugin_AU>/Resources/web")
     set_tests_properties(jamin-boot PROPERTIES TIMEOUT 60)
+
+    # And the bridge: a stand-in for window.__JUCE__, a playhead driven past it,
+    # and the chart checked for having followed. The page half of phase 1, which
+    # no C++ compiler can check.
+    add_test(NAME jamin-host
+             COMMAND jamin-boot
+                     "$<TARGET_BUNDLE_CONTENT_DIR:JaminPlugin_AU>/Resources/web"
+                     --host)
+    set_tests_properties(jamin-host PROPERTIES TIMEOUT 60)
 endif()

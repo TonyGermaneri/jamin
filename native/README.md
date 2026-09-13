@@ -12,7 +12,7 @@ ctest --test-dir build --output-on-failure
 JUCE is fetched by the build. CMake 3.22+, a C++20 compiler, and a `dist/` in the repository
 root (`npm run build`, or `cmake --build build --target web`) are the whole list.
 
-[The plan](../docs/plugin.md), through phase 0.
+[The plan](../docs/plugin.md), through phase 1.
 
 ---
 
@@ -35,8 +35,8 @@ If the plugin ever needs to know what `Abmaj7/C` means, the design has failed.
 | --- | --- |
 | `core/` | No JUCE, no plugin API. `Sequence` and `SequencePlayer` — the audio-thread reader, allocation-free and lock-free — and `SongBus`, the chart every instance shares. |
 | `plugin/` | The AU and Standalone targets. `processBlock` reads the playhead and emits; the editor is a `WebBrowserComponent` and nothing else. |
-| `tools/` | `jamin-boot` — loads the real bundled page in a real `WKWebView` and fails if the application reports so much as a console error. |
-| `tests/` | The sequence reader against a loop point, and the bus between two instances. |
+| `tools/` | `jamin-boot` — loads the real bundled page in a real `WKWebView` and fails if the application reports so much as a console error. With `--host` it stands in for the plugin, drives a playhead, and checks the chart followed. |
+| `tests/` | The sequence reader against a loop point, and the bus between two instances. The page's own half of the bridge is `tests/host.test.js`, in the JavaScript suite. |
 | `cmake/` | Copying the built page into the bundle. |
 
 ---

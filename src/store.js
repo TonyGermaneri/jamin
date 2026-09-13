@@ -10,6 +10,7 @@
 
 import { reactive, watch } from 'vue'
 import { MidiEngine } from './core/midi.js'
+import { hosted, hostData, callHost, HostClock } from './core/host.js'
 import { Player } from './core/player.js'
 import { parseScore } from './core/score.js'
 import {
@@ -74,6 +75,9 @@ export const state = reactive({
   bulk: { count: 0, importing: false, progress: '', report: null },
   pendingCapture: null,
   midi: { state: 'idle', error: null, inputs: [], outputs: [] },
+  // Set once at startup and never again: whether this page is the plugin's
+  // editor rather than a browser tab, and who it is if so.
+  host: { active: false, instanceId: null, shared: false },
   status: {
     running: false,
     internal: false,
@@ -152,20 +156,39 @@ player.onCapture = (capture) => {
   toast('Phrase captured')
 }
 
-engine.onTick = (pulse) => {
+/**
+ * Whatever is telling us the time.
+ *
+ * In a browser that is MidiEngine counting clock bytes. In the plugin it is the
+ * host's own playhead, reported as a position rather than counted -- which
+ * cannot drift, survives a dropped message, and is the reason several instances
+ * agree about the time without anything passing between them.
+ *
+ * Both offer `running` and `bpm` and both drive the two handlers below, so
+ * nothing downstream of here knows which one it is listening to.
+ */
+const hostClock = new HostClock()
+const clock = () => (state.host.active ? hostClock : engine)
+
+function onTick(pulse) {
   live.pulse = pulse
-  live.running = engine.running
-  live.bpm = engine.bpm
+  live.running = clock().running
+  live.bpm = clock().bpm
   player.tick(pulse)
   live.position = player.position
 }
 
-engine.onTransport = (kind) => {
-  live.running = engine.running
+function onTransportChange(kind) {
+  live.running = clock().running
   player.transport(kind)
   if (kind === 'stop') state.status.notes = []
   syncStatus()
 }
+
+engine.onTick = onTick
+engine.onTransport = onTransportChange
+hostClock.onTick = onTick
+hostClock.onTransport = onTransportChange
 
 engine.onNoteIn = (note, velocity, on) => player.noteIn(note, velocity, on)
 
@@ -208,10 +231,8 @@ export async function initApp() {
   loadChordDictionary().then(() => refreshChordName())
   refreshBulkCount()
 
-  engine.autoStartOnClock = state.settings.transport.autoStartOnClock
-  await engine.enable()
-  state.midi.state = engine.state
-  state.midi.error = engine.error
+  if (hosted()) await adoptHost()
+  else await openWebMidi()
 
   setInterval(syncStatus, 120)
 
@@ -221,6 +242,37 @@ export async function initApp() {
   const build = () => ensureLicks()
   if (typeof requestIdleCallback === 'function') requestIdleCallback(build, { timeout: 4000 })
   else setTimeout(build, 1200)
+}
+
+/**
+ * Running in a browser: ask for MIDI and take the clock off the wire.
+ */
+async function openWebMidi() {
+  engine.autoStartOnClock = state.settings.transport.autoStartOnClock
+  await engine.enable()
+  state.midi.state = engine.state
+  state.midi.error = engine.error
+}
+
+/**
+ * Running as the plugin's editor: the host has a playhead, so there is no clock
+ * to find and no ports to bind. Web MIDI does not exist in the web view at all,
+ * which is not a loss -- asking for it would only produce a warning telling
+ * somebody inside a DAW to go and use Chrome.
+ */
+async function adoptHost() {
+  state.host.active = true
+  state.host.instanceId = hostData('jaminInstanceId', null)
+  state.midi.state = 'hosted'
+  state.midi.error = null
+
+  hostClock.attach()
+
+  const info = await callHost('jaminReady').catch(() => null)
+  if (!info) return
+
+  if (info.instanceId) state.host.instanceId = info.instanceId
+  state.host.shared = Boolean(info.shared)
 }
 
 function readStored(key) {
@@ -331,7 +383,7 @@ export function reparse() {
     },
   })
   player.setScore(state.score)
-  if (!engine.running) state.status.eventIndex = -1
+  if (!clock().running) state.status.eventIndex = -1
   state.status.key = detectKey(state.score)
 }
 
@@ -344,11 +396,15 @@ function refreshChordName() {
 
 /** Everything the readout and dialogs need, sampled rather than watched. */
 function syncStatus() {
-  engine.checkStall()
+  // Watching for a clock that stopped arriving only means anything when the
+  // clock is arriving as bytes. A host reports a position whether or not it is
+  // moving, so there is nothing to go quiet.
+  if (!state.host.active) engine.checkStall()
   const status = state.status
-  status.running = engine.running
+  const source = clock()
+  status.running = source.running
   status.internal = engine.internalEnabled
-  status.bpm = Math.round(engine.bpm * 10) / 10
+  status.bpm = Math.round(source.bpm * 10) / 10
   const pulsesPerBar = state.score.pulsesPerBar || 96
   status.bar = Math.floor(live.position / pulsesPerBar) + 1
   status.beat = Math.floor((live.position % pulsesPerBar) / 24) + 1
@@ -537,7 +593,7 @@ export function unbindPhrase(tokenIndex) {
  * changes underneath it.
  */
 function currentTokenIndex() {
-  if (engine.running) {
+  if (clock().running) {
     const event = state.score.events[state.status.eventIndex]
     if (event && event.tokens.length) return event.tokens[0]
   }

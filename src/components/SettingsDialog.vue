@@ -89,8 +89,13 @@ async function retryMidi() {
         <v-window v-model="state.ui.settingsTab">
           <!-- MIDI ------------------------------------------------------- -->
           <v-window-item value="midi">
+            <v-alert v-if="state.host.active" type="success" variant="tonal" density="compact" class="mb-4">
+              Running as a plugin. The host supplies the transport and takes the notes, so there
+              is nothing here to bind — this tab is the browser build's.
+            </v-alert>
+
             <v-alert
-              v-if="state.midi.state !== 'ready'"
+              v-if="!state.host.active && state.midi.state !== 'ready'"
               :type="state.midi.state === 'requesting' ? 'info' : 'warning'"
               variant="tonal"
               density="compact"

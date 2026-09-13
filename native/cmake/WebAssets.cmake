@@ -44,8 +44,13 @@ function(jamin_bundle_web target)
             "  or `cmake --build <dir> --target web`.")
     endif()
 
-    # The artefact directory is per-format, so this runs once per format target.
-    add_custom_command(TARGET ${target} POST_BUILD
+    # A target of its own rather than POST_BUILD on the plugin, because
+    # POST_BUILD only fires when the plugin relinks -- so a `npm run build` with
+    # no C++ change left a stale page inside the bundle, and the tests were
+    # checking a version of the app that no longer existed. This runs every
+    # build; the script copies only what differs, so an unchanged page costs
+    # nothing and does not restamp the bundle.
+    add_custom_target(${target}_web ALL
         COMMAND "${CMAKE_COMMAND}"
                 # No quotes: VERBATIM passes each argument exactly as written,
                 # so a quote here arrives as part of the path.
@@ -55,4 +60,7 @@ function(jamin_bundle_web target)
                 -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/CopyWeb.cmake"
         COMMENT "Copying the web build into ${target}"
         VERBATIM)
+
+    # After the bundle exists, or there is nowhere to copy to.
+    add_dependencies(${target}_web ${target})
 endfunction()

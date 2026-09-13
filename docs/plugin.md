@@ -187,10 +187,23 @@ standalone; `auval` clean; the built page copied into the bundle and served over
 anything — nothing compiles a sequence, because that is phase 2, and the page does not yet know
 it is in a plugin.
 
-**Phase 1 — the bridge.** `src/core/host.js`: one small module that detects `window.__JUCE__`,
-wraps `emitEvent`/`addEventListener` into the shape the store already expects, and falls back to
-the browser. The transport event drives the highlight from the host playhead instead of the MIDI
-clock. *Exit:* the chart highlights in time with Logic's playhead, with the MIDI clock unplugged.
+**Phase 1 — the bridge. *Done; see `src/core/host.js`.*** One module that detects
+`window.__JUCE__`, wraps JUCE's `emitEvent`/`addEventListener` into `callHost`/`onHost`, and
+answers harmlessly when there is no plugin, so the browser build takes no notice of it.
+`HostClock` turns the host's reported position into the same two hooks `MidiEngine` offers —
+`onTick` and `onTransport` — and the store routes whichever one is live through one pair of
+handlers, so nothing downstream knows which it is listening to. Inside the plugin there is no
+permission to grant and no port to bind, so the MIDI tab says so instead of warning somebody
+inside a DAW to go and use Chrome.
+
+The position is *reported*, not counted. That is strictly better than a clock byte stream: it
+cannot drift, it survives a dropped message, and a locate is a number changing rather than
+something to be inferred. It is also the reason several instances agree about the time without
+anything passing between them.
+
+*Verified:* `jamin-boot --host` installs a stand-in for `window.__JUCE__` against the real built
+bundle, drives a playhead past it, and asserts the chart followed — the bar count advanced, the
+chord changed, the host's tempo is the one on screen, and stopping was noticed.
 
 **Phase 2 — the compiler.** `compile(chart, settings) → Sequence`, built by Vite as a second,
 DOM-free entry point, run in a `JSContext` in the processor. *Exit:* notes come out of the MIDI
