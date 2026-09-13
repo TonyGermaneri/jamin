@@ -15,7 +15,7 @@ for more than that, it has failed.
 
 ## Running it
 
-Needs Node 20.19+ or 22.12+ (Vite 7's floor). Not installed on this machine.
+Needs Node 20.19+ or 22.12+ (Vite 7's floor).
 
 ```sh
 npm install
@@ -39,6 +39,106 @@ npm run build     # production bundle in dist/
 npm test          # pure-logic test suites
 npm run chords    # regenerate the chord dictionary data
 ```
+
+## Running it as a plugin
+
+The same application, inside your DAW, reading the host's own playhead instead
+of a MIDI clock. The editor *is* this web app — there is no second
+implementation of anything, and no music theory in the C++ at all.
+
+Building it needs **CMake 3.22+**, **Ninja**, and **Xcode**. JUCE is fetched by
+the build; nothing else to install. With no Homebrew on the machine, all three
+of Node, CMake and Ninja install into `~/.local` without admin rights:
+
+```sh
+curl -fsSL https://nodejs.org/dist/v22.20.0/node-v22.20.0-darwin-arm64.tar.xz | tar xJ -C ~/.local/opt
+curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-macos-universal.tar.gz | tar xz -C ~/.local/opt
+curl -fsSLo /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-mac.zip && unzip -o /tmp/ninja.zip -d ~/.local/bin
+```
+
+Then, from the repository root:
+
+```sh
+npm install && npm run build                 # the page the plugin will show
+cmake -B native/build -G Ninja -S native -DCMAKE_OSX_ARCHITECTURES=arm64
+cmake --build native/build
+ctest --test-dir native/build --output-on-failure
+```
+
+**The web build comes first.** The page is copied into each bundle at build
+time, so there has to be a `dist/` for it to read; CMake says so plainly if
+there is not. `cmake --build native/build --target web` runs Vite for you.
+
+### Running the binary
+
+The standalone is the quickest way to see it, and the only one that needs no
+DAW at all:
+
+```sh
+STANDALONE=native/build/plugin/JaminInstrument_artefacts/RelWithDebInfo/Standalone/Jamin.app
+open "$STANDALONE"
+```
+
+It opens the full application in its own window, with the host's transport
+replaced by the standalone's own. Audio and MIDI devices are chosen from its
+own options; **no MIDI output is selected by default**, which is deliberate —
+a development build should not start playing into whatever hardware happens to
+be switched on.
+
+While iterating on the page, there is no need to rebuild the plugin at all.
+`JAMIN_WEB_DIR` makes it serve the repository's `dist/` instead of its own copy,
+so `npm run build` and reopening the window is the whole loop:
+
+```sh
+open --env JAMIN_WEB_DIR="$PWD/dist" "$STANDALONE"
+```
+
+`--env` is needed because `open` hands the app to LaunchServices, which does not
+inherit the shell's environment — a plain `VAR=... open` sets nothing. Running
+the executable inside the bundle directly works too, and keeps its output in the
+terminal, which is where you want it when something has gone wrong:
+
+```sh
+JAMIN_WEB_DIR="$PWD/dist" "$STANDALONE/Contents/MacOS/Jamin"
+```
+
+### Installing it
+
+```sh
+cp -R  native/build/plugin/JaminInstrument_artefacts/RelWithDebInfo/AU/Jamin.component       ~/Library/Audio/Plug-Ins/Components/
+cp -R "native/build/plugin/JaminMidiFx_artefacts/RelWithDebInfo/AU/Jamin MIDI FX.component"  ~/Library/Audio/Plug-Ins/Components/
+cp -R  native/build/plugin/JaminInstrument_artefacts/RelWithDebInfo/VST3/Jamin.vst3          ~/Library/Audio/Plug-Ins/VST3/
+
+killall -9 AudioComponentRegistrar   # macOS caches the component registry
+auval -v aumu Jam1 Jmin              # the instrument
+auval -v aumi JamF Jmin              # the MIDI effect
+```
+
+That `killall` is not optional the first time a plugin code changes. Until the
+registry is rebuilt, `auval` reports `didn't find the component` for a plugin
+that is installed and entirely correct, which reads exactly like a build
+failure and is not one.
+
+### Two shapes, and which one you want
+
+What jamin is, is a MIDI effect: it makes no sound, it emits notes, and it
+belongs above the instrument it is playing. **Ableton Live does not host AU
+MIDI processors** — not this one, the whole `aumi` category — so it is built
+as an instrument as well.
+
+| | Type | Where it appears |
+| --- | --- | --- |
+| **Jamin** | `aumu`, VST3 | Everywhere. Live, Bitwig, Cubase, Reaper. |
+| **Jamin MIDI FX** | `aumi` | Logic's **MIDI FX** slot, with nothing to route. |
+
+**In Logic:** *Jamin MIDI FX* in the MIDI FX slot above your instrument. Done.
+
+**In Live:** put *Jamin* on a MIDI track — that track now makes silence. On the
+track holding the sound you want, set **MIDI From** to the Jamin track, pick
+**Jamin** in the chooser below it, and set **Monitor** to **In**. Repeat per
+track: one chart, one instance per track, a different phrase on each.
+
+[The plan and what it rests on](docs/plugin.md) · [the native build](native/README.md)
 
 ## Notation
 
@@ -313,8 +413,11 @@ and carry no third-party claim.
 
 ## Tests
 
-There is no Node on the development machine this was written on, so the
-pure-logic suites run through macOS JavaScriptCore instead
-(`scripts/jsrun.py`). They cover the chord parser, the timeline, voice leading,
-voicings, playback and text layout — everything except the DOM, Web MIDI and
-WebGL, which need a browser.
+The pure-logic suites run through macOS JavaScriptCore (`scripts/jsrun.py`)
+rather than Node. They started that way because there was no Node on the
+machine this was written on, and they have stayed that way for a better reason:
+running them outside a browser *and* outside Node is a standing proof that the
+chord parser, the timeline and the voice leading have nothing browser-shaped in
+them — which is exactly what the plugin depends on. They cover the chord parser,
+the timeline, voice leading, voicings, playback, the host bridge and text
+layout; everything except the DOM, Web MIDI and WebGL, which need a browser.

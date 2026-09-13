@@ -56,7 +56,19 @@ export JAMIN_WEB_DIR=/path/to/jamin/dist
 ```
 
 With that set, `npm run build` and reopening the editor is the whole iteration loop — no plugin
-rebuild, no host restart.
+rebuild, no host restart. `open` hands an app to LaunchServices, which does not inherit the
+shell's environment, so a plain `VAR=... open` sets nothing; use `open --env VAR=...` or run the
+executable inside the bundle directly.
+
+Either way the editor says where it settled, once per process:
+
+```
+jamin: serving the page from /Users/you/gh/jamin/dist
+```
+
+A blank editor is almost always a page that is not where the plugin looked, and that line is the
+one that answers it. Naming a directory with no `index.html` in it says so and falls back to the
+bundle, rather than falling back in silence while you edit a copy nothing is reading.
 
 The `.eot`, `.ttf` and `.woff` faces are skipped. A `@font-face` src list is tried in order and
 `woff2` is first, so WKWebView never asks for the other three; they are 3.2 MB of bundle for a
