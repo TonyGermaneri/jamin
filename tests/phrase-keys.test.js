@@ -128,4 +128,40 @@ const anchored = anchorOctave([40, 47, 71, 74], [64, 67, 71], [28, 100])
 check('anchoring shifts as a block', spread(anchored), 34)
 
 
+/* ---------------- snapping to chord notes ---------------- */
+check('a chord tone is left alone', snapToChord([60, 64, 67], [0, 4, 7]), [60, 64, 67])
+check('a passing tone moves to the nearest', snapToChord([62], [0, 4, 7]), [60])
+check('upward when that is nearer', snapToChord([66], [0, 4, 7]), [67])
+check('across an octave boundary', snapToChord([71], [0, 4, 7]), [72])
+check('and below one', snapToChord([61], [0, 4, 7]), [60])
+check('an empty chord snaps nothing', snapToChord([62], []), [62])
+check('the register is kept', snapToChord([84, 86], [0, 4, 7]).every((n) => n > 80), true)
+
+// The gap this was written for: a phrase moved between two chords of the same
+// shape never reaches the mapping, so its passing tones were never snapped.
+const withPassing = [60, 62, 64, 66, 67]      // C D E F# G over C major
+const fromC = { rootPc: 0, pcs: parseChord('C').absPcs }
+const toF = parseChord('F')
+const loose = realizePhrase(withPassing, fromC, { rootPc: toF.rootPc, pcs: toF.absPcs },
+  { range: [40, 96], snapNonChordTones: false })
+const snapped = realizePhrase(withPassing, fromC, { rootPc: toF.rootPc, pcs: toF.absPcs },
+  { range: [40, 96], snapNonChordTones: true })
+const outside = (list) => list.filter((n) => !new Set(toF.absPcs).has(((n % 12) + 12) % 12)).length
+check('same shape, unsnapped, keeps its passing tones', outside(loose) > 0, true)
+check('same shape, snapped, has none', outside(snapped), 0)
+check('snapping does not change how many notes there are', snapped.length, withPassing.length)
+check('nor the contour', snapped.every((n, i) => i === 0 || n >= snapped[i - 1]), true)
+
+// And it still works when the shape does change.
+const toDm7 = parseChord('Dm7')
+const across = realizePhrase(withPassing, fromC, { rootPc: toDm7.rootPc, pcs: toDm7.absPcs },
+  { range: [40, 96], snapNonChordTones: true })
+check('different shape, snapped, has none outside either',
+  across.filter((n) => !new Set(toDm7.absPcs).has(((n % 12) + 12) % 12)).length, 0)
+
+// Snapping is idempotent: doing it twice changes nothing.
+check('snapping twice is snapping once', snapToChord(snapToChord(withPassing, [0, 4, 7]), [0, 4, 7]),
+  snapToChord(withPassing, [0, 4, 7]))
+
+
 console.log(failed === 0 ? 'phrase-keys: all checks passed' : `phrase-keys: ${failed} FAILED`)

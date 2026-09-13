@@ -16,12 +16,15 @@ export const STORAGE_KEY = 'jamin.settings.v1'
  *        fit was the default. Stretching is a tempo change: a bar of phrase in
  *        half a bar of chord plays twice as fast. Anyone upgrading still had
  *        `stretch` saved and would keep hearing that, having never chosen it.
+ *   5 -- snapping notes that are not in the chord onto the nearest one that is
+ *        became the default, and became a setting you can see. Nobody can have
+ *        chosen the old value, because there was nothing to choose it with.
  *   4 -- there were two bass settings doing much the same thing. The one in the
  *        phrase book won, since it holds a root under a phrase and under a plain
  *        chord alike; `chords.bassNote` and `accompany.keepBass` are gone, and
  *        anyone who had the chord one on gets the remaining one on.
  */
-export const SETTINGS_VERSION = 4
+export const SETTINGS_VERSION = 5
 export const TEXT_KEY = 'jamin.chart.v1'
 export const PHRASE_KEY = 'jamin.phrases.v1'
 export const SONG_PHRASE_KEY = 'jamin.songPhrase.v1'
@@ -88,7 +91,7 @@ export function defaultSettings() {
       // stretch: squeezed to fit the chord exactly, which changes the tempo.
       fit: 'follow',
       keepRegister: true,
-      snapNonChordTones: false,
+      snapNonChordTones: true,
       monitor: true,
       // How fast a phrase plays over the chords: 1 is as it was played.
       speed: 1,
@@ -163,6 +166,10 @@ export function migrateSettings(stored) {
     delete next.chords.bassNote
     delete next.chords.bassOctave
     delete next.accompany.keepBass
+  }
+
+  if (version < 5) {
+    next.accompany.snapNonChordTones = true
   }
 
   next.version = SETTINGS_VERSION

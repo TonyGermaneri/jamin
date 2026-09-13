@@ -674,10 +674,11 @@
       state.ui.phrasesTab = 'playback'
       await settle(400)
       const playbackText = document.querySelector('.v-overlay--active .v-window-item--active').innerText
-      for (const wanted of ['Speed', 'Octave', 'Bass note', 'Double bass']) {
+      for (const wanted of ['Speed', 'Octave', 'Bass note', 'Double bass', 'Snap to chord notes']) {
         ok(`playback offers ${wanted}`, playbackText.includes(wanted), playbackText.slice(0, 70).replace(/\n/g, ' '))
       }
       is('speed starts at one', state.settings.accompany.speed, 1)
+      is('snapping is on to begin with', state.settings.accompany.snapNonChordTones, true)
       is('bass is off to begin with', state.settings.accompany.bass, false)
       // One bass setting, in one place.
       is('chords no longer carry a bass note of their own', state.settings.chords.bassNote, undefined)

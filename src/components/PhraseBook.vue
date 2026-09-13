@@ -386,6 +386,12 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
               <v-col cols="12" md="6">
                 <v-switch v-model="accompany.enabled" label="Play phrases at all" />
                 <v-switch v-model="accompany.keepRegister" label="Follow the register of the chord before" />
+                <v-switch v-model="accompany.snapNonChordTones" label="Snap to chord notes" />
+                <div class="text-caption text-medium-emphasis">
+                  Anything not in the chord moves to the nearest note that is. Off, a passing
+                  tone stays where the harmony put it, which is more faithful to the phrase and
+                  less certain to fit.
+                </div>
               </v-col>
               <v-col cols="12" md="6">
                 <v-select

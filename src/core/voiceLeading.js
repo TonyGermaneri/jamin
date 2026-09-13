@@ -180,6 +180,33 @@ export function anchorOctave(notes, anchor, range = [0, 127]) {
 const sameSet = (a, b) => a.length === b.length && a.every((value, i) => value === b[i])
 
 /**
+ * Move anything that is not in the chord to the nearest note that is.
+ *
+ * Applied after the mapping rather than inside it, because a phrase moved
+ * between two chords of the *same* shape is a pure transposition and never
+ * reaches the mapping at all -- and its passing tones are still passing tones.
+ */
+export function snapToChord(notes, targetPcs) {
+  const wanted = [...new Set(targetPcs.map(mod12))].sort((a, b) => a - b)
+  if (!wanted.length) return notes.slice()
+  const inChord = new Set(wanted)
+
+  return notes.map((note) => {
+    if (inChord.has(mod12(note))) return note
+    let best = note
+    let nearest = Infinity
+    for (const pitchClass of wanted) {
+      const delta = signedDelta(mod12(note), pitchClass)
+      if (Math.abs(delta) < nearest) {
+        nearest = Math.abs(delta)
+        best = note + delta
+      }
+    }
+    return best
+  })
+}
+
+/**
  * Put a phrase over a chord.
  *
  * Root first, shape second. The phrase is transposed so its root lands on the
@@ -210,9 +237,11 @@ export function realizePhrase(notes, source, target, opts = {}) {
   const wanted = [...new Set(target.pcs.map(mod12))].sort((a, b) => a - b)
 
   // Same shape: transposition alone is exact, and every degree survives.
-  const mapped = sameSet(movedPcs, wanted)
+  let mapped = sameSet(movedPcs, wanted)
     ? moved
-    : remapPhraseNotes(moved, movedPcs, wanted, { keepRegister: false, snapNonChordTones, range })
+    : remapPhraseNotes(moved, movedPcs, wanted, { keepRegister: false, range })
+
+  if (snapNonChordTones) mapped = snapToChord(mapped, wanted)
 
   return anchorOctave(mapped, anchor && anchor.length ? anchor : notes, range)
 }

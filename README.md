@@ -192,6 +192,11 @@ Getting it over a chord happens in that order, and the order matters:
    the root stays the root. Over Dmaj7 the ♭3 becomes a 3 and the ♭7 a 7; over
    Ddim7 the 5 becomes a ♭5. Notes that were never chord tones move with whichever
    chord tone they were leaning on, so approach notes stay approach notes.
+
+   **Snap to chord notes** then moves anything still outside the chord onto the
+   nearest note that is in it. On by default: it guarantees every note fits.
+   Turn it off and a passing tone stays where the harmony put it, which is more
+   faithful to the phrase and less certain to fit under it.
 3. **Register last.** The octave is chosen to sit closest to where the phrase was
    in the previous chord, so a figure repeating through a progression walks
    rather than leaps.

@@ -64,4 +64,13 @@ check('a fresh install has no chord bass setting', defaultSettings().chords.bass
 check('and its bass is off', defaultSettings().accompany.bass, false)
 
 
+/* ---------------- snapping became the default ---------------- */
+check('a fresh install snaps', defaultSettings().accompany.snapNonChordTones, true)
+// It was never settable before, so nobody chose the old value.
+check('and so does an upgraded one', migrateSettings({ version: 4, accompany: { snapNonChordTones: false } })
+  .accompany.snapNonChordTones, true)
+check('even with no accompany section at all',
+  migrateSettings({ version: 4 }).accompany.snapNonChordTones, true)
+
+
 console.log(failed === 0 ? 'settings: all checks passed' : `settings: ${failed} FAILED`)
