@@ -276,4 +276,34 @@ for (let p = 1; p <= 95; p++) player.tick(p)
 check('a dot alone does not bind', engine.log.filter(l => l[0] === 'on').map(l => l[1]), [60, 64, 67, 70])
 
 
+// --- a real song: repeats, merged chords and split bars together ---
+// Every chord length in one chart -- two bars, one bar, half a bar, all inside
+// repeats. The phrase must keep one rhythm through all of it.
+const song = parseScore(':Cm7 Cm7 Abmaj7 Gm7:\n:Fm7,Gm7 Abmaj,Bb6:', { beatsPerBar: 4, songPhrase: 'pattern' })
+check('twelve bars', song.bars, 12)
+check('every chord readable', song.tokens.filter(t => t.type === 'error'), [])
+check('lengths as written', song.events.map(e => e.bars), [2, 1, 1, 2, 1, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+
+settings = makeSettings()
+const everyGap = new Set()
+let totalNotes = 0
+for (const event of song.events) {
+  const on = buildPhraseQueue(pattern, event.chord, event, settings).queue.filter(q => q.on)
+  totalNotes += on.length
+  on.slice(1).forEach((q, i) => everyGap.add(q.at - on[i].at))
+}
+check('one rhythm through the whole song', [...everyGap], [24])
+check('a note every beat, all twelve bars', totalNotes, 48)
+
+// The half-bar chords take consecutive halves of the pattern, not the same half.
+const halves = song.events.slice(6, 10).map((event) => {
+  const on = buildPhraseQueue(pattern, event.chord, event, settings).queue.filter(q => q.on)
+  return on.map(q => ((q.note % 12) - event.chord.rootPc + 12) % 12).join(',')
+})
+// Positionally the pattern just carries on: first halves get its opening pair,
+// second halves its closing pair. The degrees differ because the chords do --
+// over Abmaj the pattern's b3 is a 3, and over Bb6 its b7 is a 6.
+check('each half bar continues the pattern', halves, ['0,3', '7,10', '0,4', '7,9'])
+
+
 console.log(failed === 0 ? 'player: all checks passed' : `player: ${failed} FAILED`)

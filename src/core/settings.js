@@ -8,6 +8,16 @@
 import { THEMES, SHADER_DEFAULTS } from './themes.js'
 
 export const STORAGE_KEY = 'jamin.settings.v1'
+
+/**
+ * Bumped when a stored setting needs correcting on the way in.
+ *
+ *   2 -- `accompany.fit` used to mean stretch/repeat/truncate, and stretching to
+ *        fit was the default. Stretching is a tempo change: a bar of phrase in
+ *        half a bar of chord plays twice as fast. Anyone upgrading still had
+ *        `stretch` saved and would keep hearing that, having never chosen it.
+ */
+export const SETTINGS_VERSION = 2
 export const TEXT_KEY = 'jamin.chart.v1'
 export const PHRASE_KEY = 'jamin.phrases.v1'
 export const SONG_PHRASE_KEY = 'jamin.songPhrase.v1'
@@ -15,6 +25,7 @@ export const SONG_PHRASE_KEY = 'jamin.songPhrase.v1'
 export function defaultSettings() {
   const theme = THEMES[0]
   return {
+    version: SETTINGS_VERSION,
     midi: {
       clockInputId: '',
       chordOutputId: '',
@@ -105,10 +116,35 @@ export function mergeSettings(base, stored) {
   return out
 }
 
+/**
+ * Correct settings saved by an older version.
+ *
+ * A stored value always beats a new default -- that is the point of storing it --
+ * so changing a default is not enough to reach anyone who has run the app
+ * before. This is how a default actually gets changed.
+ */
+export function migrateSettings(stored) {
+  if (!stored || typeof stored !== 'object') return stored
+  const version = Number(stored.version) || 1
+  if (version >= SETTINGS_VERSION) return stored
+
+  const next = { ...stored, accompany: { ...(stored.accompany || {}) } }
+
+  if (version < 2) {
+    // The old vocabulary, and the old default among it.
+    if (['stretch', 'repeat', 'truncate'].includes(next.accompany.fit)) {
+      next.accompany.fit = 'follow'
+    }
+  }
+
+  next.version = SETTINGS_VERSION
+  return next
+}
+
 export function loadSettings() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    return mergeSettings(defaultSettings(), raw ? JSON.parse(raw) : null)
+    return mergeSettings(defaultSettings(), migrateSettings(raw ? JSON.parse(raw) : null))
   } catch {
     return defaultSettings()
   }

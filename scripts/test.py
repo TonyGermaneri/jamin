@@ -25,6 +25,7 @@ SUITES = [
         "tests/fixtures/chordonomicon-vocab.js", "src/core/chordParser.js", "src/core/score.js",
         "src/core/importers.js", "src/core/progressions.js",
     ], "tests/importers.test.js"),
+    (["src/core/themes.js", "src/core/settings.js"], "tests/settings.test.js"),
     (["src/core/vocParser.js"], "tests/voc.test.js"),
     ([
         "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",

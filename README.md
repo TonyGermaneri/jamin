@@ -194,7 +194,10 @@ its own speed.
 
 There are two other settings for this if you want them -- restarting the pattern
 on every chord, or stretching it to fill the chord exactly. Stretching is a tempo
-change by definition, which is why it is not the default.
+change by definition, which is why it is not the default, and why settings saved
+before it stopped being the default are corrected on load: a stored value beats a
+new default, so changing a default is not on its own enough to reach anyone who
+has run the app before.
 
 Doing step 2 before step 1 -- which is what "minimal movement" means if you
 forget about the root -- silently rotates the degrees. From Fm7 to Dm7 the

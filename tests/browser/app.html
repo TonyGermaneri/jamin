@@ -286,6 +286,11 @@
       await settle(200)
 
       /* ---------- a split bar must not double-time the phrase ---------- */
+      const settingsModule = await import('../../src/core/settings.js')
+      is('the shipped default keeps the rhythm', state.settings.accompany.fit, 'follow')
+      is('and an install that predates that is corrected on load',
+        settingsModule.migrateSettings({ version: 1, accompany: { fit: 'stretch' } }).accompany.fit, 'follow')
+
       store.state.phrases = [{
         name: 'pattern', rootPc: 0, sourcePcs: [0, 3, 7, 10], sourceChord: 'Cm7', lengthPulses: 96,
         notes: [[0, 60], [24, 63], [48, 67], [72, 70]].map(([at, note]) => ({ at, note, velocity: 90, duration: 12 })),
