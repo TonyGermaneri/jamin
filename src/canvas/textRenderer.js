@@ -70,8 +70,8 @@ function paintToken(ctx, line, rect, colors, state) {
   } else if (state.kind === 'past') {
     fill = colors.accentAlt
     alpha = 0.25 + 0.35 * state.glow
-  } else if (token.type === 'barline' || token.type === 'label') {
-    fill = colors.separator
+  } else if (token.type === 'barline' || token.type === 'label' || token.type === 'repeat') {
+    fill = token.type === 'repeat' ? colors.accentAlt : colors.separator
     alpha = token.type === 'label' ? 0.65 : 0.8
   }
 

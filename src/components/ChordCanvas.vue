@@ -374,12 +374,24 @@ function buildStatus(now) {
   const nextIndex = events.length ? (activeIndex + 1) % events.length : -1
   const prevIndex = events.length ? (activeIndex - 1 + events.length) % events.length : -1
 
+  // Ask the event which words it is made of, rather than asking each word which
+  // event it belongs to: a repeated section plays the same words many times, so
+  // a word does not belong to only one event.
+  const wordsOf = (index) => {
+    const event = events[index]
+    if (!event) return null
+    return new Set(event.tokens.map((tokenIndex) => state.score.tokens[tokenIndex]))
+  }
+  const activeWords = wordsOf(activeIndex)
+  const nextWords = nextIndex === activeIndex ? null : wordsOf(nextIndex)
+  const prevWords = prevIndex === activeIndex ? null : wordsOf(prevIndex)
+
   const of = (token) => {
     if (token.type === 'error') return { kind: 'error', glow: 0, progress: -1 }
-    if (!running || token.eventIndex < 0) return { kind: 'idle', glow: 0, progress: -1 }
-    if (token.eventIndex === activeIndex) return { kind: 'active', glow: 0.3 + 0.7 * glow, progress }
-    if (token.eventIndex === nextIndex && nextIndex !== activeIndex) return { kind: 'next', glow: progress, progress: -1 }
-    if (token.eventIndex === prevIndex && prevIndex !== activeIndex) return { kind: 'past', glow: fade, progress: -1 }
+    if (!running) return { kind: 'idle', glow: 0, progress: -1 }
+    if (activeWords && activeWords.has(token)) return { kind: 'active', glow: 0.3 + 0.7 * glow, progress }
+    if (nextWords && nextWords.has(token)) return { kind: 'next', glow: progress, progress: -1 }
+    if (prevWords && prevWords.has(token)) return { kind: 'past', glow: fade, progress: -1 }
     return { kind: 'idle', glow: 0, progress: -1 }
   }
 

@@ -41,6 +41,22 @@ for (const item of BUILTIN_PROGRESSIONS) {
   if (errors.length) bad.push(`${item.name}: ${errors.map((e) => e.text).join(' ')}`)
 }
 check('built-in progressions all parse', bad, [])
+
+// Bar counts, so a mistyped bar line is caught rather than merely parsing.
+const barsOf = (name) => {
+  const item = BUILTIN_PROGRESSIONS.find((p) => p.name === name)
+  return parseScore(item.text, { beatsPerBar: 4 }).bars
+}
+check('ii-V-I is four bars', barsOf('ii–V–I major'), 4)
+check('a turnaround is two', barsOf('Turnaround'), 2)
+check('twelve-bar blues is twelve', barsOf('12-bar blues'), 12)
+check('minor blues too', barsOf('Minor blues'), 12)
+check('rhythm changes A is eight', barsOf('Rhythm changes A'), 8)
+check('Giant Steps opening is four', barsOf('Giant Steps opening'), 4)
+check('Autumn cycle is eight', barsOf('Autumn cycle'), 8)
+check('So What vamp repeats to sixteen', barsOf('So What vamp'), 16)
+check('the pop loop runs four times', barsOf('Pop I–V–vi–IV'), 16)
+check('circle of fifths is twelve', barsOf('Circle of fifths'), 12)
 check('built-ins are transposable', BUILTIN_PROGRESSIONS.every((i) => {
   const moved = transposeChart(i.text, 3)
   return parseScore(moved).tokens.filter((t) => t.type === 'error').length === 0
@@ -95,6 +111,32 @@ check('ii-V-I into E', toE, 'E-7 A7 Dmaj7')
 const toAb = transposeChart('D-7 G7 Cmaj7', shiftToRoot('D-7 G7 Cmaj7', 8), { preferFlat: preferFlatForRoot(8) })
 check('ii-V-I into Ab', toAb, 'Ab-7 Db7 Gbmaj7')
 check('targeting the root it is already in changes nothing', shiftToRoot('D-7 G7 Cmaj7', 2), 0)
+
+
+/* ---------------- converting between the two ways of writing ---------------- */
+check('bars become words', toShorthand('| Dm7 G7 | Cmaj7 |'), 'Dm7,G7 Cmaj7')
+check('a lone chord in a bar stays a word', toShorthand('| C | F | G |'), 'C F G')
+check('percent survives', toShorthand('| C | % |'), 'C %')
+check('slashes survive', toShorthand('| C / Am / |'), 'C,/,Am,/')
+check('labels survive', toShorthand('[Verse 1] | C | F |'), '[Verse 1] C F')
+check('lines survive', toShorthand('| C | F |\n| G | Am |'), 'C F\nG Am')
+check('repeats become the compact form', toShorthand('|: Am7 | Bbmaj7 :|16'), ':Am7 Bbmaj7:16')
+check('a bare repeat becomes twice', toShorthand('|: C | F :|'), ':C F:2')
+check('shorthand in, shorthand out', toShorthand('C F G'), 'C,F,G')
+check('detects bar lines', [usesBarlines('| C |'), usesBarlines('C F')], [true, false])
+
+// The conversion must not change the music.
+for (const original of ['| Dm7 G7 | Cmaj7 | % |', '| C | F | G | Am |', '|: Am7 | Bbmaj7 :|4', '| C / Am / |']) {
+  const before = parseScore(original, { beatsPerBar: 4 })
+  const after = parseScore(toShorthand(original), { beatsPerBar: 4 })
+  check(`same length: ${original}`, after.totalPulses, before.totalPulses)
+  check(`same chords: ${original}`,
+    after.events.map((e) => e.chord && e.chord.text),
+    before.events.map((e) => e.chord && e.chord.text))
+  check(`same spans: ${original}`,
+    after.events.map((e) => e.endPulse - e.startPulse),
+    before.events.map((e) => e.endPulse - e.startPulse))
+}
 
 
 console.log(failed === 0 ? 'progressions: all checks passed' : `progressions: ${failed} FAILED`)

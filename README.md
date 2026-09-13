@@ -34,16 +34,34 @@ npm run chords    # regenerate the chord dictionary data
 
 ## Notation
 
-Everything is separated by spaces, the way you'd write it on a napkin.
+There are two ways to write a chart, and which you get depends on whether you
+use bar lines.
+
+**With bar lines** it reads the way every fake book, lead sheet and iReal Pro
+chart reads, so a chart pasted from anywhere behaves as expected.
+
+| You type | It means |
+| --- | --- |
+| `\| Dm7 G7 \| Cmaj7 \|` | two chords splitting a bar, then a bar of Cmaj7 |
+| `\| C / Am / \|` | each symbol is a beat, so two beats each |
+| `\| C \| % \|` | `%` repeats the bar before it |
+| `\| C \| F \| x \|` | `x` repeats the two bars before it |
+| `\|: Am7 \| Bbmaj7 :\|16` | sixteen times through |
+
+**Without bar lines** you get a shorthand that is quicker to type, where a space
+is a bar.
 
 | You type | It means |
 | --- | --- |
 | `C F G` | three bars |
 | `C C F` | one chord lasting two bars, then F — not two attacks |
 | `F,F- C` | half a bar of F, half of F minor, then a bar of C |
-| `\| C F \|` | bar lines are decoration and are ignored |
-| `[Verse 1] C F` | labels are decoration too, and may contain spaces |
-| `C % F` | `%` repeats the previous bar |
+| `C / F` | `/` holds C for another bar |
+| `:Am7 Am7 Bbmaj7 Bbmaj7:16` | sixteen times through |
+
+The whole chart reads one way or the other rather than flipping halfway down:
+a bar line anywhere switches it. `[Verse 1]` is a label for the reader either
+way, and takes no time.
 
 **Quality.** `A- Am Ami Amin Aminor` are all the same chord, and so are
 `A AM Ama Amaj Amajor`. Also `dim` `°` `o`, `ø` `halfdim`, `aug` `+`, `alt`,

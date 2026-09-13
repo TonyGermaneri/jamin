@@ -1,13 +1,31 @@
 /**
  * Turns the text in the editor into a timeline.
  *
- * Rules of the notation:
- *   - whitespace separates bars:            `C  F  G`      -> three 1-bar chords
- *   - the same chord twice is one long one: `C  C  F`      -> 2 bars of C, 1 of F
- *   - commas subdivide a bar:               `F,F- C`       -> 1/2 F, 1/2 Fm, 1 C
- *   - `|` and `[section labels]` are decoration, ignored by the clock
- *   - `%` repeats the previous bar
- *   - a leading `.` marks a phrase change:  `.C7{walkup}`
+ * There are two ways to write a chart here, and which one you get depends on
+ * whether you use bar lines. Write them and you get the convention every
+ * fake book, lead sheet and iReal Pro chart uses:
+ *
+ *   | Dm7 G7 | Cmaj7 | %  |     two chords splitting a bar, one bar of Cmaj7,
+ *                              then a bar the same as the one before
+ *   | C / Am / |                each symbol is a beat; `/` holds the chord
+ *
+ * Leave them out and you get a shorthand that is quicker to type, where a space
+ * is a bar:
+ *
+ *   C  F  G                    three bars
+ *   C  C  F                    two bars of C, then F
+ *   F,F- C                     half a bar each, then a bar of C
+ *
+ * Common to both: `/` holds the chord before it for another slot, `%` repeats
+ * the previous bar, `x` repeats the previous two, `[section labels]` are
+ * decoration, and a leading `.` marks a phrase change -- `.C7{walkup}`.
+ *
+ * Sections repeat between repeat marks, written either way round:
+ *
+ *   |: Am7 | Bbmaj7 :|16       the conventional spelling, sixteen times through
+ *   :Am7 Am7 Bbmaj7 Bbmaj7:16  the same thing without the bar lines
+ *
+ * A bare `:|` means twice, as it does on paper.
  *
  * Every token keeps the character range it came from, because the highlight
  * overlay paints the text the user actually typed -- not a re-rendered copy.
@@ -37,27 +55,41 @@ export function parseScore(text, opts = {}) {
   let lineStart = 0
   let lineIndex = 0
   let pulse = 0
+  let repeatFrom = null
+
+  // Bar lines change what a space means, so the whole chart reads one way or the
+  // other rather than flipping halfway down.
+  const useBarlines = opts.barlines !== undefined ? opts.barlines : src.includes('|')
 
   const rawLines = src.split('\n')
   for (const lineText of rawLines) {
     const line = { index: lineIndex, start: lineStart, end: lineStart + lineText.length, text: lineText, tokens: [] }
     lines.push(line)
 
-    for (const group of splitGroups(lineText, lineStart)) {
-      if (/^\|+$/.test(group.text)) {
-        tokens.push(makeToken(group, lineIndex, 'barline'))
+    for (const group of splitBars(lineText, lineStart, useBarlines)) {
+      if (group.type === 'barline' || group.type === 'label') {
+        tokens.push(makeToken(group, lineIndex, group.type))
         line.tokens.push(tokens.length - 1)
         continue
       }
 
-      // [Verse], [A], [chorus 2] -- a label for the reader, invisible to the clock.
-      if (/^\[[^\]]*\]$/.test(group.text)) {
-        tokens.push(makeToken(group, lineIndex, 'label'))
+      if (group.type === 'repeat-open') {
+        tokens.push(makeToken(group, lineIndex, 'repeat'))
         line.tokens.push(tokens.length - 1)
+        repeatFrom = { eventIndex: events.length, pulse }
         continue
       }
 
-      const parts = splitParts(group)
+      if (group.type === 'repeat-close') {
+        const mark = makeToken(group, lineIndex, 'repeat')
+        tokens.push(mark)
+        line.tokens.push(tokens.length - 1)
+        pulse = closeRepeat(events, repeatFrom, pulse, group.times, pulsesPerBar, mark)
+        repeatFrom = null
+        continue
+      }
+
+      const parts = group.parts
       const subCount = parts.length
       const slices = divide(pulsesPerBar, subCount)
       let subIndex = 0
@@ -70,21 +102,30 @@ export function parseScore(text, opts = {}) {
         line.tokens.push(tokens.length)
         tokens.push(token)
 
-        readMarks(token)
+        readMarks(token, repeatFrom !== null)
+        if (token.repeatOpen) repeatFrom = { eventIndex: events.length, pulse: groupPulse }
 
-        if (token.body === '%') {
-          // Repeat the previous bar: stretch the last event rather than adding one.
+        // `/` holds the chord before it; `%` repeats the bar before it; `x`
+        // repeats the two before it. All three stretch the last event rather
+        // than starting a new one.
+        const held = HOLD.test(token.body)
+        if (held) {
           const previous = events[events.length - 1]
+          const span = token.body.toLowerCase() === 'x' ? slices[subIndex] * 2 : slices[subIndex]
           if (previous) {
-            previous.endPulse += slices[subIndex]
-            previous.bars += slices[subIndex] / pulsesPerBar
+            previous.endPulse += span
+            previous.bars += span / pulsesPerBar
             previous.tokens.push(tokens.length - 1)
             token.eventIndex = previous.index
           } else {
             token.type = 'error'
-            token.error = 'nothing to repeat'
+            token.error = 'nothing to hold'
           }
-          groupPulse += slices[subIndex]
+          groupPulse += span
+          if (token.repeatClose) {
+            groupPulse = closeRepeat(events, repeatFrom, groupPulse, token.repeatClose, pulsesPerBar, token)
+            repeatFrom = null
+          }
           subIndex++
           continue
         }
@@ -128,6 +169,10 @@ export function parseScore(text, opts = {}) {
         }
 
         groupPulse += slices[subIndex]
+        if (token.repeatClose) {
+          groupPulse = closeRepeat(events, repeatFrom, groupPulse, token.repeatClose, pulsesPerBar, token)
+          repeatFrom = null
+        }
         subIndex++
       }
       pulse = groupPulse
@@ -147,22 +192,79 @@ export function parseScore(text, opts = {}) {
     events,
     beatsPerBar,
     pulsesPerBar,
+    barlines: useBarlines,
     totalPulses: pulse,
     bars: pulse / pulsesPerBar,
   }
 }
 
+/** `/`, `%` and `x` all mean "keep playing what was already playing". */
+const HOLD = /^(\/+|%+|x)$/i
+
+/** `|:` and `:|`, and the compact `:chord` / `chord:16` forms. */
+const REPEAT_OPEN = /^\|:$/
+const REPEAT_CLOSE = /^:\|\s*(?:x\s*)?(\d*)$/i
+
 /**
- * Whitespace-delimited runs, with absolute character offsets.
+ * Cut a line into bars.
  *
- * A bracketed label is taken whole first, so `[verse 1]` stays one token
- * instead of becoming two unreadable chords.
+ * With bar lines, a bar is what sits between them and everything inside divides
+ * it -- which is how a fake book reads. Without them, each whitespace-delimited
+ * word is its own bar, which is quicker to type. Either way a bracketed label is
+ * taken whole, so `[verse 1]` stays one token rather than two unreadable chords.
  */
-function splitGroups(lineText, offset) {
+export function splitBars(lineText, offset, useBarlines) {
   const out = []
-  const re = /\[[^\]]*\]|\S+/g
+  // Repeat marks are matched before plain bar lines so `|:` is not read as a
+  // bar line followed by a stray colon.
+  const re = /\[[^\]]*\]|\|:|:\|\s*x?\d*|\|+|[^\s|]+/g
+  let open = null
   let m
-  while ((m = re.exec(lineText))) out.push({ text: m[0], start: offset + m.index, end: offset + m.index + m[0].length })
+
+  const close = () => {
+    if (open && open.parts.length) out.push(open)
+    open = null
+  }
+
+  while ((m = re.exec(lineText))) {
+    const piece = { text: m[0], start: offset + m.index, end: offset + m.index + m[0].length }
+
+    // A closed bracket only: `[oops` with no `]` is just an unreadable chord.
+    if (/^\[[^\]]*\]$/.test(piece.text)) {
+      out.push({ ...piece, type: 'label' })
+      continue
+    }
+
+    if (REPEAT_OPEN.test(piece.text)) {
+      close()
+      out.push({ ...piece, type: 'repeat-open' })
+      continue
+    }
+
+    const closeMark = REPEAT_CLOSE.exec(piece.text)
+    if (closeMark) {
+      close()
+      out.push({ ...piece, type: 'repeat-close', times: Number(closeMark[1]) || 2 })
+      continue
+    }
+
+    if (/^\|/.test(piece.text)) {
+      close()
+      out.push({ ...piece, type: 'barline' })
+      continue
+    }
+
+    const parts = splitParts(piece)
+    if (useBarlines) {
+      if (!open) open = { type: 'bar', start: piece.start, end: piece.end, parts: [] }
+      open.parts.push(...parts)
+      open.end = piece.end
+    } else {
+      out.push({ type: 'bar', start: piece.start, end: piece.end, parts })
+    }
+  }
+
+  close()
   return out
 }
 
@@ -198,9 +300,30 @@ function makeToken(part, lineIndex, type) {
   }
 }
 
-/** Peel the `.` phrase-change marker and the `{phrase}` binding off a word. */
-function readMarks(token) {
+/**
+ * Peel the markers off a word: `:` opening a repeat, `:16` closing one, the `.`
+ * phrase-change dot and the `{phrase}` binding.
+ *
+ * A trailing `:16` only closes a repeat when one is actually open, because
+ * `C:7` is a perfectly good Harte spelling of C dominant seven. Context decides,
+ * and there is no case where both readings are available at once.
+ */
+function readMarks(token, repeatIsOpen) {
   let body = token.text
+
+  if (body.length > 1 && body.startsWith(':')) {
+    token.repeatOpen = true
+    body = body.slice(1)
+  }
+
+  if (repeatIsOpen || token.repeatOpen) {
+    const closing = /:(\d*)$/.exec(body)
+    if (closing && closing.index > 0) {
+      token.repeatClose = Number(closing[1]) || 2
+      body = body.slice(0, closing.index)
+    }
+  }
+
   if (body.startsWith('.')) {
     token.phraseChange = true
     body = body.slice(1)
@@ -212,8 +335,37 @@ function readMarks(token) {
     body = body.slice(0, ref.index)
   }
   token.body = body
-  token.bodyStart = token.start + (token.phraseChange ? 1 : 0)
+  token.bodyStart = token.start + (token.repeatOpen ? 1 : 0) + (token.phraseChange ? 1 : 0)
   token.bodyEnd = token.bodyStart + body.length
+}
+
+/**
+ * Play a span again. The events are copied rather than the timeline being made
+ * cleverer, so looking up what is playing stays a binary search -- and each copy
+ * points at the same tokens, so the chord lights up on every pass.
+ */
+function closeRepeat(events, from, endPulse, times, pulsesPerBar, token) {
+  if (!from || events.length <= from.eventIndex) {
+    token.type = 'error'
+    token.error = 'nothing to repeat'
+    return endPulse
+  }
+  const span = endPulse - from.pulse
+  if (span <= 0 || times < 2) return endPulse
+
+  const original = events.slice(from.eventIndex)
+  for (let pass = 1; pass < times; pass++) {
+    for (const event of original) {
+      events.push({
+        ...event,
+        index: events.length,
+        startPulse: event.startPulse + span * pass,
+        endPulse: event.endPulse + span * pass,
+        tokens: event.tokens.slice(),
+      })
+    }
+  }
+  return from.pulse + span * times
 }
 
 /** Split `total` pulses into `count` near-equal integer slices. */

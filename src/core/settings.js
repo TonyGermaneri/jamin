@@ -119,7 +119,7 @@ export function saveSettings(settings) {
   }
 }
 
-export const SAMPLE_CHART = `.Cmaj7 A-7 D-7 G7
-Cmaj7 Cmaj7 F-7 Bb7
-E-7 A7b9 D-7 G7
-C6/9 C6/9 | Ab7 G7alt`
+export const SAMPLE_CHART = `| Cmaj7 | A-7 | D-7 | G7 |
+| Cmaj7 | %   | F-7 | Bb7 |
+| E-7   | A7b9 | D-7 | G7 |
+| C6/9  | %   | Ab7 | G7alt |`

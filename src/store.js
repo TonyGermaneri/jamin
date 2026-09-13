@@ -31,6 +31,8 @@ import {
   shiftToRoot,
   usesFlats,
   preferFlatForRoot,
+  toShorthand,
+  usesBarlines,
   parseProgressionImport,
   exportProgressions,
 } from './core/progressions.js'
@@ -680,8 +682,16 @@ export function renderProgression(progression, targetPc, spelling = 'auto') {
  * a fresh line at the end, `replace` takes the whole chart over.
  */
 export function insertProgression(progression, { mode = 'caret', targetPc = null, spelling = 'auto' } = {}) {
-  const body = renderProgression(progression, targetPc, spelling)
+  let body = renderProgression(progression, targetPc, spelling)
   if (!body) return
+
+  // A single bar line changes how the whole chart reads, so a bar-lined
+  // progression dropped into a chart written in the shorthand would silently
+  // regroup what is already there. Match the chart instead of overruling it.
+  const replacing = mode === 'replace' || !state.text.trim()
+  if (!replacing && usesBarlines(body) && !usesBarlines(state.text)) {
+    body = toShorthand(body)
+  }
 
   if (mode === 'replace') {
     setText(body)

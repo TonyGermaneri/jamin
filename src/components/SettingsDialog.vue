@@ -380,10 +380,25 @@ async function retryMidi() {
           <!-- Notation --------------------------------------------------- -->
           <v-window-item value="help">
             <div class="jamin-mono text-caption">
-              <p class="mb-2"><strong>Bars.</strong> A space is a bar. <code>C F G</code> is three bars.</p>
-              <p class="mb-2"><strong>Long chords.</strong> The same chord twice is one chord lasting two bars: <code>C C F</code>.</p>
-              <p class="mb-2"><strong>Subdivisions.</strong> Commas split a bar: <code>F,F- C</code> is half a bar of F, half of F minor, then a bar of C.</p>
-              <p class="mb-2"><strong>Decoration.</strong> <code>|</code> is ignored. <code>%</code> repeats the previous bar.</p>
+              <p class="mb-2">
+                <strong>With bar lines</strong> it reads like any fake book or lead sheet:
+                <code>| Dm7 G7 | Cmaj7 | % |</code>. A bar is what sits between the lines, and
+                chords inside it divide it — two chords means the change lands halfway.
+                <code>/</code> holds the chord before it for a beat, so <code>| C / Am / |</code>
+                is two beats each. <code>%</code> repeats the bar before, <code>x</code> the two before.
+              </p>
+              <p class="mb-2">
+                <strong>Without bar lines</strong> you get a quicker shorthand where a space is a
+                bar: <code>C F G</code> is three bars, <code>C C F</code> is two bars of C then F,
+                and a comma splits a bar — <code>F,F- C</code>. Whichever you use, the whole chart
+                reads that way; typing a bar line anywhere switches it.
+              </p>
+              <p class="mb-2">
+                <strong>Repeats.</strong> <code>|: Am7 | Bbmaj7 :|16</code> plays that section
+                sixteen times. Without bar lines the same thing is
+                <code>:Am7 Am7 Bbmaj7 Bbmaj7:16</code>. A bare <code>:|</code> means twice.
+              </p>
+              <p class="mb-2"><strong>Labels.</strong> <code>[Verse 1]</code> is for the reader and takes no time.</p>
               <p class="mb-2"><strong>Quality.</strong> <code>A- Am Ami Amin Aminor</code> are the same. So are <code>A AM Ama Amaj Amajor</code>. Also <code>dim ° o</code>, <code>ø halfdim</code>, <code>aug +</code>, <code>alt</code>. Suspensions say what they mean: <code>sus</code> is sus4, <code>sus2</code> is sus2, <code>sus4</code> is sus4.</p>
               <p class="mb-2"><strong>Accidentals.</strong> Sharps may be <code>#</code>, <code>♯</code> or <code>s</code>; flats <code>b</code> or <code>♭</code>. So <code>Fs7</code> is F♯7 and <code>As5</code> is A♯ with no third. The one catch is <code>sus</code>: <code>Fsus4</code> is F suspended, and F♯sus4 is <code>F#sus4</code> or <code>Fssus4</code>.</p>
               <p class="mb-2"><strong>Harte notation</strong> is understood as well: <code>C:maj7</code>, <code>C:min7</code>, <code>C:hdim7</code>, <code>C:sus4(b7)</code>, and degree basses like <code>C:maj/5</code>. In Harte form, parentheses add a degree — <code>C:maj(9)</code> is a triad plus a ninth, not a major ninth.</p>

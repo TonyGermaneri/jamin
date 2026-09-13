@@ -285,6 +285,39 @@
       state.settings.accompany.perChordPhrases = false
       await settle(200)
 
+      /* ---------- bar lines: the conventional reading ---------- */
+      store.setText('| Dm7 G7 | Cmaj7 | % |')
+      await settle(300)
+      is('two chords split a bar', state.score.events.slice(0, 2).map((e) => e.endPulse - e.startPulse), [48, 48])
+      is('and the percent extends the next', state.score.events[2].bars, 2)
+      // One bar of Dm7/G7, one of Cmaj7, and the percent makes that one two.
+      is('three bars in all', state.score.bars, 3)
+      ok('barline mode was detected', state.score.barlines === true)
+
+      store.setText('| C / Am / |')
+      await settle(250)
+      is('a slash holds for a beat', state.score.events.map((e) => e.endPulse - e.startPulse), [48, 48])
+
+      store.setText('C F G')
+      await settle(250)
+      ok('no bar lines means the shorthand', state.score.barlines === false)
+      is('a space is a bar', state.score.bars, 3)
+
+      // Repeats, both spellings.
+      store.setText(':Am7 Am7 Bbmaj7 Bbmaj7:16')
+      await settle(300)
+      is('sixteen times through', state.score.bars, 64)
+      is('still four typed chords', state.score.tokens.filter((t) => t.type === 'chord').length, 4)
+      store.setText('|: Am7 | Bbmaj7 :|16')
+      await settle(300)
+      is('the conventional spelling matches', state.score.bars, 32)
+      ok('repeat marks render as their own kind', state.score.tokens.some((t) => t.type === 'repeat'))
+
+      // Harte is not mistaken for a repeat count when nothing is open.
+      store.setText('C:7 F:maj7')
+      await settle(250)
+      is('harte survives', state.score.events.map((e) => e.chord.intervals.length), [4, 4])
+
       /* ---------- notation: the new spellings, in the real chart ---------- */
       store.setText('Fs7 As5 Csmin7 A/Cs Fsus4 N.C. C:maj7 C:maj(9) Ano3d')
       await settle(300)
@@ -575,12 +608,12 @@
 
       const iiVI = store.allProgressions().find((p) => p.name.includes('ii–V–I major'))
       ok('a built-in is there', !!iiVI, iiVI && iiVI.text)
-      is('preview transposes to a key', store.renderProgression(iiVI, 5), 'F-7 Bb7 Ebmaj7 Ebmaj7')
-      is('sharp keys stay sharp', store.renderProgression(iiVI, 4), 'E-7 A7 Dmaj7 Dmaj7')
-      is('spelling can be forced', store.renderProgression(iiVI, 4, 'flats'), 'E-7 A7 Dmaj7 Dmaj7')
-      is('forced flats where it matters', store.renderProgression(iiVI, 6, 'flats'), 'Gb-7 B7 Emaj7 Emaj7')
-      is('forced sharps where it matters', store.renderProgression(iiVI, 5, 'sharps'), 'F-7 A#7 D#maj7 D#maj7')
-      is('preview as written', store.renderProgression(iiVI, null), 'D-7 G7 Cmaj7 Cmaj7')
+      is('preview transposes to a key', store.renderProgression(iiVI, 5), '| F-7 | Bb7 | Ebmaj7 | % |')
+      is('sharp keys stay sharp', store.renderProgression(iiVI, 4), '| E-7 | A7 | Dmaj7 | % |')
+      is('spelling can be forced', store.renderProgression(iiVI, 4, 'flats'), '| E-7 | A7 | Dmaj7 | % |')
+      is('forced flats where it matters', store.renderProgression(iiVI, 6, 'flats'), '| Gb-7 | B7 | Emaj7 | % |')
+      is('forced sharps where it matters', store.renderProgression(iiVI, 5, 'sharps'), '| F-7 | A#7 | D#maj7 | % |')
+      is('preview as written', store.renderProgression(iiVI, null), '| D-7 | G7 | Cmaj7 | % |')
 
       // Insert at the cursor, into a real selection published by the canvas.
       await mirrored()
@@ -590,21 +623,26 @@
       is('canvas publishes the selection', state.status.selection.join(','), '2,3')
       store.insertProgression(iiVI, { mode: 'caret', targetPc: 5 })
       await settle(200)
-      is('inserted at the cursor', state.text, 'C F-7 Bb7 Ebmaj7 Ebmaj7 G')
+      // Inserted into a chart with no bar lines, so it arrives in the shorthand
+      // rather than regrouping what was already there.
+      is('inserted at the cursor', state.text, 'C F-7 Bb7 Ebmaj7 % G')
+      is('and the chart still reads as the shorthand', state.score.barlines, false)
+      is('six bars: three typed, three inserted', state.score.bars, 6)
       ok('what was inserted still parses', state.score.tokens.every((t) => t.type !== 'error'))
 
       store.setText('C F G')
       await settle(150)
       store.insertProgression(iiVI, { mode: 'append' })
       await settle(150)
-      is('appended on a new line', state.text, 'C F G\nD-7 G7 Cmaj7 Cmaj7')
+      is('appended on a new line', state.text, 'C F G\nD-7 G7 Cmaj7 %')
 
       store.insertProgression(iiVI, { mode: 'replace', targetPc: 2 })
       await settle(150)
-      is('the key it is already in is left alone', state.text, 'D-7 G7 Cmaj7 Cmaj7')
+      // Replacing the whole chart keeps the progression's own bar lines.
+      is('the key it is already in is left alone', state.text, '| D-7 | G7 | Cmaj7 | % |')
       store.insertProgression(iiVI, { mode: 'replace', targetPc: 9 })
       await settle(150)
-      is('replaced the chart', state.text, 'A-7 D7 Gmaj7 Gmaj7')
+      is('replaced the chart', state.text, '| A-7 | D7 | Gmaj7 | % |')
 
       // Save, rename, delete.
       const before = store.state.progressions.length

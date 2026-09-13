@@ -11,7 +11,7 @@
  * and bindings -- exactly where it found them.
  */
 
-import { parseScore } from './score.js'
+import { parseScore, splitBars } from './score.js'
 import { pcName } from './chordParser.js'
 import {
   chordonomiconToChart,
@@ -108,6 +108,52 @@ export function shiftToRoot(text, targetPc) {
   if (from === null || targetPc === null) return 0
   return ((targetPc - from) % 12 + 12) % 12
 }
+
+/**
+ * Rewrite a bar-line chart in the space-is-a-bar shorthand.
+ *
+ * Needed when dropping a progression into a chart that does not use bar lines:
+ * one `|` anywhere switches how the whole chart reads, so pasting a bar-lined
+ * progression into `C F G` would quietly turn three bars into one. Converting
+ * what goes in leaves what is already there alone.
+ */
+export function toShorthand(text) {
+  return String(text || '')
+    .split('\n')
+    .map((line) => {
+      const words = []
+      let opening = false
+
+      for (const group of splitBars(line, 0, true)) {
+        if (group.type === 'barline') continue
+        if (group.type === 'label') {
+          words.push(group.text)
+          continue
+        }
+        if (group.type === 'repeat-open') {
+          opening = true
+          continue
+        }
+        if (group.type === 'repeat-close') {
+          if (words.length) words[words.length - 1] += `:${group.times}`
+          continue
+        }
+        // Everything in a bar divides it, which is what a comma means here.
+        let word = group.parts.map((part) => part.text).join(',')
+        if (opening) {
+          word = `:${word}`
+          opening = false
+        }
+        words.push(word)
+      }
+
+      return words.join(' ')
+    })
+    .join('\n')
+}
+
+/** Does this chart use bar lines? */
+export const usesBarlines = (text) => String(text || '').includes('|')
 
 /* ------------------------------------------------------------------ *
  * Storage
@@ -264,19 +310,19 @@ function readTags(row) {
 
 /** A library that opens empty is a library nobody uses. */
 export const BUILTIN_PROGRESSIONS = [
-  { name: 'ii–V–I major', text: 'D-7 G7 Cmaj7 Cmaj7', tags: ['jazz', 'cadence'] },
-  { name: 'ii–V–i minor', text: 'D-7b5 G7b9 C-maj7 C-maj7', tags: ['jazz', 'cadence'] },
-  { name: 'Backdoor ii–V', text: 'D-7 G7 Bb-7,Eb7 Cmaj7', tags: ['jazz', 'cadence'] },
-  { name: 'Turnaround', text: 'C6 A7b9 D-7 G7', tags: ['jazz'] },
-  { name: '12-bar blues', text: 'C7 F7 C7 C7\nF7 F7 C7 C7\nG7 F7 C7 G7', tags: ['blues'] },
-  { name: 'Minor blues', text: 'C-7 F-7 C-7 C-7\nF-7 F-7 C-7 C-7\nAb7 G7b9 C-7 G7b9', tags: ['blues'] },
-  { name: 'Rhythm changes A', text: 'C6,A-7 D-7,G7 C6,A-7 D-7,G7\nC6,C7 F6,F#o7 C6,G7 C6', tags: ['jazz', 'standard'] },
-  { name: 'Giant Steps opening', text: 'Bmaj7,D7 Gmaj7,Bb7 Ebmaj7 A-7,D7', tags: ['jazz', 'coltrane'] },
-  { name: 'Autumn cycle', text: 'A-7 D7 Gmaj7 Cmaj7\nF#-7b5 B7b9 E-7 E-7', tags: ['jazz', 'standard'] },
-  { name: 'So What vamp', text: 'D-7 D-7 D-7 D-7\nEb-7 Eb-7 D-7 D-7', tags: ['modal'] },
-  { name: 'Doo-wop', text: 'C A-7 F G7', tags: ['pop'] },
-  { name: 'Andalusian cadence', text: 'A- G F E7', tags: ['folk', 'flamenco'] },
-  { name: 'Pachelbel', text: 'C G A- E- F C F G', tags: ['classical', 'pop'] },
-  { name: 'Pop I–V–vi–IV', text: 'C G A- F', tags: ['pop'] },
-  { name: 'Circle of fifths', text: 'C7 F7 Bb7 Eb7\nAb7 Db7 Gb7 B7\nE7 A7 D7 G7', tags: ['exercise'] },
+  { name: 'ii–V–I major', text: '| D-7 | G7 | Cmaj7 | % |', tags: ['jazz', 'cadence'] },
+  { name: 'ii–V–i minor', text: '| D-7b5 | G7b9 | C-maj7 | % |', tags: ['jazz', 'cadence'] },
+  { name: 'Backdoor ii–V', text: '| D-7 | G7 | Bb-7 Eb7 | Cmaj7 |', tags: ['jazz', 'cadence'] },
+  { name: 'Turnaround', text: '| C6 A7b9 | D-7 G7 |', tags: ['jazz'] },
+  { name: '12-bar blues', text: '| C7 | F7 | C7 | % |\n| F7 | % | C7 | % |\n| G7 | F7 | C7 | G7 |', tags: ['blues'] },
+  { name: 'Minor blues', text: '| C-7 | F-7 | C-7 | % |\n| F-7 | % | C-7 | % |\n| Ab7 | G7b9 | C-7 | G7b9 |', tags: ['blues'] },
+  { name: 'Rhythm changes A', text: '| C6 A-7 | D-7 G7 | C6 A-7 | D-7 G7 |\n| C6 C7 | F6 F#o7 | C6 G7 | C6 |', tags: ['jazz', 'standard'] },
+  { name: 'Giant Steps opening', text: '| Bmaj7 D7 | Gmaj7 Bb7 | Ebmaj7 | A-7 D7 |', tags: ['jazz', 'coltrane'] },
+  { name: 'Autumn cycle', text: '| A-7 | D7 | Gmaj7 | Cmaj7 |\n| F#-7b5 | B7b9 | E-7 | % |', tags: ['jazz', 'standard'] },
+  { name: 'So What vamp', text: '|: D-7 | % | % | % |\n| Eb-7 | % | D-7 | % :|', tags: ['modal'] },
+  { name: 'Doo-wop', text: '| C | A-7 | F | G7 |', tags: ['pop'] },
+  { name: 'Andalusian cadence', text: '| A- | G | F | E7 |', tags: ['folk', 'flamenco'] },
+  { name: 'Pachelbel', text: '| C | G | A- | E- |\n| F | C | F | G |', tags: ['classical', 'pop'] },
+  { name: 'Pop I–V–vi–IV', text: '|: C | G | A- | F :|4', tags: ['pop'] },
+  { name: 'Circle of fifths', text: '| C7 | F7 | Bb7 | Eb7 |\n| Ab7 | Db7 | Gb7 | B7 |\n| E7 | A7 | D7 | G7 |', tags: ['exercise'] },
 ].map((item) => ({ ...item, builtin: true, source: 'built in' }))

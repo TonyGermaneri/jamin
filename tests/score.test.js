@@ -105,4 +105,111 @@ check('no song phrase, no phrase', s.events.map(e => e.phraseId), [null, null, n
 s = parseScore('.C7{walk} F G', { beatsPerBar: 4, perChordPhrases: true, songPhrase: 'riff' })
 check('per-chord mode uses the dots, not the song phrase', s.events.map(e => e.phraseId), ['walk', 'walk', 'walk'])
 
+/* ---------------- bar lines: the way everyone else writes it ---------------- */
+// Two chords in a bar split it. This is the convention fake books, lead sheets
+// and iReal Pro all use, and it only turns on when bar lines are present.
+s = parseScore('| Dm7 G7 | Cmaj7 |', { beatsPerBar: 4 })
+check('two bars, not three', s.events.length, 3)
+check('the first two split a bar', s.events.slice(0, 2).map(e => e.endPulse - e.startPulse), [48, 48])
+check('the third gets a whole one', s.events[2].endPulse - s.events[2].startPulse, 96)
+check('two bars in total', s.totalPulses, 192)
+
+// Three in a bar divide it in three.
+s = parseScore('| C F G | Am |', { beatsPerBar: 4 })
+check('thirds of a bar', s.events.slice(0, 3).map(e => e.endPulse - e.startPulse), [32, 32, 32])
+
+// `/` holds the chord before it, so each symbol is a beat.
+s = parseScore('| C / Am / |', { beatsPerBar: 4 })
+check('four beats, two chords', s.events.length, 2)
+check('two beats each', s.events.map(e => e.endPulse - e.startPulse), [48, 48])
+s = parseScore('| C / / / |', { beatsPerBar: 4 })
+check('one chord held all bar', s.events.length, 1)
+check('for the whole bar', s.events[0].endPulse, 96)
+
+// `%` repeats the bar before it, `x` the two before it.
+s = parseScore('| C | % | F |', { beatsPerBar: 4 })
+check('percent extends', s.events.map(e => e.bars), [2, 1])
+s = parseScore('| C | F | x |', { beatsPerBar: 4 })
+check('x repeats two bars', s.totalPulses, 96 * 4)
+
+// Bar lines are still drawn.
+s = parseScore('| C | F |', { beatsPerBar: 4 })
+check('barline tokens survive', s.tokens.filter(t => t.type === 'barline').length, 3)
+check('and take no time', s.totalPulses, 192)
+check('empty cells are not bars', parseScore('| C | | F |', { beatsPerBar: 4 }).events.length, 2)
+check('leading and trailing bars are fine', parseScore('C | F', { beatsPerBar: 4 }).events.length, 2)
+
+// Without bar lines the quick shorthand is unchanged.
+s = parseScore('C F G', { beatsPerBar: 4 })
+check('shorthand: a space is a bar', s.events.map(e => e.bars), [1, 1, 1])
+s = parseScore('F,F- C', { beatsPerBar: 4 })
+check('shorthand: commas still split', s.events.map(e => e.endPulse - e.startPulse), [48, 48, 96])
+s = parseScore('C / F', { beatsPerBar: 4 })
+check('shorthand: a slash holds for another bar', s.events.map(e => e.bars), [2, 1])
+
+// Commas inside a bar are just another separator.
+s = parseScore('| Dm7, G7 | C |', { beatsPerBar: 4 })
+check('commas inside bar lines', s.events.map(e => e.endPulse - e.startPulse), [48, 48, 96])
+
+// Labels and phrase dots survive both ways.
+s = parseScore('[A] | .C7{walk} G7 | F |', { beatsPerBar: 4, perChordPhrases: true })
+check('a label takes no time', s.events.length, 3)
+check('the dot still marks a phrase change', s.tokens.find(t => t.body === 'C7').phraseChange, true)
+check('label came through', s.tokens[0].type, 'label')
+
+// The mode is reported so the UI can say which one is in force.
+check('barline mode detected', parseScore('| C |').barlines, true)
+check('shorthand detected', parseScore('C F').barlines, false)
+// Forced on with no bar lines, the whole line is one bar the chords divide.
+check('and can be forced', parseScore('C F', { barlines: true }).events.length, 2)
+check('sharing a single bar', parseScore('C F', { barlines: true }).totalPulses, 96)
+
+
+/* ---------------- repeats ---------------- */
+// The compact form: a colon opens, a colon and a count closes.
+s = parseScore(':Am7 Am7 Bbmaj7 Bbmaj7:16', { beatsPerBar: 4 })
+check('sixteen times through four bars', s.events.length, 16 * 2)
+check('sixty-four bars in all', s.totalPulses, 96 * 64)
+check('it still reads as two chords', s.events.slice(0, 2).map(e => e.chord.text), ['Am7', 'Bbmaj7'])
+check('and each pass is two bars of each', s.events.slice(0, 2).map(e => e.bars), [2, 2])
+check('the last pass ends the chart', s.events[s.events.length - 1].endPulse, 96 * 64)
+
+// Every pass points at the same typed words, so the chord lights up each time.
+check('one token per chord, not sixty-four', s.tokens.filter(t => t.type === 'chord').length, 4)
+check('the first chord sounds in sixteen events',
+  s.events.filter(e => e.tokens.includes(0)).length, 16)
+
+// The conventional spelling does the same thing.
+s = parseScore('|: Am7 | Bbmaj7 :|16', { beatsPerBar: 4 })
+check('conventional repeat marks', s.events.length, 32)
+check('same length', s.totalPulses, 96 * 32)
+check('repeat marks are their own token type', s.tokens.filter(t => t.type === 'repeat').length, 2)
+check('and take no time of their own', parseScore('|: C :|2', { beatsPerBar: 4 }).totalPulses, 192)
+
+// A bare close means twice, as on paper.
+s = parseScore('|: C | F :|', { beatsPerBar: 4 })
+check('a bare repeat is twice', s.totalPulses, 96 * 4)
+check('four events', s.events.length, 4)
+
+// Repeats nest inside a normal chart.
+s = parseScore('C |: F | G :| Am', { beatsPerBar: 4 })
+check('before, during and after', s.events.map(e => e.chord.text), ['C', 'F', 'G', 'F', 'G', 'Am'])
+check('six bars', s.totalPulses, 96 * 6)
+
+// Harte still parses: `C:7` is a chord, not a repeat, when nothing is open.
+s = parseScore('C:7 F:maj7', { beatsPerBar: 4 })
+check('harte is not a repeat count', s.events.length, 2)
+check('and reads as the chord it is', s.events[0].chord.intervals, [0, 4, 7, 10])
+check('nor is the second one', s.events[1].chord.intervals, [0, 4, 7, 11])
+
+// A close with nothing open says so instead of guessing.
+check('close with nothing open', parseScore('C F:|4', { beatsPerBar: 4 }).tokens.some(t => t.type === 'error'), true)
+
+// Phrase dots survive a repeat opener.
+s = parseScore(':.C7{walk} F:2', { beatsPerBar: 4, perChordPhrases: true })
+check('dot and repeat together', s.tokens[0].phraseChange, true)
+check('body is just the chord', s.tokens[0].body, 'C7')
+check('and it repeats', s.events.length, 4)
+
+
 console.log(failed === 0 ? 'score: all checks passed' : `score: ${failed} FAILED`)
