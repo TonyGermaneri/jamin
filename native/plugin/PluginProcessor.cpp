@@ -2,7 +2,18 @@
 #include "PluginEditor.h"
 
 JaminProcessor::JaminProcessor()
-    : juce::AudioProcessor (BusesProperties()),
+    : juce::AudioProcessor (
+       #if JucePlugin_IsMidiEffect
+        // A MIDI processor has no audio at all, and declaring a bus it does not
+        // use makes auval ask about channel layouts that mean nothing here.
+        BusesProperties()
+       #else
+        // An instrument must have an output even when it never writes to it:
+        // the hosts that will not host a MIDI effect are the same ones that
+        // will not host an instrument with no bus.
+        BusesProperties().withOutput ("Silence", juce::AudioChannelSet::stereo(), true)
+       #endif
+      ),
       instanceId (juce::Uuid().toDashedString())
 {
     startTimerHz (20);

@@ -14,10 +14,10 @@ add_test(NAME jamin-tests COMMAND jamin-tests)
 # The page, running in the editor's own web view. This is the test that would
 # catch a Vite change that breaks module loading over a custom scheme, which no
 # amount of testing in Chrome ever would.
-if(APPLE AND TARGET jamin-boot AND TARGET JaminPlugin_AU)
+if(APPLE AND TARGET jamin-boot AND TARGET JaminInstrument_AU)
     add_test(NAME jamin-boot
              COMMAND jamin-boot
-                     "$<TARGET_BUNDLE_CONTENT_DIR:JaminPlugin_AU>/Resources/web")
+                     "$<TARGET_BUNDLE_CONTENT_DIR:JaminInstrument_AU>/Resources/web")
     set_tests_properties(jamin-boot PROPERTIES TIMEOUT 60)
 
     # And the bridge: a stand-in for window.__JUCE__, a playhead driven past it,
@@ -25,7 +25,7 @@ if(APPLE AND TARGET jamin-boot AND TARGET JaminPlugin_AU)
     # no C++ compiler can check.
     add_test(NAME jamin-host
              COMMAND jamin-boot
-                     "$<TARGET_BUNDLE_CONTENT_DIR:JaminPlugin_AU>/Resources/web"
+                     "$<TARGET_BUNDLE_CONTENT_DIR:JaminInstrument_AU>/Resources/web"
                      --host)
     set_tests_properties(jamin-host PROPERTIES TIMEOUT 60)
 endif()

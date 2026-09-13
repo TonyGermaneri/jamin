@@ -34,7 +34,7 @@ If the plugin ever needs to know what `Abmaj7/C` means, the design has failed.
 | | |
 | --- | --- |
 | `core/` | No JUCE, no plugin API. `Sequence` and `SequencePlayer` — the audio-thread reader, allocation-free and lock-free — and `SongBus`, the chart every instance shares. |
-| `plugin/` | The AU and Standalone targets. `processBlock` reads the playhead and emits; the editor is a `WebBrowserComponent` and nothing else. |
+| `plugin/` | The plugin targets, built twice from one set of sources. `processBlock` reads the playhead and emits; the editor is a `WebBrowserComponent` and nothing else. |
 | `tools/` | `jamin-boot` — loads the real bundled page in a real `WKWebView` and fails if the application reports so much as a console error. With `--host` it stands in for the plugin, drives a playhead, and checks the chart followed. |
 | `tests/` | The sequence reader against a loop point, and the bus between two instances. The page's own half of the bridge is `tests/host.test.js`, in the JavaScript suite. |
 | `cmake/` | Copying the built page into the bundle. |
@@ -64,6 +64,34 @@ browser that will not request them.
 
 ---
 
+## Two shapes, one plugin
+
+What jamin actually is, is a **MIDI effect**: it makes no sound, it emits notes, and it wants to
+sit above the instrument it is playing. Logic has a slot for exactly that.
+
+**Ableton Live does not host AU MIDI processors** — not this one, any of them. `aumi` is a
+category Live has no slot for, so an otherwise perfect plugin is invisible in it, and so are
+several other hosts'. So the same sources are also built as an **instrument**, which every host
+understands: it makes silence on its own track and the track that wants the notes takes them
+from it.
+
+| Target | Formats | Type | Where it shows up |
+| --- | --- | --- | --- |
+| `JaminInstrument` | AU, VST3, Standalone | `aumu` | Everywhere. Live, Bitwig, Cubase, Reaper, and Logic's instrument slot. |
+| `JaminMidiFx` | AU | `aumi` | Logic's **MIDI FX** slot, where nothing has to be routed by hand. |
+
+Only the bus layout differs — an instrument must declare an output even though it never writes
+to it — so there is one implementation and two declarations of it.
+
+**In Ableton Live:** put **Jamin** on a MIDI track. That track now makes silence. On the track
+holding the sound you want, set **MIDI From** to the Jamin track and then pick **Jamin** in the
+chooser below it, and set **Monitor** to **In**. Repeat per track: that is the arrangement the
+whole idea is for — one chart, one instance per track, a different phrase on each.
+
+**In Logic:** use **Jamin MIDI FX** in the MIDI FX slot above the instrument. No routing.
+
+---
+
 ## Identity
 
 Placeholders, and they need deciding before anything ships — a host remembers a plugin by its
@@ -71,8 +99,9 @@ four-character codes and by nothing else, so changing them later orphans every s
 the old pair.
 
 ```
--DJAMIN_MANUFACTURER=Jmin  -DJAMIN_PLUGIN_CODE=Jam1
--DJAMIN_COMPANY="Jamin"    -DJAMIN_BUNDLE_ID=dev.jamin
+-DJAMIN_MANUFACTURER=Jmin  -DJAMIN_PLUGIN_CODE=Jam1   # the instrument
+-DJAMIN_COMPANY="Jamin"    -DJAMIN_MIDIFX_CODE=JamF   # the MIDI effect
+-DJAMIN_BUNDLE_ID=dev.jamin
 ```
 
 ---
@@ -92,9 +121,15 @@ the old pair.
 ## Validating
 
 ```
-cp -R build/plugin/JaminPlugin_artefacts/RelWithDebInfo/AU/Jamin.component ~/Library/Audio/Plug-Ins/Components/
-auval -v aumi Jam1 Jmin
+cp -R build/plugin/JaminInstrument_artefacts/RelWithDebInfo/AU/Jamin.component            ~/Library/Audio/Plug-Ins/Components/
+cp -R "build/plugin/JaminMidiFx_artefacts/RelWithDebInfo/AU/Jamin MIDI FX.component"      ~/Library/Audio/Plug-Ins/Components/
+cp -R build/plugin/JaminInstrument_artefacts/RelWithDebInfo/VST3/Jamin.vst3               ~/Library/Audio/Plug-Ins/VST3/
+
+killall -9 AudioComponentRegistrar     # or the new codes are not found
+auval -v aumu Jam1 Jmin                # the instrument
+auval -v aumi JamF Jmin                # the MIDI effect
 ```
 
-`aumi` because it is a MIDI effect: in Logic that is the **MIDI FX slot**, directly above the
-instrument it plays.
+`killall` is not optional the first time a code changes. macOS caches the component registry,
+and `auval` reports `didn't find the component` for a plugin that is installed and correct --
+which reads exactly like a build problem and is not one.

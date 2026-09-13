@@ -163,16 +163,33 @@ track's saved copy can never overwrite the session's chart.
 
 ---
 
-## Why a MIDI effect
+## Why it is built twice
 
-`IS_MIDI_EFFECT`, so in Logic it appears in the **MIDI FX slot** — directly above the instrument
-it is playing. That is exactly the arrangement the requirement describes: one track, one sound,
-one articulation, one instance, and every instance reading the same chart. An instrument that
-emitted MIDI would need the output routed to another track by hand, once per track, which is
-three steps of setup between the user and the first chord.
+What jamin is, is a **MIDI effect**: no sound, notes out, sitting above the instrument it plays.
+`IS_MIDI_EFFECT` gives an `aumi`, and Logic's MIDI FX slot is exactly that arrangement — one
+track, one sound, one articulation, one instance, and nothing routed by hand.
 
-Incoming MIDI passes through untouched. A chord generator that swallowed the keys underneath it
-would make the track unplayable, and phrase capture needs to see them anyway.
+**Ableton Live does not host `aumi` at all.** Not this plugin; the category. Live's plugin
+browser has no place to put an AU MIDI processor, so a correct, signed, `auval`-clean plugin is
+simply invisible there — and Live is not alone. This was found the way these things are found,
+by installing it and not seeing it.
+
+So the same sources are built again as an **instrument** (`aumu`, plus VST3), which is a shape
+every host understands. It makes silence on its own track, and the track that wants the notes
+sets its MIDI input to it. That costs two steps of routing per track, which is why it is the
+second declaration rather than the only one — but it is the one that works everywhere, so it
+carries the primary plugin code.
+
+Only the bus layout differs between them: an instrument must declare an output even though it
+never writes to it, because the hosts that will not host a MIDI effect are the same ones that
+will not host an instrument with no bus. One implementation, two declarations.
+
+Incoming MIDI passes through untouched in both. A chord generator that swallowed the keys
+underneath it would make the track unplayable, and phrase capture needs to see them anyway.
+
+**A changed plugin code needs `killall -9 AudioComponentRegistrar`.** macOS caches the component
+registry, and until it is rebuilt `auval` says `didn't find the component` for a plugin that is
+installed and perfectly correct.
 
 ---
 

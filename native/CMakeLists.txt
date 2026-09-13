@@ -45,7 +45,8 @@ set(JAMIN_COMPANY      "Jamin"       CACHE STRING "Company name shown by hosts")
 set(JAMIN_PRODUCT      "Jamin"       CACHE STRING "Product name shown by hosts")
 set(JAMIN_BUNDLE_ID    "dev.jamin"   CACHE STRING "Reverse-DNS bundle id prefix")
 set(JAMIN_MANUFACTURER "Jmin"        CACHE STRING "Four-character manufacturer code")
-set(JAMIN_PLUGIN_CODE  "Jam1"        CACHE STRING "Four-character plugin code")
+set(JAMIN_PLUGIN_CODE  "Jam1"        CACHE STRING "Four-character code: the instrument")
+set(JAMIN_MIDIFX_CODE  "JamF"        CACHE STRING "Four-character code: the MIDI effect")
 
 # ---------------------------------------------------------------------------- the web app
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")

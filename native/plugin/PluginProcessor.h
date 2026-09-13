@@ -9,13 +9,27 @@
 #include <vector>
 
 /**
-    jamin as a MIDI effect.
+    jamin, in whichever shape the host will take.
 
     It makes no sound. It reads the host's playhead, performs the sequence the
-    page compiled, and emits the notes into whatever instrument is downstream --
-    which in Logic means the MIDI FX slot, directly above the instrument it is
-    playing. That is the shape the whole idea needs: one track, one articulation,
-    one instance, and every instance reading the same chart.
+    page compiled, and emits the notes into whatever is downstream. That is the
+    shape the whole idea needs: one track, one articulation, one instance, and
+    every instance reading the same chart.
+
+    The same class is built twice, because hosts disagree about what a plugin
+    that emits MIDI and no audio is:
+
+    - As a **MIDI effect** (`aumi`), which is what it really is. Logic puts it in
+      the MIDI FX slot, directly above the instrument it plays, and nothing has
+      to be routed by hand.
+    - As an **instrument** (`aumu` / VST3), because Ableton Live does not host
+      AU MIDI processors at all -- not this one, any of them -- and neither do
+      several others. As an instrument it appears where every host looks, makes
+      silence on its own track, and has its MIDI taken from it by the track
+      that wants it.
+
+    Only the bus layout differs, so there is one implementation and two
+    declarations of it.
 
     Deliberately, no harmony is worked out here. @see jamin::Sequence
 */
@@ -36,7 +50,7 @@ public:
     const juce::String getName() const override { return JucePlugin_Name; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }
-    bool isMidiEffect() const override { return true; }
+    bool isMidiEffect() const override { return JucePlugin_IsMidiEffect != 0; }
     double getTailLengthSeconds() const override { return 0.0; }
 
     int getNumPrograms() override { return 1; }
