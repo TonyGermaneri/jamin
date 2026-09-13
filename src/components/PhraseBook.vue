@@ -218,7 +218,7 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
 </script>
 
 <template>
-  <v-dialog v-model="state.ui.phrases" max-width="880" scrollable>
+  <v-dialog v-model="state.ui.phrases" max-width="880" scrollable class="jamin-book">
     <v-card>
       <v-card-title class="d-flex align-center">
         <v-icon size="18" class="mr-2">mdi-book-music-outline</v-icon>
@@ -240,9 +240,9 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
         <v-window v-model="state.ui.phrasesTab">
           <!-- Catalogue: list on the left, the one you picked on the right -->
           <v-window-item value="catalogue">
-            <v-row>
-              <v-col cols="12" md="6">
-                <v-row dense class="mb-1">
+            <v-row class="jamin-book-row">
+              <v-col cols="12" md="6" class="jamin-book-col">
+                <v-row dense class="mb-1 flex-grow-0">
                   <v-col cols="12">
                     <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable />
                   </v-col>
@@ -272,7 +272,7 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
                 <v-list
                   v-else
                   density="compact"
-                  class="py-0"
+                  class="py-0 jamin-book-scroll"
                   tabindex="0"
                   style="outline: none"
                   @keydown.down.prevent="step(1)"
@@ -309,11 +309,11 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
               </v-col>
 
               <!-- The aside -->
-              <v-col cols="12" md="6">
+              <v-col cols="12" md="6" class="jamin-book-col">
                 <div v-if="!selected" class="text-caption text-medium-emphasis py-8 text-center">
                   Pick one from the list.
                 </div>
-                <div v-else>
+                <div v-else class="jamin-book-scroll">
                   <div class="text-body-1 mb-1">{{ selected.name }}</div>
                   <div class="text-caption text-medium-emphasis mb-3">{{ describe(selected) }}</div>
 

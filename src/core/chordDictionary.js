@@ -14,6 +14,8 @@
  * @see https://github.com/ChordDictionary/SetTheory
  */
 
+import { resourceOk } from './fetchResource.js'
+
 let data = null
 let dictionaryPending = null
 
@@ -21,7 +23,7 @@ export async function loadChordDictionary() {
   if (data) return data
   if (!dictionaryPending) {
     dictionaryPending = fetch(new URL('../data/chordSets.json', import.meta.url))
-      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(response.status))))
+      .then((response) => (resourceOk(response) ? response.json() : Promise.reject(new Error(response.status))))
       .then((loaded) => {
         data = loaded
         return data

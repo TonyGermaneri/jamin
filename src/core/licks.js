@@ -20,6 +20,7 @@
  * GPL-2.0-or-later. @see https://github.com/Impro-Visor/Impro-Visor
  */
 
+import { resourceOk } from './fetchResource.js'
 import { parseChord } from './chordParser.js'
 import { parseVocabulary } from './vocParser.js'
 import { normalizePhrase } from './phrases.js'
@@ -85,7 +86,7 @@ async function build(options) {
         `opening the file from disk always works.`
       )
     }
-    if (!response.ok) throw new Error(`${url} — ${response.status} ${response.statusText}`)
+    if (!resourceOk(response)) throw new Error(`${url} — ${response.status} ${response.statusText}`)
     text = await response.text()
   }
 

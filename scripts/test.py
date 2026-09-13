@@ -46,12 +46,12 @@ SUITES = [
     ([
         "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",
         "src/core/voiceLeading.js", "src/core/phrases.js", "src/core/vocParser.js",
-        "src/core/licks.js",
+        "src/core/fetchResource.js", "src/core/licks.js",
     ], "tests/licks.test.js"),
     ([
         "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",
         "src/core/voiceLeading.js", "src/core/phrases.js", "src/core/vocParser.js",
-        "src/core/licks.js", "src/core/chordDictionary.js", "src/core/parts.js",
+        "src/core/fetchResource.js", "src/core/licks.js", "src/core/chordDictionary.js", "src/core/parts.js",
     ], "tests/parts.test.js"),
     ([
         "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",

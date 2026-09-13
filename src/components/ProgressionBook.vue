@@ -173,7 +173,7 @@ function runExport() {
 </script>
 
 <template>
-  <v-dialog v-model="state.ui.progressions" max-width="1040" scrollable>
+  <v-dialog v-model="state.ui.progressions" max-width="1040" scrollable class="jamin-book">
     <v-card>
       <v-card-title class="d-flex align-center">
         <v-icon size="18" class="mr-2">mdi-bookshelf</v-icon>
@@ -193,14 +193,14 @@ function runExport() {
         <v-window v-model="state.ui.progressionsTab">
           <!-- Library: list on the left, the one you picked on the right ---- -->
           <v-window-item value="library">
-            <v-row>
-              <v-col cols="12" md="6">
-                <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable class="mb-2" />
+            <v-row class="jamin-book-row">
+              <v-col cols="12" md="6" class="jamin-book-col">
+                <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable class="mb-2 flex-grow-0" />
 
                 <v-list
                   v-if="rows.length"
                   density="compact"
-                  class="py-0"
+                  class="py-0 jamin-book-scroll"
                   tabindex="0"
                   style="outline: none"
                   @keydown.down.prevent="step(1)"
@@ -240,11 +240,11 @@ function runExport() {
               </v-col>
 
               <!-- The aside -->
-              <v-col cols="12" md="6">
+              <v-col cols="12" md="6" class="jamin-book-col">
                 <div v-if="!selected" class="text-caption text-medium-emphasis py-8 text-center">
                   Pick one from the list.
                 </div>
-                <div v-else>
+                <div v-else class="jamin-book-scroll">
                   <div class="text-body-1 mb-1">{{ selected.name }}</div>
                   <div class="text-caption text-medium-emphasis mb-1">
                     {{ summarizeProgression(selected, state.settings.transport.beatsPerBar) }}

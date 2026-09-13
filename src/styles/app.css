@@ -143,3 +143,108 @@ body,
 .v-card-text .v-window-item {
   padding-top: 10px;
 }
+
+/*
+ * The books, in a window that can be any size.
+ *
+ * A plugin editor gets resized to whatever fits between the DAW's own panels,
+ * and the phrase and progression books are the tallest things here. Left to
+ * itself the card grows past the window and Vuetify scrolls the whole card body,
+ * which puts the pagination below the fold -- so the one control you need in
+ * order to reach the rest of the list is the one you cannot get to.
+ *
+ * So the card is a column that never exceeds the viewport, the list inside it is
+ * the only part that scrolls, and everything that is a control rather than
+ * content keeps its place.
+ */
+.jamin-book .v-overlay__content {
+  max-height: calc(100dvh - 32px);
+}
+
+.jamin-book .v-overlay__content > .v-card {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 32px);
+}
+
+.jamin-book .v-overlay__content > .v-card > .v-card-title,
+.jamin-book .v-overlay__content > .v-card > .v-tabs,
+.jamin-book .v-overlay__content > .v-card > .v-card-actions {
+  flex: none;
+}
+
+.jamin-book .v-overlay__content > .v-card > .v-card-text {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* v-window and its active item have to pass the height through rather than
+   shrink-wrap it, or the column below never gets a height to divide up. */
+.jamin-book .v-window,
+.jamin-book .v-window__container,
+.jamin-book .v-window-item--active {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The row of columns, and each column, are columns themselves. */
+/* A v-row carries a -12px margin that its columns' padding cancels out. Inside
+   a box that is exactly the height of the window, that margin is 24px of
+   content hanging out of the bottom -- which is precisely the pagination. The
+   margin goes and the columns keep their padding. */
+.jamin-book .jamin-book-row {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+}
+
+.jamin-book .jamin-book-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/*
+ * A v-row wraps, and a wrapping flex line is sized by its tallest item rather
+ * than by the container -- so the columns grew past the row that was supposed to
+ * bound them and took the pagination off the bottom of the card with them. Side
+ * by side there is only ever one line, so there is nothing to wrap.
+ */
+@media (min-width: 960px) {
+  .jamin-book .jamin-book-row {
+    flex-wrap: nowrap;
+  }
+}
+
+/* The one part that scrolls. */
+.jamin-book .jamin-book-scroll {
+  flex: 1 1 auto;
+  min-height: 6rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/*
+ * Narrow enough and the columns stack, which two independently scrolling panes
+ * cannot survive -- there would be no way to reach the second. So the card body
+ * scrolls as a whole instead, and the list is given a ceiling rather than being
+ * let loose: a bounded list keeps the pagination directly under it and within
+ * the first screenful, which is the whole point. Without the ceiling the list
+ * runs to its full height and pushes its own pager out of sight.
+ */
+@media (max-width: 959px) {
+  .jamin-book .v-overlay__content > .v-card > .v-card-text {
+    overflow-y: auto;
+  }
+
+  .jamin-book .jamin-book-scroll {
+    flex: 0 1 auto;
+    max-height: 38dvh;
+    min-height: 0;
+  }
+}

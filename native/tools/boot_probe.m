@@ -108,8 +108,12 @@ int main(int argc, const char **argv) {
     @autoreleasepool {
         if (argc < 2) { printf("usage: jamin-boot <web root> [--host]\n"); return 1; }
         gRoot = [NSString stringWithUTF8String:argv[1]];
-        for (int i = 2; i < argc; ++i)
+        CGFloat width = 1200, height = 800;
+        for (int i = 2; i < argc; ++i) {
             if (strcmp(argv[i], "--host") == 0) gHostMode = YES;
+            else if (strcmp(argv[i], "--size") == 0 && i + 1 < argc)
+                sscanf(argv[++i], "%lgx%lg", &width, &height);
+        }
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
         Boot *boot = [Boot new];
@@ -131,9 +135,9 @@ int main(int argc, const char **argv) {
             [cfg.userContentController addUserScript:
                 [[WKUserScript alloc] initWithSource:kFakeHost injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
 
-        WKWebView *web = [[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 1200, 800) configuration:cfg];
+        WKWebView *web = [[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, width, height) configuration:cfg];
         web.navigationDelegate = boot;
-        NSWindow *win = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1200, 800)
+        NSWindow *win = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, width, height)
                                                     styleMask:NSWindowStyleMaskTitled
                                                       backing:NSBackingStoreBuffered defer:NO];
         [win setContentView:web];
@@ -178,6 +182,61 @@ int main(int argc, const char **argv) {
               @"  check('the request carries the chart', !!(request && typeof request.text === 'string' && request.text.length));"
               @"  check('and the settings', !!(request && request.settings && request.settings.midi));"
               @"  check('and a generation', !!(request && request.generation > 0));"
+              @"  await wait(2500);"   // the catalogue is built off the critical path
+              @"  const openBook = async (title) => {"
+              @"    const button = [...document.querySelectorAll('button')].find(b => b.title === title);"
+              @"    if (!button) return null;"
+              @"    button.click();"
+              @"    await wait(700);"
+              @"    return document.querySelector('.jamin-book .v-card');"
+              @"  };"
+              @"  for (const title of ['Phrase book', 'Progression library']) {"
+              @"    const card = await openBook(title);"
+              @"    check(title + ' opens', !!card);"
+              @"    if (card) {"
+              @"      const box = card.getBoundingClientRect();"
+              @"      lines.push(title + '=' + Math.round(box.height) + 'px in ' + window.innerHeight + 'px');"
+              @"      check(title + ' fits the window', box.bottom <= window.innerHeight + 1);"
+              @"      const pager = card.querySelector('.v-pagination');"
+              @"      check(title + ' shows its pagination', !!pager);"
+              @"      if (pager) {"
+              @"        const p = pager.getBoundingClientRect();"
+              @"        lines.push('  pagination bottom=' + Math.round(p.bottom));"
+              @"        check(title + ' pagination is on screen', p.bottom <= window.innerHeight + 1 && p.height > 0);"
+              @"      }"
+              @"      const chain = ['.v-card-text', '.v-window', '.v-window__container', '.v-window-item', '.jamin-book-row', '.jamin-book-col', '.jamin-book-scroll'];"
+              @"      for (const sel of chain) {"
+              @"        const el = card.querySelector(sel);"
+              @"        lines.push('    ' + sel + ' = ' + (el ? Math.round(el.getBoundingClientRect().height) + 'px' : 'MISSING'));"
+              @"      }"
+              @"      const scroller = card.querySelector('.jamin-book-scroll');"
+              @"      const loading = /Loading the catalogue/.test(card.innerText);"
+              @"      lines.push('  shows: ' + JSON.stringify(card.innerText.slice(0, 90).replace(/\\s+/g, ' ')));"
+              @"      check(title + ' has a bounded list', !!scroller || loading);"
+              @"      if (scroller) {"
+              @"        const s = scroller.getBoundingClientRect();"
+              @"        check(title + ' list stays inside the window', s.bottom <= window.innerHeight + 1);"
+              @"      }"
+              @"      const sources = [...card.querySelectorAll('.v-tab')].find(t => /sources/i.test(t.textContent));"
+              @"      if (sources) {"
+              @"        sources.click(); await wait(500);"
+              @"        const shown = card.innerText;"
+              @"        const found = shown.match(/juce:\\/\\/[^\\s]+\\.voc/);"
+              @"        lines.push('  voc url: ' + (found ? found[0] : 'not shown'));"
+              @"        if (found) {"
+              @"          try {"
+              @"            const r = await fetch(found[0]);"
+              @"            const body = await r.text();"
+              @"            lines.push('  voc fetch: status=' + r.status + ' type=' + r.headers.get('content-type') + ' length=' + body.length);"
+              @"            lines.push('  voc head: ' + JSON.stringify(body.slice(0, 90)));"
+              @"          } catch (e) { lines.push('  voc fetch THREW ' + e.name + ': ' + e.message); }"
+              @"        }"
+              @"      }"
+              @"      const close = [...card.querySelectorAll('button')].find(b => b.querySelector('.mdi-close'));"
+              @"      if (close) close.click();"
+              @"      await wait(400);"
+              @"    }"
+              @"  }"
               @"  lines.push('failures=' + failures);"
               @"  lines.push('errors=' + window.__errors.length);"
               @"  for (const e of window.__errors) lines.push('  ! ' + e);"
