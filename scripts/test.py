@@ -80,4 +80,12 @@ for modules, suite in SUITES:
             sys.stdout.write(f"{suite}: never reached its sign-off line\n")
         failed += 1
 
+# Source invariants -- about where code reads from rather than what it computes.
+check = subprocess.run([sys.executable, os.path.join(HERE, "check_sources.py")],
+                       cwd=ROOT, capture_output=True, text=True)
+sys.stdout.write(check.stdout)
+sys.stderr.write(check.stderr)
+if check.returncode != 0:
+    failed += 1
+
 sys.exit(1 if failed else 0)

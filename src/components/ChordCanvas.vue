@@ -12,7 +12,7 @@
  * movement -- because our lines are each a different size.
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { state, live, setText, engine, describeAt } from '../store.js'
+import { state, live, setText, describeAt } from '../store.js'
 import { layoutChart, createMeasurer, caretRect, indexAtPoint, verticalMove, rectForToken } from '../canvas/layout.js'
 import { drawChart } from '../canvas/textRenderer.js'
 import { GlRenderer, MAX_REGIONS } from '../canvas/glRenderer.js'
@@ -360,7 +360,11 @@ function followCaret() {
  */
 function buildStatus(now) {
   const events = state.score.events
-  const running = engine.running && events.length > 0
+  // `live.running`, not the MIDI engine's: inside the plugin there is no Web
+  // MIDI and no clock bytes at all, so the engine is permanently stopped while
+  // the host's playhead is rolling. Reading it there left every word idle and
+  // the effects layer dark, with the chart otherwise playing perfectly.
+  const running = live.running && events.length > 0
   const activeIndex = live.eventIndex
   const active = events[activeIndex] || null
   const length = active ? Math.max(1, active.endPulse - active.startPulse) : 1
