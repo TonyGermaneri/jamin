@@ -44,8 +44,21 @@ const target = computed(() => currentToken())
 const perChord = computed(() => accompany.value.perChordPhrases)
 const playing = computed(() => state.songPhrase)
 
-const list = computed(() => (state.licks.length || state.phrases.length ? visibleLicks(search.value) : []))
+const PER_PAGE = 12
+const page = ref(1)
+const selected = ref(null)
+
+const matches = computed(() => (state.licks.length || state.phrases.length ? visibleLicks(search.value) : []))
 const total = computed(() => catalogue().length)
+const pageCount = computed(() => Math.max(1, Math.ceil(matches.value.length / PER_PAGE)))
+const list = computed(() => matches.value.slice((page.value - 1) * PER_PAGE, page.value * PER_PAGE))
+
+watch([search, () => state.ui.lickTexture], () => { page.value = 1 })
+watch(list, (rows) => {
+  if (!rows.some((row) => selected.value && row.id === selected.value.id)) selected.value = rows[0] || null
+}, { immediate: true })
+
+const beatsOf = (entry) => Math.round((entry.lengthPulses / 24) * 10) / 10
 
 const SPEEDS = [
   { title: '1/16×', value: 0.0625 },
@@ -122,11 +135,14 @@ function roll(phrase, width = 120, height = 34) {
   const low = Math.min(...notes.map((n) => n.note))
   const high = Math.max(...notes.map((n) => n.note))
   const span = Math.max(6, high - low + 1)
+  // Inset, so the top and bottom notes sit inside the box rather than on its edge.
+  const pad = 3
+  const usable = height - pad * 2
   return notes.map((note) => ({
     x: (note.at / length) * width,
     w: Math.max(2, (note.duration / length) * width),
-    y: height - ((note.note - low + 1) / span) * height,
-    h: Math.max(2, height / span - 1),
+    y: pad + usable - ((note.note - low + 1) / span) * usable,
+    h: Math.max(2, usable / span - 1),
     o: 0.35 + (note.velocity / 127) * 0.65,
   }))
 }
@@ -155,38 +171,73 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
 
       <v-card-text>
         <v-window v-model="state.ui.phrasesTab">
-          <!-- Catalogue --------------------------------------------------- -->
+          <!-- Catalogue: list on the left, the one you picked on the right -->
           <v-window-item value="catalogue">
-            <v-row dense class="mb-2">
-              <v-col cols="12" md="8">
-                <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable />
-              </v-col>
-              <v-col cols="12" md="4">
-                <v-select
-                  v-model="state.ui.lickTexture"
-                  :items="[
-                    { title: 'Any texture', value: 'any' },
-                    { title: 'Two hands', value: 'hands' },
-                    { title: 'Single line', value: 'line' },
-                  ]"
-                  label="Texture"
-                />
-              </v-col>
-            </v-row>
+            <v-row>
+              <v-col cols="12" md="6">
+                <v-row dense class="mb-1">
+                  <v-col cols="7">
+                    <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable />
+                  </v-col>
+                  <v-col cols="5">
+                    <v-select
+                      v-model="state.ui.lickTexture"
+                      :items="[
+                        { title: 'Any texture', value: 'any' },
+                        { title: 'Two hands', value: 'hands' },
+                        { title: 'Single line', value: 'line' },
+                      ]"
+                      label="Texture"
+                    />
+                  </v-col>
+                </v-row>
 
-            <div v-if="state.licksLoading && !list.length" class="text-center py-8 text-caption text-medium-emphasis">
-              Loading the catalogue…
-            </div>
-            <div v-else-if="!list.length" class="text-center py-8 text-caption text-medium-emphasis">
-              Nothing matches “{{ search }}”.
-            </div>
+                <div v-if="state.licksLoading && !list.length" class="text-caption text-medium-emphasis py-8 text-center">
+                  Loading the catalogue…
+                </div>
+                <div v-else-if="!list.length" class="text-caption text-medium-emphasis py-8 text-center">
+                  Nothing matches “{{ search }}”.
+                </div>
 
-            <v-virtual-scroll v-else :items="list" :item-height="62" height="380">
-              <template #default="{ item }">
-                <div class="d-flex align-center py-1" style="gap: 12px">
-                  <svg :width="120" :height="34" style="flex: none; background: rgba(255,255,255,0.04); border-radius: 4px">
+                <v-list v-else density="compact" class="py-0">
+                  <v-list-item
+                    v-for="entry in list"
+                    :key="entry.id"
+                    :active="selected && selected.id === entry.id"
+                    class="px-2"
+                    @click="selected = entry"
+                  >
+                    <v-list-item-title class="text-body-2 text-truncate">{{ entry.name }}</v-list-item-title>
+                    <template #append>
+                      <v-icon v-if="playing === entry.id" size="14" color="primary" class="mr-2">mdi-play</v-icon>
+                      <span class="text-caption text-medium-emphasis">{{ beatsOf(entry) }} beats</span>
+                    </template>
+                  </v-list-item>
+                </v-list>
+
+                <v-pagination v-model="page" :length="pageCount" :total-visible="6" density="comfortable" class="mt-2" />
+                <div class="text-caption text-medium-emphasis text-center">
+                  {{ matches.length.toLocaleString() }} of {{ total.toLocaleString() }}
+                </div>
+              </v-col>
+
+              <!-- The aside -->
+              <v-col cols="12" md="6">
+                <div v-if="!selected" class="text-caption text-medium-emphasis py-8 text-center">
+                  Pick one from the list.
+                </div>
+                <div v-else>
+                  <div class="text-body-1 mb-1">{{ selected.name }}</div>
+                  <div class="text-caption text-medium-emphasis mb-3">{{ describe(selected) }}</div>
+
+                  <svg
+                    :width="300"
+                    :height="120"
+                    class="mb-3"
+                    style="background: rgba(255,255,255,0.04); border-radius: 6px; max-width: 100%"
+                  >
                     <rect
-                      v-for="(note, index) in roll(item)"
+                      v-for="(note, index) in roll(selected, 300, 120)"
                       :key="index"
                       :x="note.x"
                       :y="note.y"
@@ -198,53 +249,56 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
                     />
                   </svg>
 
-                  <div style="flex: 1; min-width: 0">
-                    <div v-if="renaming !== item.id" class="text-body-2 text-truncate">{{ item.name }}</div>
-                    <v-text-field
-                      v-else
-                      v-model="renameTo"
-                      density="compact"
-                      autofocus
-                      @keydown.enter="commitRename(item)"
-                      @blur="commitRename(item)"
-                    />
-                    <div class="text-caption text-medium-emphasis text-truncate">{{ describe(item) }}</div>
+                  <div class="text-caption text-medium-emphasis mb-3">
+                    Played over {{ selected.sourceChord }}, stored as degrees from its root, and
+                    re-pointed at whatever chord it lands on — so it fits every chord in the chart.
+                    <span v-if="selected.origin">From {{ selected.origin }}.</span>
                   </div>
 
-                  <v-btn
-                    size="x-small"
-                    :variant="playing === item.id ? 'flat' : 'tonal'"
-                    :color="playing === item.id ? 'primary' : undefined"
-                    @click="usePhrase(item)"
-                  >
-                    {{ playing === item.id ? 'Playing' : 'Use' }}
-                  </v-btn>
-                  <v-btn
-                    v-if="!item.builtin"
-                    icon="mdi-rename-outline"
-                    size="x-small"
-                    variant="text"
-                    @click="renaming = item.id; renameTo = item.name"
-                  />
-                  <v-btn
-                    v-if="!item.builtin"
-                    icon="mdi-delete-outline"
-                    size="x-small"
-                    variant="text"
-                    @click="deletePhrase(item.name)"
-                  />
-                </div>
-              </template>
-            </v-virtual-scroll>
+                  <div class="d-flex align-center flex-wrap" style="gap: 8px">
+                    <v-btn
+                      size="small"
+                      :color="playing === selected.id ? 'primary' : undefined"
+                      :variant="playing === selected.id ? 'flat' : 'tonal'"
+                      @click="usePhrase(selected)"
+                    >
+                      {{ playing === selected.id ? 'Playing' : 'Use' }}
+                    </v-btn>
+                    <v-btn v-if="playing" size="small" variant="text" @click="bindPhrase(null)">Play no phrase</v-btn>
+                    <v-btn
+                      v-if="!selected.builtin"
+                      icon="mdi-rename-outline"
+                      size="x-small"
+                      variant="text"
+                      @click="renaming = selected.id; renameTo = selected.name"
+                    />
+                    <v-btn
+                      v-if="!selected.builtin"
+                      icon="mdi-delete-outline"
+                      size="x-small"
+                      variant="text"
+                      @click="deletePhrase(selected.name)"
+                    />
+                  </div>
 
-            <div class="d-flex align-center flex-wrap mt-3" style="gap: 10px">
-              <v-btn size="small" variant="text" :disabled="!playing" @click="bindPhrase(null)">Play no phrase</v-btn>
-              <span class="text-caption text-medium-emphasis">
-                {{ list.length }} shown of {{ total }}.
-                <span v-if="perChord">Using one binds it to {{ target ? target.body : 'the chord at the cursor' }}.</span>
-                <span v-else>Using one plays it over the whole song.</span>
-              </span>
-            </div>
+                  <v-text-field
+                    v-if="renaming === selected.id"
+                    v-model="renameTo"
+                    density="compact"
+                    autofocus
+                    class="mt-3"
+                    label="Name"
+                    @keydown.enter="commitRename(selected)"
+                    @blur="commitRename(selected)"
+                  />
+
+                  <div class="text-caption text-medium-emphasis mt-3">
+                    <span v-if="perChord">Using one binds it to {{ target ? target.body : 'the chord at the cursor' }}.</span>
+                    <span v-else>Using one plays it over the whole song.</span>
+                  </div>
+                </div>
+              </v-col>
+            </v-row>
           </v-window-item>
 
           <!-- Just played ------------------------------------------------- -->

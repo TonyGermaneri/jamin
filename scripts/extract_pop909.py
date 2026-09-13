@@ -63,7 +63,7 @@ def main():
         failures = []
         page.on("pageerror", lambda e: failures.append(str(e)) or print("  pageerror:", str(e)[:200]))
         page.on("console", lambda m: print("  console:", m.text[:160]) if m.type == "error" else None)
-        page.add_init_script(f"window.__config = {json.dumps({'songs': ids, 'perQuality': 160})}")
+        page.add_init_script(f"window.__config = {json.dumps({'songs': ids, 'perQuality': 1000})}")
         page.goto(f"http://127.0.0.1:{port}/scripts/extract_pop909.html", wait_until="load")
         try:
             page.wait_for_function("window.__done === true", timeout=300000)

@@ -391,10 +391,10 @@
       await settle(400)
       await store.ensureLicks()
       await settle(600)
-      ok('the catalogue loaded', state.licks.length > 1500, `${state.licks.length} entries`)
+      ok('the catalogue loaded', state.licks.length > 9000, `${state.licks.length} entries`)
       const partCount = state.licks.filter((l) => l.kind === 'part').length
       const lineCount = state.licks.length - partCount
-      ok('two-handed parts are in there', partCount > 1500, `${partCount} parts`)
+      ok('two-handed parts are in there', partCount > 7000, `${partCount} parts`)
       ok('alongside the single-line licks', lineCount > 1500, `${lineCount} licks`)
       ok('every part really is two hands', state.licks.filter((l) => l.kind === 'part').every((l) => {
         const pitches = l.notes.map((n) => n.note)
@@ -429,7 +429,7 @@
       // each is stored as degrees and re-pointed at whatever it lands on.
       const everything = store.visibleLicks('')
       is('the catalogue is not filtered by chord', everything.length, store.catalogue().length)
-      ok('and it is not truncated either', everything.length > 3000, `${everything.length} entries`)
+      ok('and it is not truncated either', everything.length > 9000, `${everything.length} entries`)
       ok('a search narrows it', store.visibleLicks('comp').length < everything.length,
         `${store.visibleLicks('comp').length} match "comp"`)
       // Check the dialog, not the document: body.textContent includes the text
@@ -658,14 +658,18 @@
       }
 
       state.ui.phrasesTab = 'catalogue'
-      await settle(400)
-      ok('the list is virtualised rather than cut short',
-        !!document.querySelector('.v-overlay--active .v-virtual-scroll'))
-      const rows = document.querySelectorAll('.v-overlay--active .v-virtual-scroll .v-btn')
-      ok('rows render with a button each', rows.length > 0, `${rows.length} buttons visible`)
-      ok('and the button says Use, not Keep and bind',
-        [...rows].some((b) => /use|playing/i.test(b.textContent)) &&
-        ![...rows].some((b) => /keep/i.test(b.textContent)))
+      await settle(500)
+      ok('the catalogue is paged like the progressions', !!document.querySelector('.v-overlay--active .v-pagination'))
+      const catRows = [...document.querySelectorAll('.v-overlay--active .v-list-item')].map((el) => el.innerText)
+      ok('a page is a page, not the whole list', catRows.length > 0 && catRows.length <= 14, `${catRows.length} rows`)
+      ok('each row is a name and a length', catRows.every((t) => /beats/.test(t)), catRows[0])
+      const catAside = document.querySelector('.v-overlay--active .v-col-md-6:last-child')
+      ok('the aside shows the one selected', catAside && /played over/i.test(catAside.innerText),
+        catAside && catAside.innerText.slice(0, 60).replace(/\n/g, ' '))
+      // innerText is the rendered text, and Vuetify uppercases buttons in CSS.
+      ok('with one Use button and no keeping step',
+        /\b(use|playing)\b/i.test(catAside.innerText) && !/keep/i.test(catAside.innerText),
+        catAside.innerText.slice(-80).replace(/\n/g, ' '))
 
       state.ui.phrasesTab = 'playback'
       await settle(400)
