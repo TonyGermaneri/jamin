@@ -144,11 +144,19 @@ our own export, a bare array, `{progressions: [...]}`, entries using
 `title`/`chords` instead of `name`/`text`, and Hugging Face's `{rows: [...]}`
 envelope -- so a collection found elsewhere usually just goes in.
 
-**Chordonomicon** (679,807 progressions, with genre and section tags) is fetched
-for you, a page at a time -- their server hands out a hundred rows per request,
-which is why asking for a thousand used to quietly get you a hundred. It starts
-somewhere random in the set, so two fetches are not the same songs. It converts
-on the way in. Its dialect differs from ours in exactly three ways, each confirmed
+**Chordonomicon** is 679,807 progressions in a 252MB CSV. That is too much to
+ask a server for on your behalf, and far too much for a browser's ordinary
+storage, so the library links to the file and you hand it back: it is read as a
+**stream**, decoded and written to IndexedDB a few thousand rows at a time, and
+never held in memory. Rows are kept in the dialect they arrive in and converted
+only when one is looked at -- converting all of them on the way in would mean
+running the chord converter over seventy million words to produce something
+nobody has asked to see.
+
+The library is paged for the same reason. The list shows a name and a length;
+whatever is selected is shown in full beside it. Searching the imported set is a
+scan, so it stops at the first few hundred matches and says so rather than
+freezing. Its dialect differs from ours in exactly three ways, each confirmed
 against the data rather than assumed: sharps are written `s` (`Fs7` is F#7);
 except when that `s` begins `sus` (`Fsus4` is F sus4, and nothing in the corpus
 contains `ss`, so F#sus4 never arises); and `no3d` means "no 3rd". Section tags
@@ -224,6 +232,8 @@ src/core/licks.js         the lick catalogue, built at run time
 src/core/parts.js         the two-handed parts catalogue
 src/core/midiFile.js      a small Standard MIDI File reader
 src/core/midiPhrases.js   cuts a performance into one-chord phrases
+src/core/csvImport.js     streams Chordonomicon's CSV in without loading it
+src/core/progressionStore.js  IndexedDB, so the whole collection fits
 src/core/key.js           key detection, Krumhansl-Schmuckler
 src/core/midi.js          Web MIDI: ports, clock, note IO
 src/core/player.js        clock in, chords and phrases out

@@ -4,3 +4,4 @@ dist
 *.local
 .vite
 tests/browser/shots/
+tests/browser/chordonomicon-sample.csv

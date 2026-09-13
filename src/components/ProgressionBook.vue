@@ -1,121 +1,120 @@
 <script setup>
 /**
- * The progression library: named snippets of chart text.
+ * The progression library.
  *
- * A progression is stored as the notation you type, so anything here drops
- * straight into a chart and any part of a chart can be saved back. The only
- * thing done to it on the way in is transposition.
+ * The list is a page at a time and shows only a name and a length, because it
+ * has to work with two thirds of a million progressions in it. Whatever is
+ * selected is shown in full on the right, converted and transposed only then --
+ * doing that to every row of every page would be work thrown away.
  */
 import { computed, ref, watch } from 'vue'
 import {
   state,
-  allProgressions,
   saveProgression,
   deleteProgression,
-  renameProgression,
   insertProgression,
   renderProgression,
   importProgressionJson,
   exportProgressionJson,
-  fetchChordonomiconInto,
+  progressionPage,
+  importChordonomiconFile,
+  forgetBulkProgressions,
+  refreshBulkCount,
   CHORDONOMICON,
+  CHORDONOMICON_CSV,
   toast,
 } from '../store.js'
-import { summarizeProgression, firstRoot, usesFlats } from '../core/progressions.js'
+import { summarizeProgression } from '../core/progressions.js'
+import { parseScore } from '../core/score.js'
 import { pcName } from '../core/chordParser.js'
 
-const filter = ref('')
-const mode = ref('caret')
+const PER_PAGE = 12
+
+const search = ref('')
+const page = ref(1)
+const rows = ref([])
+const total = ref(0)
+const partial = ref(false)
+const loading = ref(false)
+const selected = ref(null)
+
 const targetPc = ref(null)
 const spelling = ref('auto')
-const renaming = ref(null)
-const renameTo = ref('')
+const mode = ref('replace')
 const newName = ref('')
 const importText = ref('')
-const importPc = ref(null)
-
-const fetchCount = ref(500)
-
-async function fetchFromHuggingFace() {
-  const result = await fetchChordonomiconInto(fetchCount.value, {
-    targetPc: importPc.value,
-    spelling: spelling.value,
-  })
-  if (result.ok) state.ui.progressionsTab = 'library'
-}
 const exportText = ref('')
-
-const ROOTS = Array.from({ length: 12 }, (_, pc) => pc)
+const csvFile = ref(null)
 
 const modes = [
-  { title: 'At the cursor', value: 'caret' },
+  { title: 'Replace the whole song', value: 'replace' },
   { title: 'On a new line at the end', value: 'append' },
-  { title: 'Replace the whole chart', value: 'replace' },
+  { title: 'At the cursor', value: 'caret' },
 ]
 
 const keyOptions = computed(() => [
   { title: 'As written', value: null },
-  ...ROOTS.map((pc) => ({ title: pcName(pc, true) === pcName(pc) ? pcName(pc) : `${pcName(pc)} / ${pcName(pc, true)}`, value: pc })),
+  ...Array.from({ length: 12 }, (_, pc) => ({
+    title: pcName(pc, true) === pcName(pc) ? pcName(pc) : `${pcName(pc)} / ${pcName(pc, true)}`,
+    value: pc,
+  })),
 ])
 
-const list = computed(() => {
-  const needle = filter.value.trim().toLowerCase()
-  const all = allProgressions()
-  if (!needle) return all
-  return all.filter(
-    (item) =>
-      item.name.toLowerCase().includes(needle) ||
-      item.text.toLowerCase().includes(needle) ||
-      (item.tags || []).some((tag) => tag.toLowerCase().includes(needle))
-  )
-})
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PER_PAGE)))
 
-const selectionText = computed(() => {
-  const [a, b] = state.status.selection
-  const [from, to] = a <= b ? [a, b] : [b, a]
-  return state.text.slice(from, to).trim()
-})
+/**
+ * Imported rows carry a bar count from the import, counted cheaply. The
+ * hand-written ones do not, so work it out -- a dozen short charts a page is
+ * nothing, and it is the only honest number to put next to a name.
+ */
+function barsOf(row) {
+  if (typeof row.bars === 'number') return row.bars
+  return Math.round(parseScore(row.text, { beatsPerBar: state.settings.transport.beatsPerBar }).bars * 10) / 10
+}
+const preview = computed(() => (selected.value ? renderProgression(selected.value, targetPc.value, spelling.value) : ''))
 
-watch(
-  () => state.ui.progressions,
-  (open) => {
-    if (!open) return
-    newName.value = ''
-    exportText.value = ''
+async function load() {
+  loading.value = true
+  try {
+    const result = await progressionPage((page.value - 1) * PER_PAGE, PER_PAGE, search.value)
+    rows.value = result.rows
+    total.value = result.total
+    partial.value = result.partial
+    if (!rows.value.some((row) => row.name === (selected.value && selected.value.name))) {
+      selected.value = rows.value[0] || null
+    }
+  } finally {
+    loading.value = false
   }
-)
-
-function preview(item) {
-  return renderProgression(item, targetPc.value, spelling.value)
 }
 
-function insert(item) {
-  insertProgression(item, { mode: mode.value, targetPc: targetPc.value, spelling: spelling.value })
-}
+watch(() => [state.ui.progressions, page.value, search.value, state.progressions.length, state.bulk.count],
+  ([open]) => { if (open) load() }, { immediate: true })
+watch(search, () => { page.value = 1 })
 
-function keyOf(item) {
-  const root = firstRoot(item.text)
-  return root === null ? '' : pcName(root, usesFlats(item.text))
-}
-
-function commitRename(item) {
-  if (renaming.value !== item.name) return
-  const next = renameProgression(item.name, renameTo.value)
-  if (next) toast(`Renamed to ${next}`)
-  renaming.value = null
+function insert() {
+  if (!selected.value) return
+  insertProgression(selected.value, { mode: mode.value, targetPc: targetPc.value, spelling: spelling.value })
 }
 
 function saveCurrent(text, label) {
-  const saved = saveProgression(newName.value || label, text)
-  if (saved) {
+  if (saveProgression(newName.value || label, text)) {
     newName.value = ''
     state.ui.progressionsTab = 'library'
   }
 }
 
+async function openCsv(event) {
+  const file = event.target.files && event.target.files[0]
+  event.target.value = ''
+  if (!file) return
+  await importChordonomiconFile(file)
+  page.value = 1
+  load()
+}
+
 function runImport() {
-  const result = importProgressionJson(importText.value, { targetPc: importPc.value, spelling: spelling.value })
-  if (result.ok) {
+  if (importProgressionJson(importText.value, { targetPc: targetPc.value, spelling: spelling.value }).ok) {
     importText.value = ''
     state.ui.progressionsTab = 'library'
   }
@@ -131,177 +130,168 @@ function runExport() {
 </script>
 
 <template>
-  <v-dialog v-model="state.ui.progressions" max-width="780" scrollable>
+  <v-dialog v-model="state.ui.progressions" max-width="1040" scrollable>
     <v-card>
       <v-card-title class="d-flex align-center">
         <v-icon size="18" class="mr-2">mdi-bookshelf</v-icon>
         <span class="text-body-1">Progression library</span>
         <v-spacer />
+        <span class="text-caption text-medium-emphasis mr-3">{{ total.toLocaleString() }} progressions</span>
         <v-btn icon="mdi-close" size="small" variant="text" @click="state.ui.progressions = false" />
       </v-card-title>
 
       <v-tabs v-model="state.ui.progressionsTab">
-        <v-tab value="library">Library ({{ allProgressions().length }})</v-tab>
+        <v-tab value="library">Library</v-tab>
         <v-tab value="save">Save</v-tab>
         <v-tab value="transfer">Import / export</v-tab>
       </v-tabs>
 
       <v-card-text>
         <v-window v-model="state.ui.progressionsTab">
-          <!-- Library ---------------------------------------------------- -->
+          <!-- Library: list on the left, the one you picked on the right ---- -->
           <v-window-item value="library">
-            <v-row dense class="mb-1">
-              <v-col cols="12" md="4">
-                <v-text-field v-model="filter" label="Search" prepend-inner-icon="mdi-magnify" clearable />
-              </v-col>
-              <v-col cols="12" md="3">
-                <v-select v-model="targetPc" :items="keyOptions" label="Transpose to" />
-              </v-col>
-              <v-col cols="12" md="2">
-                <v-select
-                  v-model="spelling"
-                  :disabled="targetPc === null"
-                  :items="[{ title: 'Auto', value: 'auto' }, { title: '♯', value: 'sharps' }, { title: '♭', value: 'flats' }]"
-                  label="Spell"
+            <v-row>
+              <v-col cols="12" md="6">
+                <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable class="mb-2" />
+
+                <v-list v-if="rows.length" density="compact" class="py-0">
+                  <v-list-item
+                    v-for="row in rows"
+                    :key="row.id || row.name"
+                    :active="selected && selected.name === row.name"
+                    class="px-2"
+                    @click="selected = row"
+                  >
+                    <v-list-item-title class="text-body-2 text-truncate">{{ row.name }}</v-list-item-title>
+                    <template #append>
+                      <span class="text-caption text-medium-emphasis">{{ barsOf(row) }} bars</span>
+                    </template>
+                  </v-list-item>
+                </v-list>
+                <div v-else-if="loading" class="text-caption text-medium-emphasis py-6 text-center">Loading…</div>
+                <div v-else class="text-caption text-medium-emphasis py-6 text-center">Nothing matches “{{ search }}”.</div>
+
+                <v-pagination
+                  v-model="page"
+                  :length="pageCount"
+                  :total-visible="6"
+                  density="comfortable"
+                  class="mt-2"
                 />
+                <div v-if="partial" class="text-caption text-medium-emphasis text-center">
+                  Showing the first matches found; searching every one of
+                  {{ state.bulk.count.toLocaleString() }} would take a while.
+                </div>
               </v-col>
-              <v-col cols="12" md="3">
-                <v-select v-model="mode" :items="modes" label="Insert" />
+
+              <!-- The aside -->
+              <v-col cols="12" md="6">
+                <div v-if="!selected" class="text-caption text-medium-emphasis py-8 text-center">
+                  Pick one from the list.
+                </div>
+                <div v-else>
+                  <div class="text-body-1 mb-1">{{ selected.name }}</div>
+                  <div class="text-caption text-medium-emphasis mb-1">
+                    {{ summarizeProgression(selected, state.settings.transport.beatsPerBar) }}
+                  </div>
+                  <div class="mb-3">
+                    <span v-if="selected.builtin" class="text-caption text-medium-emphasis mr-2">built in</span>
+                    <span v-for="tag in selected.tags || []" :key="tag" class="text-caption text-medium-emphasis mr-2">
+                      {{ tag }}
+                    </span>
+                    <span
+                      v-if="selected.source && !selected.builtin"
+                      class="text-caption text-medium-emphasis"
+                    >{{ selected.source }}</span>
+                  </div>
+
+                  <pre
+                    class="jamin-mono text-caption pa-3 mb-3"
+                    style="white-space: pre-wrap; max-height: 190px; overflow: auto; background: rgba(255,255,255,0.04); border-radius: 6px; line-height: 1.6"
+                  >{{ preview }}</pre>
+
+                  <v-row dense class="mb-1">
+                    <v-col cols="6"><v-select v-model="targetPc" :items="keyOptions" label="Transpose to" /></v-col>
+                    <v-col cols="6">
+                      <v-select
+                        v-model="spelling"
+                        :disabled="targetPc === null"
+                        :items="[{ title: 'Auto', value: 'auto' }, { title: '♯', value: 'sharps' }, { title: '♭', value: 'flats' }]"
+                        label="Spell"
+                      />
+                    </v-col>
+                    <v-col cols="12"><v-select v-model="mode" :items="modes" label="Insert" /></v-col>
+                  </v-row>
+
+                  <div class="d-flex align-center" style="gap: 8px">
+                    <v-btn size="small" color="primary" @click="insert">Insert</v-btn>
+                    <v-btn
+                      v-if="!selected.builtin && !selected.bulk"
+                      size="small"
+                      variant="text"
+                      @click="deleteProgression(selected.name)"
+                    >
+                      Delete
+                    </v-btn>
+                  </div>
+                </div>
               </v-col>
             </v-row>
-
-            <div v-if="!list.length" class="text-center py-8 text-caption text-medium-emphasis">
-              Nothing matches “{{ filter }}”.
-            </div>
-
-            <v-list v-else density="compact" class="py-0">
-              <v-list-item v-for="item in list" :key="item.name" class="px-0">
-                <v-list-item-title v-if="renaming !== item.name" class="d-flex align-center" style="gap: 8px">
-                  {{ item.name }}
-                  <span v-if="item.builtin" class="text-caption text-medium-emphasis">built in</span>
-                  <span v-for="tag in item.tags || []" :key="tag" class="text-caption text-medium-emphasis">· {{ tag }}</span>
-                </v-list-item-title>
-                <v-text-field
-                  v-else
-                  v-model="renameTo"
-                  density="compact"
-                  autofocus
-                  @keydown.enter="commitRename(item)"
-                  @blur="commitRename(item)"
-                />
-
-                <v-list-item-subtitle class="text-caption">
-                  {{ summarizeProgression(item, state.settings.transport.beatsPerBar) }}
-                </v-list-item-subtitle>
-                <pre
-                  class="jamin-mono text-caption mt-1 mb-1"
-                  style="white-space: pre-wrap; opacity: 0.85; line-height: 1.5"
-                >{{ preview(item) }}</pre>
-
-                <template #append>
-                  <v-btn size="x-small" variant="tonal" class="mr-1" @click="insert(item)">Insert</v-btn>
-                  <v-btn
-                    v-if="!item.builtin"
-                    icon="mdi-rename-outline"
-                    size="x-small"
-                    variant="text"
-                    @click="renaming = item.name; renameTo = item.name"
-                  />
-                  <v-btn
-                    v-if="!item.builtin"
-                    icon="mdi-delete-outline"
-                    size="x-small"
-                    variant="text"
-                    @click="deleteProgression(item.name)"
-                  />
-                </template>
-              </v-list-item>
-            </v-list>
-
-            <div v-if="targetPc !== null" class="text-caption text-medium-emphasis mt-2">
-              Shown transposed so the first chord is {{ pcName(targetPc) }}. The library keeps the original.
-            </div>
           </v-window-item>
 
-          <!-- Save ------------------------------------------------------- -->
+          <!-- Save --------------------------------------------------------- -->
           <v-window-item value="save">
             <v-text-field v-model="newName" label="Name" class="mb-4" placeholder="ii–V–I in Eb" />
-
-            <div class="text-caption text-medium-emphasis mb-1">Selection</div>
-            <pre class="jamin-mono text-caption mb-2" style="white-space: pre-wrap; min-height: 20px; opacity: .85">{{ selectionText || '— nothing selected in the chart —' }}</pre>
-            <v-btn size="small" :disabled="!selectionText" class="mb-5" @click="saveCurrent(selectionText, 'Selection')">
-              Save the selection
-            </v-btn>
-
             <div class="text-caption text-medium-emphasis mb-1">Whole chart</div>
-            <pre class="jamin-mono text-caption mb-2" style="white-space: pre-wrap; max-height: 120px; overflow: auto; opacity: .85">{{ state.text }}</pre>
+            <pre class="jamin-mono text-caption mb-2" style="white-space: pre-wrap; max-height: 160px; overflow: auto; opacity: .85">{{ state.text }}</pre>
             <v-btn size="small" :disabled="!state.text.trim()" @click="saveCurrent(state.text, 'Chart')">
               Save the whole chart
             </v-btn>
           </v-window-item>
 
-          <!-- Import / export -------------------------------------------- -->
+          <!-- Import / export ---------------------------------------------- -->
           <v-window-item value="transfer">
-            <div class="text-caption text-medium-emphasis mb-2">
-              Paste a collection as JSON. Our own export works, and so do most shapes found in the
-              wild: a bare array, <code>{ progressions: [...] }</code>, entries using
-              <code>title</code>/<code>chords</code> instead of <code>name</code>/<code>text</code>,
-              and Hugging Face's <code>{ rows: [...] }</code> envelope.
-            </div>
-
-            <v-alert density="compact" variant="tonal" class="mb-3 text-caption">
+            <v-alert density="compact" variant="tonal" class="mb-4 text-caption">
               <div class="mb-2">
-                <strong>Chordonomicon</strong> — {{ CHORDONOMICON.rows.toLocaleString() }} progressions
-                with genre and section tags, CC-BY-NC-4.0. jamin ships the converter, not the data,
-                so this fetches it from Hugging Face for you. Their server hands out
-                {{ CHORDONOMICON.pageSize }} rows per request, so a larger number is fetched a page
-                at a time, starting somewhere random in the set.
+                <strong>Chordonomicon</strong> — {{ CHORDONOMICON.rows.toLocaleString() }} progressions with
+                genre and decade, CC-BY-NC-4.0. It is a {{ Math.round(264198044 / 1e6) }}MB CSV, which is
+                too much to ask a server for on your behalf and far too much to keep in a browser's
+                ordinary storage. So: download it, then hand the file back here. It is read as a stream
+                and kept in the browser's database, so the whole set fits and none of it sits in memory.
               </div>
               <div class="d-flex align-center flex-wrap" style="gap: 8px">
-                <v-select
-                  v-model="fetchCount"
-                  :items="[100, 250, 500, 1000, 2000]"
-                  label="How many"
-                  density="compact"
-                  hide-details
-                  style="max-width: 130px"
-                />
-                <v-btn size="small" :loading="state.ui.fetching" @click="fetchFromHuggingFace">Fetch</v-btn>
-                <span v-if="state.ui.fetchProgress" class="text-caption">{{ state.ui.fetchProgress }}</span>
+                <v-btn size="small" :href="CHORDONOMICON_CSV" target="_blank" rel="noreferrer" prepend-icon="mdi-download">
+                  Download the CSV
+                </v-btn>
+                <v-btn size="small" :loading="state.bulk.importing" prepend-icon="mdi-upload" @click="csvFile && csvFile.click()">
+                  Upload it here
+                </v-btn>
+                <input ref="csvFile" type="file" accept=".csv,text/csv" style="display: none" @change="openCsv" />
+                <span v-if="state.bulk.progress" class="text-caption">{{ state.bulk.progress }}</span>
+                <template v-else-if="state.bulk.count">
+                  <span class="text-caption">{{ state.bulk.count.toLocaleString() }} imported</span>
+                  <v-btn size="x-small" variant="text" @click="forgetBulkProgressions">Clear</v-btn>
+                </template>
               </div>
             </v-alert>
+
+            <div class="text-caption text-medium-emphasis mb-2">
+              Or paste a collection as JSON — our own export, a bare array,
+              <code>{ progressions: [...] }</code>, entries using <code>title</code>/<code>chords</code>,
+              or Hugging Face's <code>{ rows: [...] }</code> envelope.
+            </div>
             <v-textarea
               v-model="importText"
               label="Paste JSON here"
-              rows="7"
+              rows="6"
               variant="outlined"
               density="compact"
               hide-details="auto"
               class="jamin-mono mb-3"
             />
-            <div class="d-flex align-center flex-wrap" style="gap: 8px">
-              <v-btn size="small" prepend-icon="mdi-import" :disabled="!importText.trim()" @click="runImport">Import</v-btn>
-              <v-select
-                v-model="importPc"
-                :items="keyOptions"
-                label="Transpose to"
-                style="max-width: 200px"
-              />
-              <v-select
-                v-model="spelling"
-                :disabled="importPc === null"
-                :items="[{ title: 'Auto', value: 'auto' }, { title: '♯', value: 'sharps' }, { title: '♭', value: 'flats' }]"
-                label="Spell"
-                style="max-width: 110px"
-              />
-            </div>
-            <div class="text-caption text-medium-emphasis mt-2">
-              Everything imported is moved so its first chord is the root you pick. Leave it on
-              “As written” to keep the keys they came in.
-            </div>
+            <v-btn size="small" prepend-icon="mdi-import" :disabled="!importText.trim()" @click="runImport">Import</v-btn>
 
             <v-divider class="my-5" />
-
             <v-btn size="small" prepend-icon="mdi-export" :disabled="!state.progressions.length" @click="runExport">
               Export your {{ state.progressions.length }} saved progression{{ state.progressions.length === 1 ? '' : 's' }}
             </v-btn>
@@ -309,7 +299,7 @@ function runExport() {
               v-if="exportText"
               :model-value="exportText"
               readonly
-              rows="7"
+              rows="6"
               variant="outlined"
               density="compact"
               hide-details="auto"

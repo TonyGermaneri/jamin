@@ -77,7 +77,7 @@
        * we pass to a Vuetify component against that component's real props.
        */
       // `key` and `ref` are Vue's own reserved attributes, not component props.
-      const NATIVE = new Set(['key', 'ref', 'class', 'style', 'id', 'title', 'href', 'target', 'role', 'tabindex', 'aria-label', 'aria-hidden', 'spellcheck', 'autocomplete', 'autocapitalize', 'autocorrect', 'placeholder', 'type'])
+      const NATIVE = new Set(['key', 'ref', 'class', 'style', 'id', 'title', 'href', 'target', 'rel', 'download', 'role', 'tabindex', 'aria-label', 'aria-hidden', 'spellcheck', 'autocomplete', 'autocapitalize', 'autocorrect', 'placeholder', 'type'])
       const strays = []
       // Consume each attribute together with its quoted value, so words inside
       // a label are never mistaken for prop names.
@@ -168,6 +168,10 @@
       }
 
       const settle = (ms) => new Promise((r) => setTimeout(r, ms))
+      const parseScoreForCheck = (text) => {
+        const score = bootScore(text, { beatsPerBar: 4 })
+        return { score, errors: score.tokens.filter((t) => t.type === 'error').map((t) => t.text) }
+      }
       // Programmatic text changes reach the textarea through a watcher, so wait
       // for the mirror before touching the caret -- otherwise the watcher lands
       // afterwards and moves it, which made this suite flaky.
@@ -184,6 +188,7 @@
        * find it and start playing -- correct behaviour, and covered by the midi
        * suite, but it makes every assertion here a race. Unbind it.
        */
+      const { parseScore: bootScore } = await import('../../src/core/score.js')
       const boot = await import('../../src/store.js')
       boot.state.settings.transport.autoDetectClock = false
       boot.state.settings.midi.clockInputId = ''
@@ -674,28 +679,58 @@
       state.ui.phrases = false
       await settle(300)
 
-      /* ---------- Chordonomicon, more than one page of it ---------- */
-      const beforeFetch = store.state.progressions.length
-      let fetched = 'network unavailable'
-      try {
-        const result = await store.fetchChordonomiconInto(250)
-        if (result.ok) {
-          const added = store.state.progressions.length - beforeFetch
-          fetched = `${added} progressions`
-          ok('more than one page came back', added > 100, fetched)
-          ok('and they converted', store.state.progressions[0].text.length > 0,
-            store.state.progressions[0].text.slice(0, 40))
-          ok('with the dialect handled', !/[A-G]s\d/.test(store.state.progressions[0].text),
-            store.state.progressions[0].text.slice(0, 40))
-          for (const p of store.state.progressions.slice(0, added)) store.deleteProgression(p.name)
-        } else {
-          fetched = 'reported: ' + result.error
-        }
-      } catch (error) {
-        fetched = 'threw: ' + error.message
-      }
-      ok('fetching from Hugging Face (informational)', true, fetched)
-      await settle(200)
+      /* ---------- the big collection: download, then upload ---------- */
+      // A real slice of the real CSV, streamed through the real importer.
+      const csvBlob = await (await fetch('./chordonomicon-sample.csv')).blob()
+      const csvFile = new File([csvBlob], 'chordonomicon_v2.csv', { type: 'text/csv' })
+      ok('the sample is a real chunk of the file', csvBlob.size > 1e6, `${Math.round(csvBlob.size / 1e6)}MB`)
+
+      const csvReport = await store.importChordonomiconFile(csvFile)
+      ok('the CSV imported', csvReport && csvReport.rows > 5000, csvReport && `${csvReport.rows} rows in ${csvReport.ms}ms`)
+      is('and the store agrees', state.bulk.count, csvReport.rows)
+      ok('it did not choke on the header', csvReport.rows < 13409, `${csvReport.rows} of 13408 data lines`)
+
+      // Paging reads only the page, whatever the size of the set.
+      const firstPage = await store.progressionPage(0, 12)
+      is('a page is a page', firstPage.rows.length, 12)
+      ok('the total counts everything', firstPage.total > csvReport.rows, firstPage.total)
+      ok('the small list comes first', firstPage.rows[0].builtin === true || !firstPage.rows[0].bulk)
+
+      const deepOffset = store.allProgressions().length + 5000
+      const deepPage = await store.progressionPage(deepOffset, 12)
+      is('a page from deep in the set still returns twelve', deepPage.rows.length, 12)
+      ok('and those are from the imported set', deepPage.rows.every((r) => r.bulk), deepPage.rows[0].name)
+      ok('each has a name and a length', deepPage.rows.every((r) => r.name && r.bars > 0),
+        `${deepPage.rows[0].name} · ${deepPage.rows[0].bars} bars`)
+
+      // Built-ins have no stored bar count, so the list must work one out.
+      state.ui.progressions = true
+      state.ui.progressionsTab = 'library'
+      await settle(700)
+      const listed = [...document.querySelectorAll('.v-overlay--active .v-list-item')].map((el) => el.innerText)
+      ok('the list shows a name and a length, nothing else',
+        listed.length > 0 && listed.every((t) => /\d/.test(t) && /bars/.test(t)), listed[0])
+      ok('no progression text is in the list', !listed.some((t) => /\|/.test(t)), listed[0])
+      ok('there is a pager', !!document.querySelector('.v-overlay--active .v-pagination'))
+      const aside = document.querySelector('.v-overlay--active .v-col-md-6:last-child')
+      ok('the aside shows the chart', aside && /\|/.test(aside.innerText), aside && aside.innerText.slice(0, 60).replace(/\n/g, ' '))
+      ok('and insert defaults to replacing the song', /Replace the whole song/.test(aside.innerText))
+      state.ui.progressions = false
+      await settle(300)
+
+      // A row converts to a readable chart only when looked at.
+      const one = deepPage.rows[0]
+      const converted = parseScoreForCheck(one.text)
+      ok('an imported progression parses', converted.errors.length === 0, converted.errors.join(' '))
+      ok('and the dialect was handled', !/[A-G]s\d/.test(one.text), one.text.slice(0, 50))
+
+      const hits = await store.progressionPage(0, 12, 'rock')
+      ok('search finds things in the big set', hits.rows.length > 0, `${hits.total} matches`)
+
+      await store.forgetBulkProgressions()
+      is('clearing empties it', state.bulk.count, 0)
+      const afterClear = await store.progressionPage(0, 12)
+      is('and the library is the small list again', afterClear.total, store.allProgressions().length)
 
       /* ---------- the progression library ---------- */
       store.setText('C F G')

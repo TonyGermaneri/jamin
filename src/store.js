@@ -43,7 +43,10 @@ import { mod12 } from './core/voiceLeading.js'
 import { loadLicks, lickReport, searchLicks, defaultVocabularyUrl } from './core/licks.js'
 import { phrasesFromMidi } from './core/midiPhrases.js'
 import { loadParts } from './core/parts.js'
-import { fetchChordonomicon, chordonomiconUrl, CHORDONOMICON } from './core/importers.js'
+import { CHORDONOMICON } from './core/importers.js'
+import { chordonomiconToChart } from './core/importers.js'
+import { countProgressions, pageProgressions, searchProgressions, clearProgressions } from './core/progressionStore.js'
+import { importChordonomiconCsv, CHORDONOMICON_CSV } from './core/csvImport.js'
 import { loadChordDictionary, nameForSet } from './core/chordDictionary.js'
 import { describeChord } from './core/chordParser.js'
 
@@ -59,6 +62,7 @@ export const state = reactive({
   licks: [],
   licksLoading: false,
   lickReport: null,
+  bulk: { count: 0, importing: false, progress: '', report: null },
   pendingCapture: null,
   midi: { state: 'idle', error: null, inputs: [], outputs: [] },
   status: {
@@ -173,6 +177,7 @@ export async function initApp() {
   loadPhraseBook()
   state.progressions = loadProgressions()
   loadChordDictionary().then(() => refreshChordName())
+  refreshBulkCount()
 
   engine.autoStartOnClock = state.settings.transport.autoStartOnClock
   await engine.enable()
@@ -594,7 +599,7 @@ export async function ensureLicks(options = {}) {
   return state.licks
 }
 
-export { defaultVocabularyUrl, chordonomiconUrl, CHORDONOMICON }
+export { defaultVocabularyUrl, CHORDONOMICON, CHORDONOMICON_CSV }
 
 /** The chord a lick would be adopted onto: the one playing, else the first. */
 export function targetChord() {
@@ -722,7 +727,7 @@ export function renderProgression(progression, targetPc, spelling = 'auto') {
  * `caret` drops it where the cursor is (replacing a selection), `append` starts
  * a fresh line at the end, `replace` takes the whole chart over.
  */
-export function insertProgression(progression, { mode = 'caret', targetPc = null, spelling = 'auto' } = {}) {
+export function insertProgression(progression, { mode = 'replace', targetPc = null, spelling = 'auto' } = {}) {
   let body = renderProgression(progression, targetPc, spelling)
   if (!body) return
 
@@ -776,27 +781,97 @@ export function importProgressionJson(json, { targetPc = null, spelling = 'auto'
 }
 
 /**
- * Fetch progressions straight from Hugging Face, a page at a time.
- *
- * The data stays theirs -- CC-BY-NC-4.0, so jamin ships the converter and not
- * the collection -- but there is no reason to make you copy a URL into a browser
- * tab and paste the answer back.
+ * A row from the big store is kept in the dialect it arrived in; converting it
+ * is cheap and only happens for one you actually look at.
  */
-export async function fetchChordonomiconInto(count, options = {}) {
-  state.ui.fetching = true
+export function rowToProgression(row) {
+  if (!row) return null
+  return {
+    id: `c${row.n}`,
+    name: row.name,
+    text: chordonomiconToChart(row.chords),
+    bars: row.bars,
+    tags: [row.genre, row.decade && `${row.decade}s`].filter(Boolean),
+    source: 'Chordonomicon',
+    bulk: true,
+  }
+}
+
+export async function refreshBulkCount() {
+  state.bulk.count = await countProgressions()
+  return state.bulk.count
+}
+
+/** Read the downloaded CSV. Streamed, so the file's size is not the limit. */
+export async function importChordonomiconFile(file, options = {}) {
+  state.bulk.importing = true
+  state.bulk.progress = 'reading…'
   try {
-    const rows = await fetchChordonomicon(count, {
-      onProgress: (got, want) => {
-        state.ui.fetchProgress = `${got} of ${want}`
+    const report = await importChordonomiconCsv(file, {
+      ...options,
+      onProgress: ({ rows, bytes, total }) => {
+        const share = total ? Math.round((bytes / total) * 100) : 0
+        state.bulk.progress = `${rows.toLocaleString()} progressions · ${share}%`
       },
     })
-    return importProgressionJson(JSON.stringify(rows), options)
+    state.bulk.report = report
+    await refreshBulkCount()
+    toast(`${report.rows.toLocaleString()} progressions imported`)
+    return report
   } catch (error) {
-    toast(`Could not reach Hugging Face: ${error.message}`)
-    return { ok: false, error: error.message, progressions: [] }
+    toast(`Could not read that file: ${error.message}`)
+    state.bulk.report = { error: error.message }
+    return null
   } finally {
-    state.ui.fetching = false
-    state.ui.fetchProgress = ''
+    state.bulk.importing = false
+    state.bulk.progress = ''
+  }
+}
+
+export async function forgetBulkProgressions() {
+  await clearProgressions()
+  await refreshBulkCount()
+  toast('Imported progressions cleared')
+}
+
+/** The hand-written ones: yours, then the built-ins. */
+function smallList(query) {
+  const all = allProgressions()
+  const needle = String(query || '').trim().toLowerCase()
+  if (!needle) return all
+  return all.filter(
+    (item) =>
+      item.name.toLowerCase().includes(needle) ||
+      item.text.toLowerCase().includes(needle) ||
+      (item.tags || []).some((tag) => tag.toLowerCase().includes(needle))
+  )
+}
+
+/**
+ * One page of the library, drawn from the small list first and the big store
+ * after it. Only the page is ever in memory.
+ */
+export async function progressionPage(offset, limit, query = '') {
+  const small = smallList(query)
+
+  if (!query) {
+    const rows = small.slice(offset, offset + limit)
+    const shortfall = limit - rows.length
+    if (shortfall > 0 && state.bulk.count) {
+      const from = Math.max(0, offset - small.length)
+      const more = await pageProgressions(from, shortfall)
+      rows.push(...more.map(rowToProgression))
+    }
+    return { rows, total: small.length + state.bulk.count, partial: false }
+  }
+
+  // Searching the big store is a scan, so it is bounded and says so.
+  const found = state.bulk.count ? await searchProgressions(query, 300) : { rows: [], complete: true }
+  const combined = [...small, ...found.rows.map(rowToProgression)]
+  return {
+    rows: combined.slice(offset, offset + limit),
+    total: combined.length,
+    partial: !found.complete,
   }
 }
 
