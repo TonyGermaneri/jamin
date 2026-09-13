@@ -17,6 +17,8 @@ import {
   visibleLicks,
   adoptLick,
   targetChord,
+  ensureLicks as rebuildLicks,
+  defaultVocabularyUrl,
 } from '../store.js'
 import { summarize } from '../core/phrases.js'
 import { describeLick } from '../core/licks.js'
@@ -25,7 +27,25 @@ const name = ref('')
 const renaming = ref(null)
 const renameTo = ref('')
 const lickSearch = ref('')
+const vocabUrl = ref('')
+const vocabFile = ref(null)
 const LICK_LIMIT = 40
+
+const report = computed(() => state.lickReport)
+const defaultVocab = computed(() => defaultVocabularyUrl())
+
+async function rebuild(options) {
+  await rebuildLicks(options)
+  const r = state.lickReport
+  if (r && !r.error) toast(`${r.total} licks from ${r.source}`)
+}
+
+async function openVocabulary(event) {
+  const file = event.target.files && event.target.files[0]
+  if (!file) return
+  await rebuild({ text: await file.text() })
+  event.target.value = ''
+}
 
 watch(
   () => state.pendingCapture,
@@ -224,12 +244,44 @@ function roll(phrase, width = 260, height = 54) {
           </v-window-item>
 
           <v-window-item value="licks">
-            <div class="text-caption text-medium-emphasis mb-3">
-              1,900 licks, cells and idioms from
+            <div class="text-caption text-medium-emphasis mb-1">
+              Licks, cells and idioms from
               <a href="https://github.com/Impro-Visor/Impro-Visor" target="_blank" rel="noreferrer">Impro-Visor</a>
               (GPL-2.0-or-later). Each was written over one chord; keeping one copies it into
               your library, where it behaves like anything you played yourself.
             </div>
+            <div class="text-caption text-medium-emphasis mb-3">
+              The catalogue is built here in the page from the vocabulary file itself, so you can
+              point it at your own.
+              <span v-if="report && !report.error">
+                Last build: <strong>{{ report.total }}</strong> from {{ report.source }},
+                {{ report.skipped.multiChord }} skipped for spanning more than one chord<span
+                  v-if="report.skipped.noHarmony"
+                >, {{ report.skipped.noHarmony }} written over no chord at all</span>,
+                {{ report.ms }}ms.
+              </span>
+            </div>
+
+            <div class="d-flex flex-wrap align-center mb-3" style="gap: 8px">
+              <v-btn size="x-small" :loading="state.licksLoading" @click="rebuild({ force: true })">
+                Rebuild from Impro-Visor
+              </v-btn>
+              <v-btn size="x-small" variant="text" @click="vocabFile && vocabFile.click()">Open a .voc file…</v-btn>
+              <input ref="vocabFile" type="file" accept=".voc,text/plain" style="display: none" @change="openVocabulary" />
+            </div>
+            <div class="d-flex align-center mb-4" style="gap: 8px">
+              <v-text-field
+                v-model="vocabUrl"
+                label="…or a vocabulary URL"
+                :placeholder="defaultVocab"
+                density="compact"
+                hide-details
+              />
+              <v-btn size="x-small" :disabled="!vocabUrl.trim()" @click="rebuild({ url: vocabUrl.trim() })">Load</v-btn>
+            </div>
+            <v-alert v-if="report && report.error" type="warning" variant="tonal" density="compact" class="mb-4 text-caption">
+              {{ report.error }}
+            </v-alert>
 
             <v-row dense class="mb-1">
               <v-col cols="12" md="7">

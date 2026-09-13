@@ -34,6 +34,14 @@
 
       const results = []
       const problems = []
+      // These tests deliberately provoke a blocked cross-origin fetch and a 404,
+      // and the browser logs both no matter how cleanly we handle them.
+      window.__expectedConsole = [
+        'blocked by CORS policy',
+        'net::ERR_FAILED',
+        'status of 404',
+        'nope\\.voc',
+      ]
       const ok = (name, pass, detail = '') => results.push({ name, pass: !!pass, detail: String(detail) })
       // `ok` takes a boolean; `is` compares. Keeping them separate stops an
       // assertion from silently passing on truthiness.
@@ -291,6 +299,11 @@
       await store.ensureLicks()
       await settle(600)
       ok('the catalogue loaded', state.licks.length > 1500, `${state.licks.length} licks`)
+      const buildReport = state.lickReport
+      ok('it was built in the page', !!buildReport && !buildReport.error, buildReport && buildReport.error)
+      ok('from the shipped vocabulary', buildReport.source === 'Impro-Visor', buildReport.source)
+      ok('multi-chord entries were skipped', buildReport.skipped.multiChord > 2000, JSON.stringify(buildReport.skipped))
+      ok('the build is quick', buildReport.ms < 2000, `${buildReport.ms}ms for ${buildReport.bytes} bytes`)
       ok('every lick has notes', state.licks.every((l) => l.notes.length > 0))
       ok('every lick has a source chord', state.licks.every((l) => l.sourcePcs.length > 0))
       ok('notes are in a playable range', state.licks.every((l) => l.notes.every((n) => n.note >= 24 && n.note <= 108)))
@@ -326,6 +339,49 @@
       state.ui.phrases = false
       store.deletePhrase(state.phrases[0].name)
       await settle(200)
+
+      /* ---------- rebuilding the catalogue in the page ---------- */
+      const catalogueSize = state.licks.length
+      await store.ensureLicks({
+        text: '(cell (notes c4 e8 g8) (name test) (chords C7))\n(lick (notes d4) (sequence C7 F7 |) (name skipped))',
+      })
+      await settle(200)
+      is('rebuilt from a vocabulary of our own', state.licks.length, 1)
+      is('and it parsed', state.licks[0].name, 'test')
+      is('the multi-chord entry was left out', state.lickReport.skipped.multiChord, 1)
+      is('the source is named', state.lickReport.source, 'your vocabulary')
+
+      await store.ensureLicks({ force: true })
+      await settle(400)
+      is('rebuilding from the shipped file restores it', state.licks.length, catalogueSize)
+
+      // A URL on another origin. localhost and 127.0.0.1 are different origins,
+      // so this is a genuine cross-origin fetch against a server that sends no
+      // CORS headers -- exactly what a pasted URL usually hits.
+      const crossOrigin = location.href.replace('127.0.0.1', 'localhost').replace(/[^/]*$/, '') + '../../src/data/My.voc'
+      await store.ensureLicks({ url: crossOrigin })
+      await settle(400)
+      ok('a cross-origin URL fails with an explanation, not a stack trace',
+        !!state.lickReport.error && /cross-origin/.test(state.lickReport.error), state.lickReport.error)
+      ok('and the catalogue it already had is kept', state.licks.length === catalogueSize, state.licks.length)
+
+      // A URL that does not exist, on our own origin.
+      await store.ensureLicks({ url: new URL('./nope.voc', location.href).href })
+      await settle(300)
+      ok('a missing file says so', /404/.test(state.lickReport.error || ''), state.lickReport.error)
+
+      // GitHub raw does allow cross-origin reads, which is the useful case.
+      let githubResult = 'network unavailable'
+      try {
+        const probe = await fetch('https://raw.githubusercontent.com/Impro-Visor/Impro-Visor/master/COPYING.txt')
+        githubResult = `github raw: ${probe.status}, readable cross-origin`
+      } catch (error) {
+        githubResult = `github raw blocked: ${error.message}`
+      }
+      ok('github raw is reachable cross-origin (informational)', true, githubResult)
+
+      await store.ensureLicks({ force: true })
+      await settle(400)
 
       /* ---------- the progression library ---------- */
       store.setText('C F G')

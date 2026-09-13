@@ -11,10 +11,13 @@ const RAW = [
   { n: 'minor Bill Evans', k: 'idiom', c: 'Dm7', d: 96, v: [[0, 69, 12], [12, 65, 12]] },
   { n: 'major', k: 'cell', c: 'CM7', d: 48, v: [[0, 60, 24], [24, 64, 24]] },
   { n: 'broken', k: 'cell', c: 'Hzz', d: 48, v: [[0, 60, 24]] },
+  { n: 'free', k: 'cell', c: 'NC', d: 48, v: [[0, 60, 24]] },
 ]
 
 const licks = RAW.map(entryToPhrase).filter(Boolean)
 check('unreadable chord contexts are dropped', licks.length, 4)
+check('so are entries written over no chord', RAW.length - licks.length, 2)
+check('because there is no harmony to move them from', entryToPhrase(RAW[5], 5), null)
 check('ids are stable and text safe', licks.map(l => l.id), ['iv0', 'iv1', 'iv2', 'iv3'])
 check('notes become phrase notes', licks[0].notes[0], { at: 0, note: 71, velocity: 90, duration: 24 })
 check('length carried through', licks[0].lengthPulses, 72)

@@ -28,7 +28,7 @@ import {
   exportProgressions,
 } from './core/progressions.js'
 import { themeById } from './core/themes.js'
-import { loadLicks, loadedLicks, licksForChord, searchLicks } from './core/licks.js'
+import { loadLicks, lickReport, licksForChord, searchLicks, defaultVocabularyUrl } from './core/licks.js'
 import { loadChordDictionary, nameForSet } from './core/chordDictionary.js'
 import { describeChord } from './core/chordParser.js'
 
@@ -42,6 +42,7 @@ export const state = reactive({
   progressions: [],
   licks: [],
   licksLoading: false,
+  lickReport: null,
   pendingCapture: null,
   midi: { state: 'idle', error: null, inputs: [], outputs: [] },
   status: {
@@ -146,6 +147,13 @@ export async function initApp() {
   state.midi.error = engine.error
 
   setInterval(syncStatus, 120)
+
+  // Build the lick catalogue once the chart is up. It is a few tens of
+  // milliseconds off the critical path, so it is ready before anyone opens the
+  // tab, and nothing waits on it if they never do.
+  const build = () => ensureLicks()
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(build, { timeout: 4000 })
+  else setTimeout(build, 1200)
 }
 
 function readStoredText() {
@@ -431,14 +439,29 @@ export function currentToken() {
  * Lick catalogue
  * ------------------------------------------------------------------ */
 
-export async function ensureLicks() {
-  if (state.licks.length || state.licksLoading) return state.licks
+/**
+ * Build the catalogue, or rebuild it from somewhere else.
+ *
+ * `{ text }` for a vocabulary file the user opened, `{ url }` to pull one over
+ * the network, `{ force: true }` to redo the shipped one.
+ */
+export async function ensureLicks(options = {}) {
+  const rebuilding = options.force || options.text !== undefined || options.url
+  if (state.licks.length && !rebuilding) return state.licks
+  if (state.licksLoading && !rebuilding) return state.licks
+
   state.licksLoading = true
-  const licks = await loadLicks()
-  state.licks = licks
-  state.licksLoading = false
-  return licks
+  try {
+    state.licks = await loadLicks(options)
+    state.lickReport = lickReport()
+  } finally {
+    state.licksLoading = false
+  }
+  if (state.lickReport && state.lickReport.error) toast(`Could not read that vocabulary: ${state.lickReport.error}`)
+  return state.licks
 }
+
+export { defaultVocabularyUrl }
 
 /** The chord a lick would be adopted onto: the one playing, else the first. */
 export function targetChord() {
@@ -447,7 +470,7 @@ export function targetChord() {
 }
 
 export function visibleLicks(query) {
-  const all = loadedLicks()
+  const all = state.licks
   const chord = targetChord()
   const pool = state.ui.licksForCurrentChord && chord ? licksForChord(all, chord) : all
   return searchLicks(pool, query)

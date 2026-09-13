@@ -10,38 +10,118 @@
  * under a name of its own, so the chart keeps referring to one namespace and
  * stays readable.
  *
+ * The catalogue is built in the page from the vocabulary file itself, so what
+ * ships here is Impro-Visor's own `My.voc`, unmodified, rather than a converted
+ * artifact sitting beside it that could drift. It also means you can rebuild
+ * from a different vocabulary -- your own `My.voc`, or a URL -- without a build
+ * step.
+ *
  * Vocabulary from Impro-Visor (Robert Keller / Harvey Mudd College),
- * GPL-2.0-or-later. Converted by scripts/build_licks.py.
- * @see https://github.com/Impro-Visor/Impro-Visor
+ * GPL-2.0-or-later. @see https://github.com/Impro-Visor/Impro-Visor
  */
 
 import { parseChord } from './chordParser.js'
+import { parseVocabulary } from './vocParser.js'
+
+let defaultUrl = null
+
+/** Resolved lazily: `URL` does not exist in the headless test runner. */
+export function defaultVocabularyUrl() {
+  if (!defaultUrl) defaultUrl = new URL('../data/My.voc', import.meta.url).href
+  return defaultUrl
+}
 
 let cache = null
 let pending = null
+let lastReport = null
 
-/** Lazily fetched: ~230KB, and nothing needs it until the catalogue is opened. */
-export async function loadLicks() {
-  if (cache) return cache
-  if (!pending) {
-    pending = fetch(new URL('../data/improvisorLicks.json', import.meta.url))
-      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(response.status))))
-      .then((payload) => {
-        cache = (payload.licks || []).map(entryToPhrase).filter(Boolean)
-        return cache
-      })
-      .catch(() => {
-        cache = []
-        return cache
-      })
-  }
+/**
+ * Build the catalogue. Cheap enough to do in the page -- a few tens of
+ * milliseconds for the shipped vocabulary -- and kicked off in the background
+ * once the chart is up, so it is ready before anyone opens the tab.
+ */
+export async function loadLicks(options = {}) {
+  if (cache && !options.force && !options.text && !options.url) return cache
+  if (pending && !options.force && !options.text && !options.url) return pending
+
+  pending = build(options)
+    .then((result) => {
+      cache = result.licks
+      lastReport = result.report
+      return cache
+    })
+    .catch((error) => {
+      cache = cache || []
+      lastReport = { error: error && error.message ? error.message : String(error), total: 0 }
+      return cache
+    })
+    .finally(() => {
+      pending = null
+    })
+
   return pending
+}
+
+async function build(options) {
+  const started = Date.now()
+  let text = options.text
+  let source = 'your vocabulary'
+
+  if (text === undefined) {
+    const url = options.url || defaultVocabularyUrl()
+    source = options.url || 'Impro-Visor'
+
+    // The vocabulary we ship is same-origin, so it always loads. A URL someone
+    // types is a cross-origin fetch, and a browser will refuse it unless that
+    // server sends the CORS headers -- the failure arrives as an opaque
+    // TypeError with nothing useful in it, so say what it usually means.
+    let response
+    try {
+      response = await fetch(url)
+    } catch (error) {
+      throw new Error(
+        `could not fetch ${url}. If it is on another site it has to allow cross-origin reads; ` +
+        `opening the file from disk always works.`
+      )
+    }
+    if (!response.ok) throw new Error(`${url} — ${response.status} ${response.statusText}`)
+    text = await response.text()
+  }
+
+  const { entries, skipped } = parseVocabulary(text)
+
+  // An entry written over "no chord" has no harmony to re-point it from, so
+  // voice leading has nothing to work with. Counted rather than quietly lost.
+  const licks = []
+  let noHarmony = 0
+  entries.forEach((entry, index) => {
+    const phrase = entryToPhrase(entry, index)
+    if (phrase) licks.push(phrase)
+    else noHarmony++
+  })
+
+  return {
+    licks,
+    report: {
+      source,
+      total: licks.length,
+      skipped: { ...skipped, noHarmony },
+      bytes: text.length,
+      ms: Date.now() - started,
+    },
+  }
 }
 
 export function loadedLicks() {
   return cache || []
 }
 
+/** What the last build did, for the UI to show. */
+export function lickReport() {
+  return lastReport
+}
+
+/** null when the entry has no harmony to be re-pointed from. */
 export function entryToPhrase(entry, index) {
   const chord = parseChord(entry.c)
   if (!chord.ok || !chord.absPcs.length) return null

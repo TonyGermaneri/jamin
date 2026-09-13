@@ -156,6 +156,8 @@ src/core/score.js         text -> timeline of events, with source character rang
 src/core/voiceLeading.js  minimal-movement chord mapping and phrase re-pointing
 src/core/voicing.js       interval stack -> actual MIDI notes
 src/core/progressions.js  the progression library, and transposition
+src/core/vocParser.js     reads Impro-Visor vocabulary files in the browser
+src/core/licks.js         the lick catalogue, built at run time
 src/core/midi.js          Web MIDI: ports, clock, note IO
 src/core/player.js        clock in, chords and phrases out
 src/canvas/layout.js      per-line text fitting, caret and hit testing
@@ -209,9 +211,12 @@ are MIT, which is fine either way.
 Licence before download, every time.
 
 - **Impro-Visor** (`vocab/My.voc`, ~530KB of licks, cells and idioms) is
-  GPL-2.0-or-later, so it can be bundled here with attribution. It is the
-  closest thing to a sibling project: its vocabulary auto-transposes to the
-  chord of the moment, which is what Mr. Accompany Me does.
+  GPL-2.0-or-later, so it is bundled here verbatim as `src/data/My.voc`, with
+  attribution. It is the closest thing to a sibling project: its vocabulary
+  auto-transposes to the chord of the moment, which is what Mr. Accompany Me
+  does. Shipping it unmodified also keeps the licence question simple -- there is
+  no derived artifact to account for, because `src/core/vocParser.js` reads the
+  original at run time.
 - **Chordonomicon** is **CC-BY-NC-4.0** on Hugging Face — non-commercial, which
   is an added restriction the GPL does not permit, so it *cannot* be bundled or
   redistributed here. (The GitHub repo's Apache-2.0 covers the code, not the

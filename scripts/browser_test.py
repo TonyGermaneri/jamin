@@ -9,6 +9,7 @@ canvas text metrics and painting, and the Web MIDI API surface.
 import functools
 import http.server
 import os
+import re
 import socketserver
 import sys
 import threading
@@ -71,8 +72,18 @@ def main():
                     if not item["pass"]:
                         failures += 1
 
-            bad = [(t, text) for t, text in console if t in ("error", "pageerror", "warning")]
-            for kind, text in bad:
+            # A page may deliberately provoke console errors -- a test for how a
+            # cross-origin failure is handled cannot avoid the browser logging
+            # one. Those pages declare the patterns they expect.
+            expected = page.evaluate("window.__expectedConsole || []") or []
+            patterns = [re.compile(pattern) for pattern in expected]
+
+            for kind, text in console:
+                if kind not in ("error", "pageerror", "warning"):
+                    continue
+                if any(pattern.search(text) for pattern in patterns):
+                    print(f"CONSOLE {kind} (expected): {text[:120]}")
+                    continue
                 print(f"CONSOLE {kind}: {text[:400]}")
                 if kind in ("error", "pageerror"):
                     failures += 1

@@ -22,8 +22,10 @@ SUITES = [
         "tests/fixtures/chordonomicon-vocab.js", "src/core/chordParser.js", "src/core/score.js",
         "src/core/importers.js", "src/core/progressions.js",
     ], "tests/importers.test.js"),
+    (["src/core/vocParser.js"], "tests/voc.test.js"),
     ([
-        "src/core/chordParser.js", "src/core/voiceLeading.js", "src/core/licks.js",
+        "src/core/chordParser.js", "src/core/voiceLeading.js", "src/core/vocParser.js",
+        "src/core/licks.js",
     ], "tests/licks.test.js"),
     ([
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
