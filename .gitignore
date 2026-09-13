@@ -2,8 +2,6 @@
 .vite
 *.local
 dist
-dist/
 node_modules
-node_modules/
 tests/browser/chordonomicon-sample.csv
 tests/browser/shots/
