@@ -84,6 +84,14 @@ A blank editor is almost always a page that is not where the plugin looked, and 
 one that answers it. Naming a directory with no `index.html` in it says so and falls back to the
 bundle, rather than falling back in silence while you edit a copy nothing is reading.
 
+**The bundle is re-sealed after the page goes in.** Adding files to a bundle breaks its code
+signature, and a broken signature is not a warning: Ableton's scanner refuses the plugin outright
+and writes *"Failed to load plugin: a sealed resource is missing or invalid"* into
+`PluginScanner.txt`, which reads like a corrupt download rather than a build step in the wrong
+order. `codesign --verify --strict` names the culprits exactly — `file added:
+Contents/Resources/web/index.html` and so on. There is a test per artefact so it cannot come
+back, and `JAMIN_CODESIGN_IDENTITY` takes a Developer ID when there is one to use.
+
 The `.eot`, `.ttf` and `.woff` faces are skipped. A `@font-face` src list is tried in order and
 `woff2` is first, so WKWebView never asks for the other three; they are 3.2 MB of bundle for a
 browser that will not request them.

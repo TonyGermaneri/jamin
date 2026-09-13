@@ -49,3 +49,18 @@ if(APPLE AND TARGET jamin-auhost)
     add_test(NAME jamin-auhost COMMAND jamin-auhost 4 --seconds 0.5)
     set_tests_properties(jamin-auhost PROPERTIES TIMEOUT 120 LABELS installed)
 endif()
+
+# The seal. Copying the page into a bundle that was already signed breaks its
+# signature, and a hardened host then refuses to load it with "a sealed resource
+# is missing or invalid" -- which sounds like a corrupt download and is really a
+# build step in the wrong order. It cost an afternoon once; it gets a test.
+if(APPLE)
+    foreach(_sealed IN ITEMS
+            JaminInstrument_VST3 JaminInstrument_AU JaminInstrument_Standalone JaminMidiFx_AU)
+        if(TARGET ${_sealed})
+            add_test(NAME codesign-${_sealed}
+                     COMMAND codesign --verify --strict --verbose=2
+                             "$<TARGET_BUNDLE_DIR:${_sealed}>")
+        endif()
+    endforeach()
+endif()

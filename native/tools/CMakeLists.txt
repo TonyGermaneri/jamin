@@ -37,3 +37,20 @@ if(APPLE)
     target_link_libraries(jamin-auhost PRIVATE
         "-framework Cocoa" "-framework AudioToolbox" "-framework AudioUnit")
 endif()
+
+# jamin-vst3: the module, opened the way a scanner opens it. Uses the VST3
+# interface headers JUCE already fetched -- headers only, no SDK sources, so
+# there is nothing extra to build or license.
+if(APPLE AND JAMIN_BUILD_PLUGIN)
+    set(_vst3_headers
+        "${juce_SOURCE_DIR}/modules/juce_audio_processors_headless/format_types/VST3_SDK")
+    if(EXISTS "${_vst3_headers}/pluginterfaces/vst/ivstcomponent.h")
+        add_executable(jamin-vst3 vst3_check.cpp)
+        set_target_properties(jamin-vst3 PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+        target_include_directories(jamin-vst3 PRIVATE "${_vst3_headers}")
+        target_link_libraries(jamin-vst3 PRIVATE "-framework CoreFoundation")
+    else()
+        message(STATUS "  (no VST3 headers found; skipping jamin-vst3)")
+    endif()
+endif()

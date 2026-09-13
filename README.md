@@ -120,8 +120,18 @@ a host running as `x86_64` does not merely refuse an `arm64`-only plugin, it
 never lists it at all. Nothing appears in any log, and the result is
 indistinguishable from a plugin that failed to build.
 
-If Live still does not list it, the things to check, in order: Preferences ▸
-Plug-Ins ▸ **Use VST3 Plug-In System Folders** is on, then **Rescan**; and if
+If Live does not list it, **read its scanner log** rather than guessing — it says
+why, in as many words:
+
+```sh
+grep -i -A3 jamin ~/Library/Preferences/Ableton/Live\ */PluginScanner.txt
+```
+
+`Failed to load plugin: a sealed resource is missing or invalid` means the
+bundle's code signature was broken after signing (the build re-seals it; a
+hand-copied file would do it again). Otherwise the things to check, in order:
+Preferences ▸ Plug-Ins ▸ **Use VST3 Plug-In System Folders** is on, then
+**Rescan**; and if
 your other plugins live in `/Library/Audio/Plug-Ins/VST3` rather than your home
 folder, put it there too — that needs `sudo`, so it is yours to run:
 
