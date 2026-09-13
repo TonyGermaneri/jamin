@@ -54,6 +54,7 @@ export class MidiEngine {
     this.onTick = null
     this.onTransport = null
     this.onNoteIn = null
+    this.onControl = null
     this.onPortsChanged = null
     this.onClockDetected = null
 
@@ -116,6 +117,14 @@ export class MidiEngine {
     }
 
     const type = status & 0xf0
+
+    // Control changes go to the app from any input: a pedal or a fader used to
+    // fire something is rarely on the port the notes come from.
+    if (type === 0xb0) {
+      if (this.onControl) this.onControl(data[1], data[2] ?? 0, portId)
+      return
+    }
+
     if (type !== 0x90 && type !== 0x80) return
     if (!this._listensForAccomp(portId)) return
 

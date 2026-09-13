@@ -32,6 +32,7 @@ export class Player {
     this.chordNotes = [] // last voicing, remembered for voice leading
     this.soundingNotes = [] // what is actually held down right now
     this.droneNotes = [] // the held root under the accompaniment, if asked for
+    this.accentTimers = [] // an accent is a gesture, not part of the chart
     this.activePhrase = null
     this.phraseQueue = []
     this.phraseCursor = 0
@@ -214,6 +215,58 @@ export class Player {
     }
   }
 
+  /**
+   * Fire the accent phrase over whatever chord is current.
+   *
+   * Scheduled in real time rather than in pulses, for two reasons: it plays over
+   * the top of whatever the chart is doing rather than replacing it, and it
+   * works when the transport is stopped, which is when you are most likely to be
+   * poking at it.
+   *
+   * @returns {boolean} whether anything was played
+   */
+  triggerAccent(phrase) {
+    if (!phrase || !phrase.notes || !phrase.notes.length) return false
+    const chord = this.current && this.current.chord
+    if (!chord || !chord.ok || chord.silent) return false
+
+    const accompany = this.settings.accompany
+    const chords = this.settings.chords
+    const midi = this.settings.midi
+    const outputId = midi.accompOutputId || midi.chordOutputId
+
+    const notes = realizePhrase(
+      phrase.notes.map((n) => n.note),
+      { rootPc: phrase.rootPc ?? 0, pcs: phrase.sourcePcs },
+      { rootPc: chord.rootPc, pcs: chord.absPcs },
+      {
+        home: [(accompany.octave ?? 4) * 12 + 12],
+        anchor: null,
+        snapNonChordTones: accompany.snapNonChordTones,
+        range: [accompany.rangeLow ?? chords.rangeLow, accompany.rangeHigh ?? chords.rangeHigh],
+      }
+    )
+
+    const bpm = this.engine.bpm > 20 ? this.engine.bpm : 120
+    const speed = accompany.speed > 0 ? accompany.speed : 1
+    const msPerPulse = 60000 / (bpm * 24 * speed)
+
+    this.stopAccent()
+    phrase.notes.forEach((played, index) => {
+      const note = notes[index]
+      const at = played.at * msPerPulse
+      const off = at + Math.max(1, played.duration) * msPerPulse
+      this.accentTimers.push(setTimeout(() => this.engine.noteOn(outputId, midi.accompChannel, note, midi.velocity), at))
+      this.accentTimers.push(setTimeout(() => this.engine.noteOff(outputId, midi.accompChannel, note), off))
+    })
+    return true
+  }
+
+  stopAccent() {
+    for (const timer of this.accentTimers) clearTimeout(timer)
+    this.accentTimers = []
+  }
+
   flushPhrase(local) {
     const midi = this.settings.midi
     const outputId = midi.accompOutputId || midi.chordOutputId
@@ -233,6 +286,7 @@ export class Player {
   }
 
   stopAll() {
+    this.stopAccent()
     const midi = this.settings.midi
     for (const note of this.soundingNotes) this.engine.noteOff(midi.chordOutputId, midi.chordChannel, note)
     this.soundingNotes = []

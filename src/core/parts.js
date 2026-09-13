@@ -18,6 +18,7 @@
 
 import { parseChord } from './chordParser.js'
 import { maxSimultaneous } from './phrases.js'
+import { loadChordDictionary, nameForSet } from './chordDictionary.js'
 
 let partsCache = null
 let partsPending = null
@@ -25,7 +26,10 @@ let partsPending = null
 export async function loadParts() {
   if (partsCache) return partsCache
   if (!partsPending) {
-    partsPending = fetch(new URL('../data/pop909Phrases.json', import.meta.url))
+    // The dictionary names the chord each part was played over, which is the
+    // only categorisation POP909 actually carries -- it has no genre of its own.
+    partsPending = loadChordDictionary()
+      .then(() => fetch(new URL('../data/pop909Phrases.json', import.meta.url)))
       .then((response) => (response.ok ? response.json() : Promise.reject(new Error(response.status))))
       .then((payload) => {
         partsCache = (payload.parts || []).map(entryToPart).filter(Boolean)
@@ -55,6 +59,8 @@ export function entryToPart(entry, index) {
     id: `p${index}`,
     name: entry.n,
     kind: 'part',
+    category: nameForSet(chord.pcs) || entry.c,
+    origin: `POP909 #${entry.s}`,
     sourceChord: entry.c,
     sourcePcs: chord.pcs,
     rootPc: 0,

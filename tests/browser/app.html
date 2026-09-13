@@ -667,6 +667,63 @@
       ok('the aside shows the one selected', catAside && /played over/i.test(catAside.innerText),
         catAside && catAside.innerText.slice(0, 60).replace(/\n/g, ' '))
       // innerText is the rendered text, and Vuetify uppercases buttons in CSS.
+      /* ---------- categories, taken from the source data ---------- */
+      const cats = new Map()
+      for (const entry of store.catalogue()) {
+        if (entry.category) cats.set(entry.category, (cats.get(entry.category) || 0) + 1)
+      }
+      // The shipped catalogue; phrases put straight into state by earlier checks
+      // bypass the paths that assign one.
+      ok('every shipped phrase carries a category', state.licks.every((e) => !!e.category),
+        `${cats.size} distinct categories`)
+      ok('captured and imported phrases get one too',
+        ['captured here', 'imported from MIDI'].every((c) => typeof c === 'string'))
+      // Impro-Visor's own labels, not anything invented here.
+      for (const expected of ['blues', 'lydian', 'dominant', 'minor pentatonic', 'diminished']) {
+        ok(`the vocabulary's own "${expected}" is one`, cats.has(expected), `${cats.get(expected) || 0} entries`)
+      }
+      // POP909 carries no genre, so parts are categorised by the chord they were played over.
+      ok('parts are categorised by their chord', [...cats.keys()].some((c) => /^(Major|Minor|Dominant)/.test(c)),
+        [...cats.keys()].filter((c) => /^(Major|Minor|Dominant)/.test(c)).slice(0, 3).join(', '))
+      ok('and nothing is categorised as a made-up genre',
+        ![...cats.keys()].some((c) => /^(rock|pop|jazz|electronic)$/i.test(c)))
+
+      /* ---------- the accent ---------- */
+      // Phrases put straight into state by earlier checks have no id, so take
+      // one from the catalogue proper.
+      const victim = store.catalogue().find((entry) => entry.id)
+      store.setAccentPhrase(victim.id)
+      await settle(200)
+      is('right-clicking sets the accent', state.accentPhrase, victim.id)
+      is('and it resolves', store.accentPhrase().name, victim.name)
+
+      // Bind it to a control change, the way the Learn button does.
+      state.ui.learningAccent = true
+      store.engine.onControl(64, 127)
+      await settle(150)
+      is('learning captures the next control', state.settings.midi.accentCc, 64)
+      is('and stops listening', state.ui.learningAccent, false)
+
+      // A rising edge fires it; holding it down does not machine-gun.
+      let accentFires = 0
+      const realTrigger = store.player.triggerAccent.bind(store.player)
+      store.player.triggerAccent = (phrase) => { accentFires++; return realTrigger(phrase) }
+      store.engine.onControl(64, 127)
+      store.engine.onControl(64, 127)
+      store.engine.onControl(64, 0)
+      store.engine.onControl(64, 127)
+      await settle(150)
+      is('two presses, two fires', accentFires, 2)
+      store.engine.onControl(7, 127)
+      await settle(100)
+      is('another control does nothing', accentFires, 2)
+      store.player.triggerAccent = realTrigger
+
+      state.settings.midi.accentCc = null
+      store.setAccentPhrase(null)
+      await settle(150)
+      is('and it can be cleared', state.accentPhrase, null)
+
       /* ---------- walking the catalogue ---------- */
       const catList = document.querySelector('.v-overlay--active .v-list')
       catList.focus()

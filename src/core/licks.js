@@ -131,6 +131,10 @@ export function entryToPhrase(entry, index) {
     id: `iv${index}`,
     name: entry.n,
     kind: entry.k,
+    // Impro-Visor labels its own entries -- "blues", "lydian", "dominant-altered",
+    // "minor pentatonic", "parker". That label is the category; nothing invented.
+    category: entry.n,
+    origin: 'Impro-Visor',
     sourceChord: entry.c,
     sourcePcs: chord.absPcs,
     rootPc: chord.rootPc,
@@ -149,6 +153,7 @@ export function searchLicks(licks, query) {
     (lick) =>
       lick.name.toLowerCase().includes(needle) ||
       lick.sourceChord.toLowerCase().includes(needle) ||
+      (lick.category || '').toLowerCase().includes(needle) ||
       lick.kind.includes(needle)
   )
 }

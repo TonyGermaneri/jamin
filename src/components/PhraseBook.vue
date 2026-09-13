@@ -24,6 +24,8 @@ import {
   importMidiPhrases,
   visibleLicks,
   catalogue,
+  setAccentPhrase,
+  triggerAccent,
 } from '../store.js'
 import { summarize } from '../core/phrases.js'
 import { describeLick } from '../core/licks.js'
@@ -43,17 +45,41 @@ const defaultVocab = computed(() => defaultVocabularyUrl())
 const target = computed(() => currentToken())
 const perChord = computed(() => accompany.value.perChordPhrases)
 const playing = computed(() => state.songPhrase)
+const accentId = computed(() => state.accentPhrase)
+const isAccent = (entry) => !!entry && state.accentPhrase === (entry.id || entry.name)
+const accent = computed(() => matches.value.find((entry) => entry.id === state.accentPhrase) ||
+  catalogue().find((entry) => entry.id === state.accentPhrase) || null)
+const category = ref('any')
+
+/** Every category the catalogue actually carries, commonest first. */
+const categories = computed(() => {
+  const counts = new Map()
+  for (const entry of catalogue()) {
+    const name = entry.category
+    if (name) counts.set(name, (counts.get(name) || 0) + 1)
+  }
+  return [
+    { title: 'Any category', value: 'any' },
+    ...[...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([name, count]) => ({ title: `${name} (${count})`, value: name })),
+  ]
+})
 
 const PER_PAGE = 12
 const page = ref(1)
 const selected = ref(null)
 
-const matches = computed(() => (state.licks.length || state.phrases.length ? visibleLicks(search.value) : []))
+const matches = computed(() => {
+  if (!state.licks.length && !state.phrases.length) return []
+  const found = visibleLicks(search.value)
+  return category.value === 'any' ? found : found.filter((entry) => entry.category === category.value)
+})
 const total = computed(() => catalogue().length)
 const pageCount = computed(() => Math.max(1, Math.ceil(matches.value.length / PER_PAGE)))
 const list = computed(() => matches.value.slice((page.value - 1) * PER_PAGE, page.value * PER_PAGE))
 
-watch([search, () => state.ui.lickTexture], () => { page.value = 1 })
+watch([search, category, () => state.ui.lickTexture], () => { page.value = 1 })
 watch(list, (rows) => {
   if (!rows.some((row) => selected.value && row.id === selected.value.id)) selected.value = rows[0] || null
 }, { immediate: true })
@@ -217,8 +243,11 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
             <v-row>
               <v-col cols="12" md="6">
                 <v-row dense class="mb-1">
-                  <v-col cols="7">
+                  <v-col cols="12">
                     <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable />
+                  </v-col>
+                  <v-col cols="7">
+                    <v-select v-model="category" :items="categories" label="Category" />
                   </v-col>
                   <v-col cols="5">
                     <v-select
@@ -260,9 +289,11 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
                     :active="selected && selected.id === entry.id"
                     class="px-2"
                     @click="pick(entry)"
+                    @contextmenu.prevent="setAccentPhrase(entry.id || entry.name)"
                   >
                     <v-list-item-title class="text-body-2 text-truncate">{{ entry.name }}</v-list-item-title>
                     <template #append>
+                      <v-icon v-if="isAccent(entry)" size="14" color="secondary" class="mr-2">mdi-flash-outline</v-icon>
                       <v-icon v-if="playing === entry.id" size="14" color="primary" class="mr-2">mdi-play</v-icon>
                       <span class="text-caption text-medium-emphasis">{{ beatsOf(entry) }} beats</span>
                     </template>
@@ -272,7 +303,8 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
                 <v-pagination v-model="page" :length="pageCount" :total-visible="6" density="comfortable" class="mt-2" />
                 <div class="text-caption text-medium-emphasis text-center">
                   {{ matches.length.toLocaleString() }} of {{ total.toLocaleString() }} ·
-                  click the list, then arrow or scroll to hear your way through it
+                  click the list, then arrow or scroll to hear your way through it ·
+                  right-click one to make it the accent
                 </div>
               </v-col>
 
@@ -320,6 +352,15 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
                       {{ playing === selected.id ? 'Playing' : 'Use' }}
                     </v-btn>
                     <v-btn v-if="playing" size="small" variant="text" @click="bindPhrase(null)">Play no phrase</v-btn>
+                    <v-btn
+                      size="small"
+                      variant="text"
+                      prepend-icon="mdi-flash-outline"
+                      :color="isAccent(selected) ? 'secondary' : undefined"
+                      @click="setAccentPhrase(isAccent(selected) ? null : selected.id || selected.name)"
+                    >
+                      {{ isAccent(selected) ? 'Is the accent' : 'Make it the accent' }}
+                    </v-btn>
                     <v-btn
                       v-if="!selected.builtin"
                       icon="mdi-rename-outline"
@@ -437,6 +478,35 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
 
               <v-col cols="12">
                 <v-divider class="my-3" />
+                <div class="text-body-2 mb-1">Accent</div>
+                <div class="text-caption text-medium-emphasis mb-2">
+                  <span v-if="accent">
+                    <strong>{{ accent.name }}</strong> — right-click any phrase in the catalogue to
+                    change it.
+                  </span>
+                  <span v-else>None yet. Right-click a phrase in the catalogue to choose one.</span>
+                  It plays over whatever chord is current, on top of the phrase, stopped or running.
+                </div>
+                <div class="d-flex align-center flex-wrap mb-2" style="gap: 8px">
+                  <v-btn size="small" prepend-icon="mdi-flash-outline" :disabled="!accent" @click="triggerAccent">
+                    Play it
+                  </v-btn>
+                  <v-btn
+                    size="small"
+                    :variant="state.ui.learningAccent ? 'flat' : 'text'"
+                    :color="state.ui.learningAccent ? 'secondary' : undefined"
+                    @click="state.ui.learningAccent = !state.ui.learningAccent"
+                  >
+                    {{ state.ui.learningAccent ? 'Move a control…' : 'Bind to MIDI' }}
+                  </v-btn>
+                  <span v-if="state.settings.midi.accentCc !== null" class="text-caption">
+                    CC {{ state.settings.midi.accentCc }}
+                    <v-btn size="x-small" variant="text" @click="state.settings.midi.accentCc = null">clear</v-btn>
+                  </span>
+                </div>
+              </v-col>
+              <v-col cols="12">
+                <v-divider class="mb-3" />
               </v-col>
               <v-col cols="12" md="6">
                 <v-switch v-model="accompany.enabled" label="Play phrases at all" />

@@ -4,7 +4,18 @@ import ChordCanvas from './components/ChordCanvas.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import PhraseBook from './components/PhraseBook.vue'
 import ProgressionBook from './components/ProgressionBook.vue'
-import { state, initApp, armCapture, disarmCapture, panic, toggleInternalTransport, transposeSong, engine } from './store.js'
+import {
+  state,
+  initApp,
+  armCapture,
+  disarmCapture,
+  panic,
+  toggleInternalTransport,
+  transposeSong,
+  triggerAccent,
+  accentPhrase,
+  engine,
+} from './store.js'
 
 const idle = ref(false)
 let idleTimer = null
@@ -51,6 +62,13 @@ function portName(id) {
 
 const noClockBound = computed(() => !state.settings.midi.clockInputId || state.midi.state !== 'ready')
 
+const accent = computed(() => (state.accentPhrase ? accentPhrase() : null))
+const accentTitle = computed(() => {
+  if (!accent.value) return 'Accent — right-click a phrase in the catalogue to choose one'
+  const cc = state.settings.midi.accentCc
+  return `Accent: ${accent.value.name}${cc === null ? '' : ` (CC ${cc})`}`
+})
+
 const readoutColor = computed(() => state.settings.theme.fg)
 
 function openMidi() {
@@ -93,6 +111,14 @@ function toggleArm() {
           variant="text"
           title="Transpose the whole chart up a semitone"
           @click="transposeSong(1)"
+        />
+        <v-btn
+          icon="mdi-flash-outline"
+          size="small"
+          variant="text"
+          :color="accent ? 'secondary' : undefined"
+          :title="accentTitle"
+          @click="triggerAccent"
         />
         <v-btn
           icon="mdi-record-circle-outline"

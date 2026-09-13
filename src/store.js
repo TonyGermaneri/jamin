@@ -12,7 +12,15 @@ import { reactive, watch } from 'vue'
 import { MidiEngine } from './core/midi.js'
 import { Player } from './core/player.js'
 import { parseScore } from './core/score.js'
-import { loadSettings, saveSettings, defaultSettings, TEXT_KEY, SONG_PHRASE_KEY, SAMPLE_CHART } from './core/settings.js'
+import {
+  loadSettings,
+  saveSettings,
+  defaultSettings,
+  TEXT_KEY,
+  SONG_PHRASE_KEY,
+  ACCENT_KEY,
+  SAMPLE_CHART,
+} from './core/settings.js'
 import {
   loadPhrases,
   savePhrases,
@@ -55,6 +63,7 @@ export const engine = new MidiEngine()
 export const state = reactive({
   text: '',
   songPhrase: null,
+  accentPhrase: null,
   score: parseScore(''),
   settings: loadSettings(),
   phrases: [],
@@ -90,6 +99,7 @@ export const state = reactive({
     lickTexture: 'any',
     progressionsTab: 'library',
     armed: false,
+    learningAccent: false,
     fetching: false,
     fetchProgress: '',
     toast: null,
@@ -159,6 +169,24 @@ engine.onTransport = (kind) => {
 
 engine.onNoteIn = (note, velocity, on) => player.noteIn(note, velocity, on)
 
+/**
+ * A control change either teaches the accent its binding or fires it. Rising
+ * edge only, so holding a sustain pedal down does not machine-gun.
+ */
+let accentHeld = false
+engine.onControl = (controller, value) => {
+  if (state.ui.learningAccent) {
+    state.settings.midi.accentCc = controller
+    state.ui.learningAccent = false
+    toast(`Accent bound to CC ${controller}`)
+    return
+  }
+  if (state.settings.midi.accentCc === null || controller !== state.settings.midi.accentCc) return
+  const down = value >= 64
+  if (down && !accentHeld) triggerAccent()
+  accentHeld = down
+}
+
 engine.onPortsChanged = (inputs, outputs) => {
   state.midi.inputs = inputs
   state.midi.outputs = outputs
@@ -173,6 +201,7 @@ engine.onPortsChanged = (inputs, outputs) => {
 export async function initApp() {
   state.text = readStoredText()
   state.songPhrase = readStoredSongPhrase()
+  state.accentPhrase = readStored(ACCENT_KEY)
   reparse()
   loadPhraseBook()
   state.progressions = loadProgressions()
@@ -194,13 +223,15 @@ export async function initApp() {
   else setTimeout(build, 1200)
 }
 
-function readStoredSongPhrase() {
+function readStored(key) {
   try {
-    return localStorage.getItem(SONG_PHRASE_KEY) || null
+    return localStorage.getItem(key) || null
   } catch {
     return null
   }
 }
+
+const readStoredSongPhrase = () => readStored(SONG_PHRASE_KEY)
 
 function readStoredText() {
   try {
@@ -428,6 +459,7 @@ export function keepCapture(name) {
     ...state.pendingCapture,
     id: newPhraseId(),
     kind: 'captured',
+    category: 'captured here',
     name: uniqueName(state.phrases, name || `${state.pendingCapture.sourceChord}-lick`),
   })
   delete phrase.capturedAt
@@ -561,6 +593,7 @@ export function importMidiPhrases(bytes, options = {}) {
     ...phrase,
     id: newPhraseId(),
     kind: 'imported',
+    category: 'imported from MIDI',
     name: uniqueName(state.phrases, phrase.name),
     createdAt: Date.now(),
   }))
@@ -568,6 +601,41 @@ export function importMidiPhrases(bytes, options = {}) {
   savePhrases(state.phrases)
   toast(`${added.length} phrase${added.length === 1 ? '' : 's'} from MIDI`)
   return { ...result, added }
+}
+
+/* ------------------------------------------------------------------ *
+ * The accent
+ * ------------------------------------------------------------------ */
+
+/** Right-clicking a phrase in the catalogue puts it here. */
+export function setAccentPhrase(ref) {
+  state.accentPhrase = ref || null
+  try {
+    if (state.accentPhrase) localStorage.setItem(ACCENT_KEY, state.accentPhrase)
+    else localStorage.removeItem(ACCENT_KEY)
+  } catch {
+    /* ignore */
+  }
+  const phrase = player.getPhrase(state.accentPhrase)
+  toast(phrase ? `Accent: ${phrase.name}` : 'Accent cleared')
+}
+
+export function accentPhrase() {
+  return player.getPhrase(state.accentPhrase)
+}
+
+/** Play it now, over whatever chord is current. */
+export function triggerAccent() {
+  const phrase = accentPhrase()
+  if (!phrase) {
+    toast('No accent phrase yet — right-click one in the catalogue')
+    return false
+  }
+  if (!player.triggerAccent(phrase)) {
+    toast('Nothing to play it over yet')
+    return false
+  }
+  return true
 }
 
 /* ------------------------------------------------------------------ *
@@ -656,6 +724,7 @@ export function adoptLick(lick, bind = false) {
     // to a default would make that a coincidence rather than a fact.
     rootPc: lick.rootPc ?? 0,
     originalRoot: lick.originalRoot,
+    category: lick.category,
     bars: lick.lengthPulses / 96,
     origin: lick.kind === 'part' ? `POP909 #${lick.song}` : 'Impro-Visor',
     createdAt: Date.now(),

@@ -28,6 +28,7 @@ export const SETTINGS_VERSION = 5
 export const TEXT_KEY = 'jamin.chart.v1'
 export const PHRASE_KEY = 'jamin.phrases.v1'
 export const SONG_PHRASE_KEY = 'jamin.songPhrase.v1'
+export const ACCENT_KEY = 'jamin.accent.v1'
 
 export function defaultSettings() {
   const theme = THEMES[0]
@@ -43,6 +44,8 @@ export function defaultSettings() {
       accompOutputId: '',
       accompChannel: 1,
       velocity: 90,
+      // A control change that fires the accent, from any input. null until bound.
+      accentCc: null,
     },
     transport: {
       beatsPerBar: 4,
