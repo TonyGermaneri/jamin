@@ -22,6 +22,14 @@ npm install
 npm run dev
 ```
 
+With no Node yet, `npm run serve` starts a static server that runs the app
+without a build step (see below) and prints an address to open.
+
+Note that `index.html` is the *build* entry: it imports `vue` by name, which no
+browser can resolve on its own, so opening it without a bundler gets you a blank
+page and a module-resolution error in the console. It now says so on the page
+instead, and the no-build server serves the working entry at its root.
+
 Open the printed URL in Chrome, Edge or Opera — Web MIDI is not available in
 Safari or Firefox. Grant the MIDI prompt and the ports bind themselves; the gear
 icon is there if you want different ones.

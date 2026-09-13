@@ -8,10 +8,38 @@
     <style>
       html, body, #app { height: 100%; width: 100%; margin: 0; padding: 0; overflow: hidden; }
       body { background: #07080c; }
+      #needs-a-build {
+        color: #b8c0d8;
+        font: 15px/1.6 ui-monospace, "SF Mono", monospace;
+        max-width: 34em;
+        margin: 12vh auto;
+        padding: 0 24px;
+      }
+      #needs-a-build h1 { color: #7c5cff; letter-spacing: 0.3em; font-size: 20px }
+      #needs-a-build code { color: #22d3ee }
     </style>
   </head>
   <body>
     <div id="app"></div>
+    <div id="needs-a-build" hidden>
+      <h1>jamin</h1>
+      <p>
+        This page is the build entry, and it needs a bundler: it imports
+        <code>vue</code> by name, which a browser cannot resolve on its own.
+        Opened without one it fails with
+        <em>“Failed to resolve module specifier”</em> and shows you nothing.
+      </p>
+      <p>Run <code>npm run dev</code>, or, with no Node installed, <code>npm run serve</code> and open the address it prints.</p>
+    </div>
+    <script>
+      // Nothing mounted shortly after load means no bundler ran. Say so rather
+      // than leaving a blank page and a console message.
+      setTimeout(function () {
+        if (!document.querySelector('#app').firstChild) {
+          document.getElementById('needs-a-build').hidden = false
+        }
+      }, 2500)
+    </script>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
