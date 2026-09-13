@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="./public/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>jamin (no-build)</title>
+    <!--
+      Runs jamin without a build step: the .vue files are compiled in the page by
+      the real Vue SFC compiler, and Vue/Vuetify come from a CDN.  It is a
+      stopgap for a machine with no Node -- slower to start and it needs the
+      network.  `npm run dev` is the real thing; this exists so the app is usable
+      in the meantime.  Everything under src/ is identical either way.
+    -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vuetify@3.13.4/dist/vuetify.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" />
+    <link rel="stylesheet" href="./src/styles/app.css" />
+    <style>
+      html, body, #app { height: 100%; width: 100%; margin: 0; padding: 0; overflow: hidden; }
+      body { background: #07080c; color: #8b93ad; font: 13px ui-monospace, "SF Mono", monospace; }
+      #boot { position: fixed; inset: 0; display: grid; place-content: center; gap: 10px; text-align: center; }
+      #boot b { color: #7c5cff; font-weight: 600; letter-spacing: .3em; font-size: 22px }
+      #boot.failed { color: #ff5470 }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "vue": "https://cdn.jsdelivr.net/npm/vue@3.5.42/dist/vue.esm-browser.prod.js",
+          "vuetify": "https://cdn.jsdelivr.net/npm/vuetify@3.13.4/dist/vuetify.esm.js",
+          "vue3-sfc-loader": "https://cdn.jsdelivr.net/npm/vue3-sfc-loader@0.9.5/dist/vue3-sfc-loader.esm.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="boot"><b>jamin</b><span id="boot-msg">compiling…</span></div>
+    <div id="app"></div>
+
+    <script type="module">
+      const boot = document.getElementById('boot')
+      const message = document.getElementById('boot-msg')
+      const fail = (text) => {
+        boot.classList.add('failed')
+        message.textContent = text
+      }
+
+      try {
+        const [Vue, Vuetify, { loadModule }, options] = await Promise.all([
+          import('vue'),
+          import('vuetify'),
+          import('vue3-sfc-loader'),
+          import('./src/plugins/vuetifyOptions.js'),
+        ])
+
+        const vuetify = Vuetify.createVuetify({
+          components: Vuetify.components,
+          directives: Vuetify.directives,
+          theme: options.theme,
+          defaults: options.defaults,
+        })
+
+        const loaderOptions = {
+          moduleCache: { vue: Vue },
+          getFile: async (url) => {
+            const response = await fetch(url)
+            if (!response.ok) throw new Error(`${url} ${response.status}`)
+            return {
+              getContentData: (binary) => (binary ? response.arrayBuffer() : response.text()),
+              type: '.' + url.split('.').pop(),
+            }
+          },
+          addStyle: (text) => {
+            const style = document.createElement('style')
+            style.textContent = text
+            document.head.appendChild(style)
+          },
+          // Plain .js loads natively, so it shares one module registry -- and
+          // therefore one Vue and one store -- with this page.
+          handleModule: async (type, getContentData, path, opts) => {
+            if (type === '.js') return import(new URL(path, location.href).href)
+            if (type === '.css') { opts.addStyle(await getContentData(false)); return {} }
+            if (type === '.json') return JSON.parse(await getContentData(false))
+            return undefined
+          },
+          log: (level, ...args) => console[level === 'error' ? 'error' : 'warn']('sfc:', ...args),
+        }
+
+        const App = Vue.defineAsyncComponent(() => loadModule('./src/App.vue', loaderOptions))
+        const app = Vue.createApp({ render: () => Vue.h(App) })
+        app.use(vuetify)
+        app.mount('#app')
+
+        // The chart mounts asynchronously; wait for it before clearing the splash.
+        const ready = setInterval(() => {
+          if (!document.querySelector('.jamin-root')) return
+          clearInterval(ready)
+          boot.remove()
+        }, 60)
+        setTimeout(() => clearInterval(ready), 20000)
+      } catch (error) {
+        fail(String(error && error.message ? error.message : error))
+      }
+    </script>
+  </body>
+</html>

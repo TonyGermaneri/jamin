@@ -31,6 +31,7 @@ export function defaultSettings() {
       latencyPulses: 0,
       internalTempo: 120,
       autoStartOnClock: true,
+      autoDetectClock: true,
     },
     chords: {
       octave: 4,

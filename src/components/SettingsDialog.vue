@@ -110,6 +110,9 @@ async function retryMidi() {
             <v-row dense>
               <v-col cols="12" md="6">
                 <v-select v-model="state.settings.midi.clockInputId" :items="inputs" label="Clock in (from the DAW)" />
+                <div v-if="!state.settings.midi.clockInputId && state.settings.transport.autoDetectClock" class="text-caption text-medium-emphasis mt-1">
+                  Listening on every input — whichever one sends clock gets picked.
+                </div>
               </v-col>
               <v-col cols="12" md="6">
                 <v-select v-model="state.settings.midi.accompInputId" :items="inputs" label="Accompaniment in (your keyboard)" />
@@ -167,6 +170,7 @@ async function retryMidi() {
               </v-col>
               <v-col cols="12" md="6">
                 <v-switch v-model="state.settings.transport.autoStartOnClock" label="Start on incoming clock, even without a Start message" />
+                <v-switch v-model="state.settings.transport.autoDetectClock" label="Find the clock source automatically" />
               </v-col>
               <v-col cols="12" md="6">
                 <div class="text-caption mb-1">Internal clock tempo — {{ state.settings.transport.internalTempo }} bpm</div>

@@ -128,15 +128,33 @@ function readStoredText() {
 }
 
 /**
- * Pick sensible ports the first time so the app is usable without opening
- * settings at all: the first input that is plausibly a clock source, and the
- * first output that is not a passthrough of our own input.
+ * Rank a port for first-run auto-binding.
+ *
+ * "First in the list" is a bad guess -- on a real rig that is usually Network
+ * Session, which is almost never what anyone wants. Virtual buses are where DAW
+ * clock normally arrives, and a control surface or a keyboard is never a clock
+ * source. The clock input gets corrected automatically anyway the moment real
+ * clock shows up somewhere else; this just makes the opening guess sane.
  */
+function rankPort(port) {
+  const name = (port.name || '').toLowerCase()
+  if (/network session/.test(name)) return -20
+  if (/push|keyboard|seaboard|lumi|key port|pedal|rise/.test(name)) return -10
+  if (/iac|loopback|virtual|bus/.test(name)) return 10
+  if (/daw|midipipe|bome/.test(name)) return 5
+  return 0
+}
+
+const bestPort = (ports) => ports.slice().sort((a, b) => rankPort(b) - rankPort(a))[0]
+
+/** Pick something sensible the first time, so the app works before anyone opens settings. */
 function autoBind() {
   const midi = state.settings.midi
   const ports = state.midi
-  if (!midi.clockInputId && ports.inputs.length) midi.clockInputId = ports.inputs[0].id
-  if (!midi.chordOutputId && ports.outputs.length) midi.chordOutputId = ports.outputs[0].id
+  if (!midi.clockInputId && ports.inputs.length && !state.settings.transport.autoDetectClock) {
+    midi.clockInputId = bestPort(ports.inputs).id
+  }
+  if (!midi.chordOutputId && ports.outputs.length) midi.chordOutputId = bestPort(ports.outputs).id
   if (!midi.accompOutputId && ports.outputs.length) midi.accompOutputId = midi.chordOutputId
   applyPortBindings()
 }
@@ -145,6 +163,22 @@ export function applyPortBindings() {
   engine.clockInputId = state.settings.midi.clockInputId
   engine.accompInputId = state.settings.midi.accompInputId
   engine.autoStartOnClock = state.settings.transport.autoStartOnClock
+  engine.autoDetectClock = state.settings.transport.autoDetectClock
+}
+
+engine.onClockDetected = (portId, name) => {
+  state.settings.midi.clockInputId = portId
+  // Don't send chords back down the wire the clock arrived on -- that feeds
+  // notes straight into whatever is driving us.
+  const chordOut = state.midi.outputs.find((port) => port.id === state.settings.midi.chordOutputId)
+  if (chordOut && chordOut.name === name) {
+    const elsewhere = bestPort(state.midi.outputs.filter((port) => port.name !== name))
+    if (elsewhere) {
+      state.settings.midi.chordOutputId = elsewhere.id
+      if (state.settings.midi.accompOutputId === chordOut.id) state.settings.midi.accompOutputId = elsewhere.id
+    }
+  }
+  toast(`Following clock from ${name}`)
 }
 
 /* ------------------------------------------------------------------ *

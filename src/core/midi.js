@@ -36,6 +36,11 @@ export class MidiEngine {
     this.lastClockAt = 0
     this.clockSeen = false
     this.autoStartOnClock = true
+    // With no clock source chosen, watch every input and adopt whichever one is
+    // actually sending clock. Binding ports is the one job left to the user;
+    // this removes most of it.
+    this.autoDetectClock = true
+    this._clockCandidates = new Map()
     // Some DAWs send clock the whole time, stopped or not. Once we have seen an
     // explicit Stop we wait for a real Start before running again.
     this._sawStop = false
@@ -50,6 +55,7 @@ export class MidiEngine {
     this.onTransport = null
     this.onNoteIn = null
     this.onPortsChanged = null
+    this.onClockDetected = null
 
     this._sounding = new Map() // `${outputId}:${channel}:${note}` -> true
     this._handle = this._handle.bind(this)
@@ -105,6 +111,7 @@ export class MidiEngine {
 
     if (status >= 0xf8 || status === SONG_POSITION) {
       if (this._listensForClock(portId)) this._clockMessage(status, data, event.timeStamp)
+      else if (status === CLOCK) this._considerClockSource(portId)
       return
     }
 
@@ -116,6 +123,21 @@ export class MidiEngine {
     const velocity = data[2] ?? 0
     const on = type === 0x90 && velocity > 0
     if (this.onNoteIn) this.onNoteIn(note, velocity, on, event.timeStamp)
+  }
+
+  /**
+   * A port nobody asked us to listen to is sending clock. Take a few pulses to
+   * be sure it is a steady source rather than a stray byte, then adopt it.
+   */
+  _considerClockSource(portId) {
+    if (!this.autoDetectClock || this.clockInputId || !portId) return
+    const seen = (this._clockCandidates.get(portId) || 0) + 1
+    this._clockCandidates.set(portId, seen)
+    if (seen < 8) return
+    this.clockInputId = portId
+    this._clockCandidates.clear()
+    const port = this.inputs.find((candidate) => candidate.id === portId)
+    if (this.onClockDetected) this.onClockDetected(portId, port ? port.name : portId)
   }
 
   _listensForClock(portId) {
