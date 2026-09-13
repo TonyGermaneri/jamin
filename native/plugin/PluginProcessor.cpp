@@ -109,7 +109,11 @@ JaminProcessor::JaminProcessor()
 
 JaminProcessor::~JaminProcessor()
 {
+    // Order, explicitly, rather than by where the members happen to be declared:
+    // the timer stops collecting, the compile thread stops producing, and only
+    // then does anything the audio thread reads go away.
     stopTimer();
+    compiler.reset();
     live.store (nullptr, std::memory_order_release);
 }
 

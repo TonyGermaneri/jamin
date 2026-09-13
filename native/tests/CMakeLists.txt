@@ -37,3 +37,15 @@ if(APPLE AND TARGET jamin-boot AND TARGET JaminInstrument_AU)
                      --host)
     set_tests_properties(jamin-host PROPERTIES TIMEOUT 60)
 endif()
+
+# Opening the editor and throwing it away is what a host spends its time doing,
+# and auval never does it at all -- it does not instantiate the view. This runs
+# the full cycle, including a teardown while the page is still loading, which is
+# the case with a dangling `this` in it if anything has one.
+#
+# It needs the plugin installed where the system can find it, so it is not part
+# of the default run: `ctest -L installed` after copying the component in.
+if(APPLE AND TARGET jamin-auhost)
+    add_test(NAME jamin-auhost COMMAND jamin-auhost 4 --seconds 0.5)
+    set_tests_properties(jamin-auhost PROPERTIES TIMEOUT 120 LABELS installed)
+endif()

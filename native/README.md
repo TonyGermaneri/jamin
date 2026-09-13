@@ -4,10 +4,17 @@ jamin as an AU MIDI effect. The web app in `../src` keeps shipping unchanged, an
 does not contain a second copy of it.
 
 ```
-cmake -B build -G Ninja -S . -DCMAKE_OSX_ARCHITECTURES=arm64
+cmake -B build -G Ninja -S .
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+**Universal by default** — `arm64` and `x86_64`. A host launched under Rosetta does not refuse
+an `arm64`-only plugin, it never lists it, with nothing in any log to say so. Pass
+`-DCMAKE_OSX_ARCHITECTURES=arm64` while iterating if the build time matters.
+
+`ctest -L installed` additionally runs `jamin-auhost` against the plugin as installed on the
+system, which the default run cannot do.
 
 JUCE is fetched by the build. CMake 3.22+, a C++20 compiler, and a `dist/` in the repository
 root (`npm run build`, or `cmake --build build --target web`) are the whole list.
@@ -43,7 +50,7 @@ uncompiled.
 | `core/` | No JUCE, no plugin API. `Sequence` and `SequencePlayer` — the audio-thread reader, allocation-free and lock-free — and `SongBus`, the chart every instance shares. |
 | `plugin/` | The plugin targets, built twice from one set of sources. `processBlock` reads the playhead and emits; the editor is a `WebBrowserComponent` and nothing else. |
 | `tools/` | `jamin-boot` — loads the real bundled page in a real `WKWebView` and fails if the application reports so much as a console error. With `--host` it stands in for the plugin, drives a playhead, and checks the chart followed. `jamin-compile` — the plugin's own compiler without a plugin. |
-| `tests/` | The sequence reader against a loop point, and the bus between two instances. The page's own half of the bridge is `tests/host.test.js`, in the JavaScript suite. |
+| `tests/` | The sequence reader against a loop point, and the bus between two instances. `jamin-auhost` opens the editor and throws it away, which `auval` never does. The page's own half of the bridge is `tests/host.test.js`, in the JavaScript suite. |
 | `cmake/` | Copying the built page into the bundle. |
 
 ---

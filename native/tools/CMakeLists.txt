@@ -25,3 +25,15 @@ if(APPLE)
     target_compile_definitions(jamin-compile PRIVATE
         JUCE_STANDALONE_APPLICATION=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
 endif()
+
+# jamin-auhost: what a host does, without a host. auval never instantiates the
+# editor, so it cannot see a crash that only happens once the web view has been
+# created and thrown away.
+if(APPLE)
+    add_executable(jamin-auhost au_host.m)
+    set_target_properties(jamin-auhost PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    target_compile_options(jamin-auhost PRIVATE -fobjc-arc)
+    target_link_libraries(jamin-auhost PRIVATE
+        "-framework Cocoa" "-framework AudioToolbox" "-framework AudioUnit")
+endif()

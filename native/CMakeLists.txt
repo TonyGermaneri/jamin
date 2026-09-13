@@ -18,6 +18,19 @@ if(APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 11.0 CACHE STRING "Minimum macOS version")
 endif()
 
+# Universal by default, not as a release-only nicety.
+#
+# An Apple-silicon host can still be launched under Rosetta -- Live has an "Open
+# using Rosetta" checkbox and plenty of people have it ticked for one old plugin
+# -- and a host running as x86_64 does not merely refuse an arm64-only plugin,
+# it never lists it. There is nothing in any log, nothing in the plugin browser,
+# and no way to tell that from a plugin that failed to build. Set
+# CMAKE_OSX_ARCHITECTURES explicitly to build for one architecture while
+# iterating.
+if(APPLE AND NOT DEFINED CMAKE_OSX_ARCHITECTURES)
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Architectures to build")
+endif()
+
 project(JaminNative VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)

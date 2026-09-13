@@ -60,7 +60,7 @@ Then, from the repository root:
 
 ```sh
 npm install && npm run build                 # the page the plugin will show
-cmake -B native/build -G Ninja -S native -DCMAKE_OSX_ARCHITECTURES=arm64
+cmake -B native/build -G Ninja -S native
 cmake --build native/build
 ctest --test-dir native/build --output-on-failure
 ```
@@ -112,6 +112,21 @@ cp -R  native/build/plugin/JaminInstrument_artefacts/RelWithDebInfo/VST3/Jamin.v
 killall -9 AudioComponentRegistrar   # macOS caches the component registry
 auval -v aumu Jam1 WvCt              # the instrument
 auval -v aumi JamF WvCt              # the MIDI effect
+```
+
+The builds are **universal** — `arm64` and `x86_64` in one binary. That is not
+a release nicety: an Apple-silicon host can still be launched under Rosetta, and
+a host running as `x86_64` does not merely refuse an `arm64`-only plugin, it
+never lists it at all. Nothing appears in any log, and the result is
+indistinguishable from a plugin that failed to build.
+
+If Live still does not list it, the things to check, in order: Preferences ▸
+Plug-Ins ▸ **Use VST3 Plug-In System Folders** is on, then **Rescan**; and if
+your other plugins live in `/Library/Audio/Plug-Ins/VST3` rather than your home
+folder, put it there too — that needs `sudo`, so it is yours to run:
+
+```sh
+sudo cp -R native/build/plugin/JaminInstrument_artefacts/RelWithDebInfo/VST3/Jamin.vst3 /Library/Audio/Plug-Ins/VST3/
 ```
 
 That `killall` is not optional the first time a plugin code changes. Until the
