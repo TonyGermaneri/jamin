@@ -17,6 +17,8 @@ import {
   renderProgression,
   importProgressionJson,
   exportProgressionJson,
+  fetchChordonomiconInto,
+  CHORDONOMICON,
   toast,
 } from '../store.js'
 import { summarizeProgression, firstRoot, usesFlats } from '../core/progressions.js'
@@ -32,15 +34,14 @@ const newName = ref('')
 const importText = ref('')
 const importPc = ref(null)
 
-// A ready-made slice of Chordonomicon. The data stays theirs; we only convert.
-const CHORDONOMICON_URL =
-  'https://datasets-server.huggingface.co/rows?dataset=ailsntua%2FChordonomicon&config=default&split=train&offset=0&length=100'
+const fetchCount = ref(500)
 
-function copyUrl() {
-  navigator.clipboard?.writeText(CHORDONOMICON_URL).then(
-    () => toast('URL copied — open it, then paste the response below'),
-    () => toast('Select the URL and copy it')
-  )
+async function fetchFromHuggingFace() {
+  const result = await fetchChordonomiconInto(fetchCount.value, {
+    targetPc: importPc.value,
+    spelling: spelling.value,
+  })
+  if (result.ok) state.ui.progressionsTab = 'library'
 }
 const exportText = ref('')
 
@@ -250,13 +251,23 @@ function runExport() {
 
             <v-alert density="compact" variant="tonal" class="mb-3 text-caption">
               <div class="mb-2">
-                <strong>Chordonomicon</strong> — 680,000 progressions with genre and section tags.
-                It is CC-BY-NC-4.0, so jamin ships the converter, not the data: fetch a slice
-                yourself and paste the response.
+                <strong>Chordonomicon</strong> — {{ CHORDONOMICON.rows.toLocaleString() }} progressions
+                with genre and section tags, CC-BY-NC-4.0. jamin ships the converter, not the data,
+                so this fetches it from Hugging Face for you. Their server hands out
+                {{ CHORDONOMICON.pageSize }} rows per request, so a larger number is fetched a page
+                at a time, starting somewhere random in the set.
               </div>
-              <div class="d-flex align-center" style="gap: 8px">
-                <code class="text-truncate" style="flex: 1; font-size: 11px">{{ CHORDONOMICON_URL }}</code>
-                <v-btn size="x-small" variant="text" @click="copyUrl">Copy</v-btn>
+              <div class="d-flex align-center flex-wrap" style="gap: 8px">
+                <v-select
+                  v-model="fetchCount"
+                  :items="[100, 250, 500, 1000, 2000]"
+                  label="How many"
+                  density="compact"
+                  hide-details
+                  style="max-width: 130px"
+                />
+                <v-btn size="small" :loading="state.ui.fetching" @click="fetchFromHuggingFace">Fetch</v-btn>
+                <span v-if="state.ui.fetchProgress" class="text-caption">{{ state.ui.fetchProgress }}</span>
               </div>
             </v-alert>
             <v-textarea

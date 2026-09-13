@@ -1,6 +1,12 @@
 <script setup>
 /**
- * The phrase book: what you just played, and everything you kept.
+ * The phrase book.
+ *
+ * One catalogue, not a catalogue and a library: a phrase you captured and a
+ * phrase that shipped are the same kind of thing. Nothing is filtered by the
+ * chord you are on, because every phrase fits every chord -- they are stored as
+ * degrees and re-pointed at whatever they land on -- and nothing is truncated,
+ * because a list you cannot reach the end of is not a list.
  */
 import { computed, ref, watch } from 'vue'
 import {
@@ -8,50 +14,86 @@ import {
   keepCapture,
   deletePhrase,
   renamePhrase,
+  usePhrase,
   bindPhrase,
-  unbindPhrase,
   armCapture,
   currentToken,
   toast,
-  ensureLicks,
-  visibleLicks,
-  adoptLick,
-  targetChord,
   ensureLicks as rebuildLicks,
   defaultVocabularyUrl,
   importMidiPhrases,
+  visibleLicks,
+  catalogue,
 } from '../store.js'
 import { summarize } from '../core/phrases.js'
 import { describeLick } from '../core/licks.js'
 
+const search = ref('')
 const name = ref('')
 const renaming = ref(null)
 const renameTo = ref('')
-const lickSearch = ref('')
 const vocabUrl = ref('')
+const vocabFile = ref(null)
 const midiFile = ref(null)
 const midiBars = ref(1)
 
-async function openMidi(event) {
-  const file = event.target.files && event.target.files[0]
-  if (!file) return
-  importMidiPhrases(new Uint8Array(await file.arrayBuffer()), {
-    segmentBars: midiBars.value,
-    trackFilter: /piano|accomp|keys|chord/i,
-  })
-  event.target.value = ''
-  state.ui.phrasesTab = 'library'
-}
-const vocabFile = ref(null)
-const LICK_LIMIT = 40
-
+const accompany = computed(() => state.settings.accompany)
 const report = computed(() => state.lickReport)
 const defaultVocab = computed(() => defaultVocabularyUrl())
+const target = computed(() => currentToken())
+const perChord = computed(() => accompany.value.perChordPhrases)
+const playing = computed(() => state.songPhrase)
+
+const list = computed(() => (state.licks.length || state.phrases.length ? visibleLicks(search.value) : []))
+const total = computed(() => catalogue().length)
+
+const SPEEDS = [
+  { title: '1/16×', value: 0.0625 },
+  { title: '1/8×', value: 0.125 },
+  { title: '1/4×', value: 0.25 },
+  { title: '1/3×', value: 0.3333 },
+  { title: '1/2×', value: 0.5 },
+  { title: '2/3×', value: 0.6667 },
+  { title: '1× as played', value: 1 },
+  { title: '1.5×', value: 1.5 },
+  { title: '2×', value: 2 },
+  { title: '3×', value: 3 },
+  { title: '4×', value: 4 },
+]
+
+watch(
+  () => [state.ui.phrases, state.ui.phrasesTab],
+  ([open, tab]) => {
+    if (open && (tab === 'catalogue' || tab === 'sources')) rebuildLicks()
+  },
+  { immediate: true }
+)
+
+watch(
+  () => state.pendingCapture,
+  (capture) => {
+    name.value = capture ? `${capture.sourceChord}-lick` : ''
+  }
+)
+
+function keepAndUse() {
+  const phrase = keepCapture(name.value)
+  if (!phrase) return
+  usePhrase(phrase)
+  state.ui.phrasesTab = 'catalogue'
+}
+
+function commitRename(entry) {
+  if (renaming.value !== entry.id) return
+  const next = renamePhrase(entry.name, renameTo.value)
+  if (next) toast(`Renamed to ${next}`)
+  renaming.value = null
+}
 
 async function rebuild(options) {
   await rebuildLicks(options)
   const r = state.lickReport
-  if (r && !r.error) toast(`${r.total} licks from ${r.source}`)
+  if (r && !r.error) toast(`${r.total + (r.parts || 0)} in the catalogue`)
 }
 
 async function openVocabulary(event) {
@@ -61,64 +103,21 @@ async function openVocabulary(event) {
   event.target.value = ''
 }
 
-watch(
-  () => state.pendingCapture,
-  (capture) => {
-    name.value = capture ? `${capture.sourceChord}-lick` : ''
-  }
-)
-
-const target = computed(() => currentToken())
-const chord = computed(() => targetChord())
-const perChord = computed(() => state.settings.accompany.perChordPhrases)
-const bindLabel = computed(() => (perChord.value ? `bind to ${target.value ? target.value.body : '—'}` : 'use for the whole song'))
-const canBind = computed(() => !perChord.value || !!target.value)
-
-// Depend on the loaded catalogue explicitly so the list refreshes when it lands.
-const matchingLicks = computed(() => {
-  if (!state.licks.length) return []
-  return visibleLicks(lickSearch.value)
-})
-
-watch(
-  () => [state.ui.phrases, state.ui.phrasesTab],
-  ([open, tab]) => {
-    if (open && tab === 'licks') ensureLicks()
-  },
-  { immediate: true }
-)
-
-function keepAndBind() {
-  const phrase = keepCapture(name.value)
-  if (!phrase) return
-  bindPhrase(phrase.name)
-  state.ui.phrasesTab = 'library'
+async function openMidi(event) {
+  const file = event.target.files && event.target.files[0]
+  if (!file) return
+  importMidiPhrases(new Uint8Array(await file.arrayBuffer()), {
+    segmentBars: midiBars.value,
+    trackFilter: /piano|accomp|keys|chord/i,
+  })
+  event.target.value = ''
+  state.ui.phrasesTab = 'catalogue'
 }
 
-function keepOnly() {
-  const phrase = keepCapture(name.value)
-  if (phrase) {
-    state.ui.phrasesTab = 'library'
-    toast(`Kept ${phrase.name}`)
-  }
-}
-
-function discard() {
-  state.pendingCapture = null
-}
-
-function commitRename(phrase) {
-  // Enter unmounts the field, which fires blur -- only act on the first one.
-  if (renaming.value !== phrase.name) return
-  const next = renamePhrase(phrase.name, renameTo.value)
-  if (next) toast(`Renamed to ${next}`)
-  renaming.value = null
-}
-
-/** A small piano roll so a phrase is recognisable at a glance. */
-function roll(phrase, width = 260, height = 54) {
+/** A small piano roll, so a phrase is recognisable without playing it. */
+function roll(phrase, width = 120, height = 34) {
   const notes = phrase.notes
-  if (!notes.length) return []
+  if (!notes || !notes.length) return []
   const length = phrase.lengthPulses || Math.max(...notes.map((n) => n.at + n.duration)) || 1
   const low = Math.min(...notes.map((n) => n.note))
   const high = Math.max(...notes.map((n) => n.note))
@@ -131,27 +130,124 @@ function roll(phrase, width = 260, height = 54) {
     o: 0.35 + (note.velocity / 127) * 0.65,
   }))
 }
+
+const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry))
 </script>
 
 <template>
-  <v-dialog v-model="state.ui.phrases" max-width="720" scrollable>
+  <v-dialog v-model="state.ui.phrases" max-width="880" scrollable>
     <v-card>
       <v-card-title class="d-flex align-center">
         <v-icon size="18" class="mr-2">mdi-book-music-outline</v-icon>
         <span class="text-body-1">Phrase book</span>
         <v-spacer />
+        <span v-if="playing" class="text-caption text-medium-emphasis mr-3">playing “{{ playing }}”</span>
         <v-btn icon="mdi-close" size="small" variant="text" @click="state.ui.phrases = false" />
       </v-card-title>
 
       <v-tabs v-model="state.ui.phrasesTab">
+        <v-tab value="catalogue">Catalogue ({{ total }})</v-tab>
         <v-tab value="captured">Just played</v-tab>
-        <v-tab value="library">Library ({{ state.phrases.length }})</v-tab>
-        <v-tab value="licks">Catalogue</v-tab>
+        <v-tab value="playback">Playback</v-tab>
+        <v-tab value="sources">Sources</v-tab>
         <v-tab value="about">How it works</v-tab>
       </v-tabs>
 
       <v-card-text>
         <v-window v-model="state.ui.phrasesTab">
+          <!-- Catalogue --------------------------------------------------- -->
+          <v-window-item value="catalogue">
+            <v-row dense class="mb-2">
+              <v-col cols="12" md="8">
+                <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable />
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-select
+                  v-model="state.ui.lickTexture"
+                  :items="[
+                    { title: 'Any texture', value: 'any' },
+                    { title: 'Two hands', value: 'hands' },
+                    { title: 'Single line', value: 'line' },
+                  ]"
+                  label="Texture"
+                />
+              </v-col>
+            </v-row>
+
+            <div v-if="state.licksLoading && !list.length" class="text-center py-8 text-caption text-medium-emphasis">
+              Loading the catalogue…
+            </div>
+            <div v-else-if="!list.length" class="text-center py-8 text-caption text-medium-emphasis">
+              Nothing matches “{{ search }}”.
+            </div>
+
+            <v-virtual-scroll v-else :items="list" :item-height="62" height="380">
+              <template #default="{ item }">
+                <div class="d-flex align-center py-1" style="gap: 12px">
+                  <svg :width="120" :height="34" style="flex: none; background: rgba(255,255,255,0.04); border-radius: 4px">
+                    <rect
+                      v-for="(note, index) in roll(item)"
+                      :key="index"
+                      :x="note.x"
+                      :y="note.y"
+                      :width="note.w"
+                      :height="note.h"
+                      :opacity="note.o"
+                      fill="currentColor"
+                      rx="1"
+                    />
+                  </svg>
+
+                  <div style="flex: 1; min-width: 0">
+                    <div v-if="renaming !== item.id" class="text-body-2 text-truncate">{{ item.name }}</div>
+                    <v-text-field
+                      v-else
+                      v-model="renameTo"
+                      density="compact"
+                      autofocus
+                      @keydown.enter="commitRename(item)"
+                      @blur="commitRename(item)"
+                    />
+                    <div class="text-caption text-medium-emphasis text-truncate">{{ describe(item) }}</div>
+                  </div>
+
+                  <v-btn
+                    size="x-small"
+                    :variant="playing === item.id ? 'flat' : 'tonal'"
+                    :color="playing === item.id ? 'primary' : undefined"
+                    @click="usePhrase(item)"
+                  >
+                    {{ playing === item.id ? 'Playing' : 'Use' }}
+                  </v-btn>
+                  <v-btn
+                    v-if="!item.builtin"
+                    icon="mdi-rename-outline"
+                    size="x-small"
+                    variant="text"
+                    @click="renaming = item.id; renameTo = item.name"
+                  />
+                  <v-btn
+                    v-if="!item.builtin"
+                    icon="mdi-delete-outline"
+                    size="x-small"
+                    variant="text"
+                    @click="deletePhrase(item.name)"
+                  />
+                </div>
+              </template>
+            </v-virtual-scroll>
+
+            <div class="d-flex align-center flex-wrap mt-3" style="gap: 10px">
+              <v-btn size="small" variant="text" :disabled="!playing" @click="bindPhrase(null)">Play no phrase</v-btn>
+              <span class="text-caption text-medium-emphasis">
+                {{ list.length }} shown of {{ total }}.
+                <span v-if="perChord">Using one binds it to {{ target ? target.body : 'the chord at the cursor' }}.</span>
+                <span v-else>Using one plays it over the whole song.</span>
+              </span>
+            </div>
+          </v-window-item>
+
+          <!-- Just played ------------------------------------------------- -->
           <v-window-item value="captured">
             <div v-if="!state.pendingCapture" class="text-center py-8">
               <v-icon size="42" class="mb-3" color="grey">mdi-piano</v-icon>
@@ -166,9 +262,9 @@ function roll(phrase, width = 260, height = 54) {
 
             <div v-else>
               <div class="text-caption text-medium-emphasis mb-2">{{ summarize(state.pendingCapture) }}</div>
-              <svg :width="260" :height="54" class="mb-3" style="background: rgba(255, 255, 255, 0.04); border-radius: 6px">
+              <svg :width="260" :height="54" class="mb-3" style="background: rgba(255,255,255,0.04); border-radius: 6px">
                 <rect
-                  v-for="(note, index) in roll(state.pendingCapture)"
+                  v-for="(note, index) in roll(state.pendingCapture, 260, 54)"
                   :key="index"
                   :x="note.x"
                   :y="note.y"
@@ -179,90 +275,113 @@ function roll(phrase, width = 260, height = 54) {
                   rx="1"
                 />
               </svg>
-
               <v-text-field v-model="name" label="Name" class="mb-3" />
               <div class="d-flex flex-wrap" style="gap: 8px">
-                <v-btn size="small" color="primary" :disabled="!canBind" @click="keepAndBind">
-                  Keep and {{ bindLabel }}
-                </v-btn>
-                <v-btn size="small" @click="keepOnly">Keep only</v-btn>
-                <v-btn size="small" variant="text" @click="discard">Discard</v-btn>
+                <v-btn size="small" color="primary" @click="keepAndUse">Use</v-btn>
+                <v-btn size="small" variant="text" @click="state.pendingCapture = null">Discard</v-btn>
               </div>
               <div class="text-caption text-medium-emphasis mt-3">
-                <span v-if="perChord">
-                  Binding writes <code>.{{ target ? target.body : 'chord' }}{{ '{' + (name || 'name') + '}' }}</code>
-                  into the chart. It applies from there until the next dotted chord.
-                </span>
-                <span v-else>
-                  It will play over every chord in the song. Turn on per-chord articulations
-                  in settings to bind phrases to individual chords instead.
-                </span>
+                It joins the catalogue either way once used, and behaves like anything else in it.
               </div>
             </div>
           </v-window-item>
 
-          <v-window-item value="library">
-            <div v-if="!state.phrases.length" class="text-center py-8 text-caption text-medium-emphasis">
-              No saved phrases yet.
-            </div>
-            <v-list v-else density="compact">
-              <v-list-item v-for="phrase in state.phrases" :key="phrase.name" class="px-0">
-                <template #prepend>
-                  <svg :width="120" :height="34" class="mr-3" style="background: rgba(255, 255, 255, 0.04); border-radius: 4px">
-                    <rect
-                      v-for="(note, index) in roll(phrase, 120, 34)"
-                      :key="index"
-                      :x="note.x"
-                      :y="note.y"
-                      :width="note.w"
-                      :height="note.h"
-                      :opacity="note.o"
-                      fill="currentColor"
-                      rx="1"
-                    />
-                  </svg>
-                </template>
+          <!-- Playback ---------------------------------------------------- -->
+          <v-window-item value="playback">
+            <v-row dense>
+              <v-col cols="12" md="6">
+                <v-select v-model="accompany.speed" :items="SPEEDS" label="Speed" />
+                <div class="text-caption text-medium-emphasis mt-1 mb-4">
+                  How fast a phrase runs over the chords. At 1× it plays at the rate it was
+                  performed, whatever a chord's length.
+                </div>
+              </v-col>
+              <v-col cols="12" md="6">
+                <div class="text-caption mb-1">Octave — {{ accompany.octave }}</div>
+                <v-slider v-model="accompany.octave" :min="1" :max="7" :step="1" />
+                <div class="text-caption text-medium-emphasis mt-1 mb-4">
+                  Where a phrase sits when it is not following the register of the chord before it.
+                </div>
+              </v-col>
 
-                <v-list-item-title v-if="renaming !== phrase.name">{{ phrase.name }}</v-list-item-title>
-                <v-text-field
-                  v-else
-                  v-model="renameTo"
-                  density="compact"
-                  autofocus
-                  @keydown.enter="commitRename(phrase)"
-                  @blur="commitRename(phrase)"
+              <v-col cols="12">
+                <v-divider class="mb-3" />
+                <v-switch v-model="accompany.bass" label="Bass note — a held root under everything" />
+              </v-col>
+              <v-col cols="12" md="6">
+                <div class="text-caption mb-1">
+                  {{ accompany.bassOctaves }} octave{{ accompany.bassOctaves === 1 ? '' : 's' }} down
+                </div>
+                <v-slider v-model="accompany.bassOctaves" :min="0" :max="3" :step="1" :disabled="!accompany.bass" />
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-switch
+                  v-model="accompany.doubleBass"
+                  :disabled="!accompany.bass"
+                  label="Double bass — the same root an octave lower again"
                 />
-                <v-list-item-subtitle class="text-caption">{{ summarize(phrase) }}</v-list-item-subtitle>
+              </v-col>
 
-                <template #append>
-                  <v-btn
-                    size="x-small"
-                    :variant="state.songPhrase === phrase.name ? 'flat' : 'text'"
-                    :color="state.songPhrase === phrase.name ? 'primary' : undefined"
-                    :disabled="!canBind"
-                    :title="bindLabel"
-                    @click="bindPhrase(phrase.name)"
-                  >
-                    {{ !perChord && state.songPhrase === phrase.name ? 'Playing' : 'Use' }}
-                  </v-btn>
-                  <v-btn
-                    icon="mdi-rename-outline"
-                    size="x-small"
-                    variant="text"
-                    @click="renaming = phrase.name; renameTo = phrase.name"
-                  />
-                  <v-btn icon="mdi-delete-outline" size="x-small" variant="text" @click="deletePhrase(phrase.name)" />
-                </template>
-              </v-list-item>
-            </v-list>
+              <v-col cols="12">
+                <v-divider class="my-3" />
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-switch v-model="accompany.enabled" label="Play phrases at all" />
+                <v-switch v-model="accompany.keepRegister" label="Follow the register of the chord before" />
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-select
+                  v-model="accompany.fit"
+                  :items="[
+                    { title: 'Keep the rhythm, follow the chart', value: 'follow' },
+                    { title: 'Keep the rhythm, restart each chord', value: 'restart' },
+                    { title: 'Stretch to fit the chord', value: 'stretch' },
+                  ]"
+                  label="When the phrase and the chord are different lengths"
+                />
+                <div class="text-caption text-medium-emphasis mt-1">
+                  Stretching changes the phrase's tempo; speed above is the deliberate way to do that.
+                </div>
+              </v-col>
+            </v-row>
+          </v-window-item>
 
-            <v-divider class="my-3" />
+          <!-- Sources ----------------------------------------------------- -->
+          <v-window-item value="sources">
+            <div class="text-caption text-medium-emphasis mb-1">
+              Two-handed parts cut from
+              <a href="https://github.com/music-x-lab/POP909-Dataset" target="_blank" rel="noreferrer">POP909</a>
+              (MIT), and single-line licks, cells and idioms from
+              <a href="https://github.com/Impro-Visor/Impro-Visor" target="_blank" rel="noreferrer">Impro-Visor</a>
+              (GPL-2.0-or-later).
+              <span v-if="report && !report.error">
+                <strong>{{ report.parts }}</strong> parts and <strong>{{ report.total }}</strong> licks,
+                built here in {{ report.ms }}ms.
+              </span>
+            </div>
+
+            <div class="d-flex flex-wrap align-center my-3" style="gap: 8px">
+              <v-btn size="small" :loading="state.licksLoading" @click="rebuild({ force: true })">
+                Rebuild from Impro-Visor
+              </v-btn>
+              <v-btn size="small" variant="text" @click="vocabFile && vocabFile.click()">Open a .voc file…</v-btn>
+              <input ref="vocabFile" type="file" accept=".voc,text/plain" style="display: none" @change="openVocabulary" />
+            </div>
+            <div class="d-flex align-center mb-2" style="gap: 8px">
+              <v-text-field v-model="vocabUrl" label="…or a vocabulary URL" :placeholder="defaultVocab" density="compact" hide-details />
+              <v-btn size="x-small" :disabled="!vocabUrl.trim()" @click="rebuild({ url: vocabUrl.trim() })">Load</v-btn>
+            </div>
+            <v-alert v-if="report && report.error" type="warning" variant="tonal" density="compact" class="mb-4 text-caption">
+              {{ report.error }}
+            </v-alert>
+
+            <v-divider class="my-4" />
             <div class="text-caption text-medium-emphasis mb-2">
               A recorded keyboard part is a run of phrases already: this cuts one at the chord
               changes and reads the chord off the notes, so you get two hands, real voicings and
               real rhythm rather than a single line.
             </div>
-            <div class="d-flex align-center flex-wrap mb-4" style="gap: 8px">
+            <div class="d-flex align-center flex-wrap" style="gap: 8px">
               <v-btn size="small" prepend-icon="mdi-import" @click="midiFile && midiFile.click()">
                 Import a MIDI file…
               </v-btn>
@@ -274,163 +393,34 @@ function roll(phrase, width = 260, height = 54) {
                 style="max-width: 180px"
               />
             </div>
-
-            <v-divider class="my-3" />
-            <div class="d-flex align-center flex-wrap" style="gap: 8px">
-              <v-btn size="small" :disabled="!canBind" @click="bindPhrase(null)">
-                {{ perChord ? `Clear the phrase at ${target ? target.body : '—'}` : 'Play no phrase' }}
-              </v-btn>
-              <v-btn v-if="perChord" size="small" variant="text" :disabled="!target" @click="unbindPhrase()">
-                Remove the dot entirely
-              </v-btn>
-              <span v-if="!perChord" class="text-caption text-medium-emphasis">
-                {{ state.songPhrase ? `Playing “${state.songPhrase}” over the whole song.` : 'No phrase is playing.' }}
-              </span>
-            </div>
           </v-window-item>
 
-          <v-window-item value="licks">
-            <div class="text-caption text-medium-emphasis mb-1">
-              Two-handed parts cut from
-              <a href="https://github.com/music-x-lab/POP909-Dataset" target="_blank" rel="noreferrer">POP909</a>
-              (MIT), and single-line licks, cells and idioms from
-              <a href="https://github.com/Impro-Visor/Impro-Visor" target="_blank" rel="noreferrer">Impro-Visor</a>
-              (GPL-2.0-or-later). Each was played over one chord; keeping one copies it into
-              your library, where it behaves like anything you played yourself.
-            </div>
-            <div class="text-caption text-medium-emphasis mb-3">
-              The catalogue is built here in the page from the vocabulary file itself, so you can
-              point it at your own.
-              <span v-if="report && !report.error">
-                <strong>{{ report.parts }}</strong> two-handed parts from POP909, and
-                <strong>{{ report.total }}</strong> licks from {{ report.source }},
-                {{ report.skipped.multiChord }} skipped for spanning more than one chord<span
-                  v-if="report.skipped.noHarmony"
-                >, {{ report.skipped.noHarmony }} written over no chord at all</span>,
-                {{ report.ms }}ms.
-              </span>
-            </div>
-
-            <div class="d-flex flex-wrap align-center mb-3" style="gap: 8px">
-              <v-btn size="x-small" :loading="state.licksLoading" @click="rebuild({ force: true })">
-                Rebuild from Impro-Visor
-              </v-btn>
-              <v-btn size="x-small" variant="text" @click="vocabFile && vocabFile.click()">Open a .voc file…</v-btn>
-              <input ref="vocabFile" type="file" accept=".voc,text/plain" style="display: none" @change="openVocabulary" />
-            </div>
-            <div class="d-flex align-center mb-4" style="gap: 8px">
-              <v-text-field
-                v-model="vocabUrl"
-                label="…or a vocabulary URL"
-                :placeholder="defaultVocab"
-                density="compact"
-                hide-details
-              />
-              <v-btn size="x-small" :disabled="!vocabUrl.trim()" @click="rebuild({ url: vocabUrl.trim() })">Load</v-btn>
-            </div>
-            <v-alert v-if="report && report.error" type="warning" variant="tonal" density="compact" class="mb-4 text-caption">
-              {{ report.error }}
-            </v-alert>
-
-            <v-row dense class="mb-1">
-              <v-col cols="12" md="5">
-                <v-text-field v-model="lickSearch" label="Search" prepend-inner-icon="mdi-magnify" clearable />
-              </v-col>
-              <v-col cols="12" md="3">
-                <v-select
-                  v-model="state.ui.lickTexture"
-                  :items="[
-                    { title: 'Anything', value: 'any' },
-                    { title: 'Two hands', value: 'hands' },
-                    { title: 'Single line', value: 'line' },
-                  ]"
-                  label="Texture"
-                />
-              </v-col>
-              <v-col cols="12" md="4" class="d-flex align-center">
-                <v-switch
-                  v-model="state.ui.licksForCurrentChord"
-                  :disabled="!chord"
-                  :label="chord ? `Only ones that fit ${chord.text}` : 'No chord to match'"
-                />
-              </v-col>
-            </v-row>
-
-            <div v-if="state.licksLoading" class="text-center py-8 text-caption text-medium-emphasis">
-              Loading the catalogue…
-            </div>
-            <div v-else-if="!matchingLicks.length" class="text-center py-8 text-caption text-medium-emphasis">
-              Nothing matches. Try turning off the chord filter.
-            </div>
-
-            <v-list v-else density="compact" class="py-0">
-              <v-list-item v-for="lick in matchingLicks.slice(0, LICK_LIMIT)" :key="lick.id" class="px-0">
-                <template #prepend>
-                  <svg :width="120" :height="34" class="mr-3" style="background: rgba(255, 255, 255, 0.04); border-radius: 4px">
-                    <rect
-                      v-for="(note, index) in roll(lick, 120, 34)"
-                      :key="index"
-                      :x="note.x"
-                      :y="note.y"
-                      :width="note.w"
-                      :height="note.h"
-                      :opacity="note.o"
-                      fill="currentColor"
-                      rx="1"
-                    />
-                  </svg>
-                </template>
-                <v-list-item-title>{{ lick.name }}</v-list-item-title>
-                <v-list-item-subtitle class="text-caption">{{ describeLick(lick) }}</v-list-item-subtitle>
-                <template #append>
-                  <v-btn size="x-small" variant="tonal" class="mr-1" :disabled="!canBind" @click="adoptLick(lick, true)">
-                    Keep and use
-                  </v-btn>
-                  <v-btn size="x-small" variant="text" @click="adoptLick(lick, false)">Keep</v-btn>
-                </template>
-              </v-list-item>
-            </v-list>
-
-            <div v-if="matchingLicks.length > LICK_LIMIT" class="text-caption text-medium-emphasis mt-2">
-              Showing {{ LICK_LIMIT }} of {{ matchingLicks.length }}. Narrow it with the search box.
-            </div>
-          </v-window-item>
-
+          <!-- How it works ------------------------------------------------ -->
           <v-window-item value="about">
             <div class="text-body-2" style="line-height: 1.7">
               <p class="mb-3">
-                A phrase is one chord's worth of playing, captured as you played it, along
-                with the chord it was played over.
+                A phrase is one chord's worth of playing, stored rooted on C — as degrees
+                measured from the chord it was played over, rather than the notes that were
+                played. Capture something over F minor 7 and it is filed as root, ♭3, 5, ♭7.
               </p>
               <p class="mb-3">
-                Phrases are not key dependent. One is stored rooted on C — as degrees
-                measured from the chord it was played over, rather than the notes you
-                happened to play. Capture something over F minor 7 and it is filed as
-                root, ♭3, 5, ♭7.
+                Putting it over a chord happens in that order, and the order matters. The root
+                goes first, so the degrees stay intact. Only if the new chord is a different
+                <em>shape</em> does minimal-movement voice leading get involved, and by then both
+                chords share a root, so the root stays the root. Last, the octave is chosen to
+                sit nearest to where the phrase was over the previous chord.
               </p>
               <p class="mb-3">
-                Putting it over a chord happens in that order, and the order matters. The
-                root goes first, so the degrees stay intact. Only if the new chord is a
-                different <em>shape</em> does minimal-movement voice leading get involved,
-                and by then both chords share a root, so the root stays the root — over a
-                major 7 the ♭3 becomes a 3, over a diminished the 5 becomes a ♭5. Notes
-                that were never chord tones travel with whichever chord tone they were
-                leaning on. Last, the octave is chosen to sit nearest to where the phrase
-                was over the previous chord, so a repeating figure walks rather than leaps.
+                That is why nothing here is filtered by the chord you are on: every phrase fits
+                every chord. The rhythm is never touched either — it runs at the rate it was
+                played and keeps time with the chart, and a chord decides only the harmony for
+                the stretch of time it occupies.
               </p>
               <p class="mb-3">
-                By default one phrase plays for the whole song and the chart stays free of
-                markup. Turn on <em>per-chord articulations</em> in settings and a phrase
-                instead applies from the chord it is bound to until the next chord wearing a
-                dot — the dot you see above a chord is literally the <code>.</code> in the
-                text, so those bindings survive copy, paste and reload.
-              </p>
-              <p class="mb-3">
-                The Catalogue tab holds two sorts of thing, both played over a single chord:
-                two-handed keyboard parts cut from POP909 — a bass, a voicing and a rhythm —
-                and single-line licks from Impro-Visor. Both are matched to the chord you are
-                on by shape rather than by root, so something played over C7 is offered for
-                any dominant seventh and re-pointed on the way in.
+                One phrase plays for the whole song by default. Turn on
+                <em>per-chord articulations</em> in settings and it instead applies from the
+                chord it is bound to until the next chord wearing a dot — the dot you see above
+                a chord is literally the <code>.</code> in the text.
               </p>
             </div>
           </v-window-item>

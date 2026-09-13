@@ -17,7 +17,7 @@ export const STORAGE_KEY = 'jamin.settings.v1'
  *        half a bar of chord plays twice as fast. Anyone upgrading still had
  *        `stretch` saved and would keep hearing that, having never chosen it.
  */
-export const SETTINGS_VERSION = 2
+export const SETTINGS_VERSION = 3
 export const TEXT_KEY = 'jamin.chart.v1'
 export const PHRASE_KEY = 'jamin.phrases.v1'
 export const SONG_PHRASE_KEY = 'jamin.songPhrase.v1'
@@ -89,6 +89,14 @@ export function defaultSettings() {
       snapNonChordTones: false,
       keepBass: true,
       monitor: true,
+      // How fast a phrase plays over the chords: 1 is as it was played.
+      speed: 1,
+      // The register phrases sit in, when they are not following the chord before.
+      octave: 4,
+      // A held root under everything. Off unless asked for.
+      bass: false,
+      bassOctaves: 1,
+      doubleBass: false,
       // Wider than the chord voicing range: a two-handed phrase spans more.
       rangeLow: 28,
       rangeHigh: 100,
@@ -135,6 +143,11 @@ export function migrateSettings(stored) {
     if (['stretch', 'repeat', 'truncate'].includes(next.accompany.fit)) {
       next.accompany.fit = 'follow'
     }
+  }
+
+  if (version < 3) {
+    // The catalogue stopped filtering by chord, so the switch that did it goes.
+    delete next.accompany.matchChord
   }
 
   next.version = SETTINGS_VERSION

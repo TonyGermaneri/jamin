@@ -141,18 +141,6 @@ export function entryToPhrase(entry, index) {
   })
 }
 
-/**
- * Licks that fit a chord.
- *
- * Matched on the chord's shape rather than its root -- a lick written over C7
- * belongs over any dominant seventh, because it gets transposed on the way in.
- */
-export function licksForChord(licks, chord) {
-  if (!chord || !chord.ok || !chord.pcs.length) return []
-  const key = chord.pcs.join(',')
-  return licks.filter((lick) => lick.quality === key)
-}
-
 /** Free-text search over names, chord symbols and kinds. */
 export function searchLicks(licks, query) {
   const needle = String(query || '').trim().toLowerCase()

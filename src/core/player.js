@@ -32,6 +32,7 @@ export class Player {
     this.chordNotes = [] // last voicing, remembered for voice leading
     this.soundingNotes = [] // what is actually held down right now
     this.chordBass = null
+    this.droneNotes = [] // the held root under the accompaniment, if asked for
     this.activePhrase = null
     this.phraseQueue = []
     this.phraseCursor = 0
@@ -185,10 +186,35 @@ export class Player {
     }
     this.phraseCursor = 0
 
+    this.startDrone(chord)
+
     if (this.onEventChange) {
       this.onEventChange(event, { notes: voicing.notes, bass: voicing.bass, phrase: phrase ? phrase.name : null })
     }
     if (this.onNotes) this.onNotes(playBlock ? voicing.notes : [])
+  }
+
+  /**
+   * A held root under everything, if asked for -- the thing a bass player would
+   * be doing. Sustained for the whole chord rather than articulated, so it sits
+   * under the phrase instead of competing with it.
+   */
+  startDrone(chord) {
+    const accompany = this.settings.accompany
+    if (!accompany.bass || chord.rootPc === null || chord.rootPc === undefined) return
+
+    const midi = this.settings.midi
+    const outputId = midi.accompOutputId || midi.chordOutputId
+    const octaves = Math.max(0, accompany.bassOctaves ?? 1)
+    const root = (accompany.octave ?? 4) * 12 + 12 + chord.rootPc - octaves * 12
+
+    const wanted = [root]
+    if (accompany.doubleBass) wanted.push(root - 12)
+
+    for (const note of wanted) {
+      if (note < 0 || note > 127) continue
+      if (this.engine.noteOn(outputId, midi.accompChannel, note, midi.velocity)) this.droneNotes.push(note)
+    }
   }
 
   flushPhrase(local) {
@@ -219,6 +245,8 @@ export class Player {
     const accompOut = midi.accompOutputId || midi.chordOutputId
     for (const note of this.phraseSounding) this.engine.noteOff(accompOut, midi.accompChannel, note)
     this.phraseSounding.clear()
+    for (const note of this.droneNotes) this.engine.noteOff(accompOut, midi.accompChannel, note)
+    this.droneNotes = []
     this.chordBass = null
     this.phraseQueue = []
     this.phraseCursor = 0
@@ -300,14 +328,22 @@ export function buildPhraseQueue(phrase, chord, event, settings, anchor = null) 
   const accompany = settings.accompany
   const chords = settings.chords
   const slot = event.endPulse - event.startPulse
-  const source = phrase.lengthPulses || slot
+
+  // Speed is a deliberate change of rate, unlike stretching to fit, which is an
+  // accident of the chord's length. At 2 the phrase covers half the ground.
+  const speed = accompany.speed > 0 ? accompany.speed : 1
+  const rate = 1 / speed
+  const source = Math.max(1, Math.round((phrase.lengthPulses || slot) * rate))
+
+  // Where a phrase sits when it is not following the one before it.
+  const home = [(accompany.octave ?? 4) * 12 + 12]
 
   const mapped = realizePhrase(
     phrase.notes.map((n) => n.note),
     { rootPc: phrase.rootPc ?? 0, pcs: phrase.sourcePcs },
     { rootPc: chord.rootPc, pcs: chord.absPcs },
     {
-      anchor: accompany.keepRegister ? anchor : null,
+      anchor: accompany.keepRegister && anchor && anchor.length ? anchor : home,
       snapNonChordTones: accompany.snapNonChordTones,
       range: [accompany.rangeLow ?? chords.rangeLow, accompany.rangeHigh ?? chords.rangeHigh],
     }
@@ -324,7 +360,8 @@ export function buildPhraseQueue(phrase, chord, event, settings, anchor = null) 
     // Squeeze or spread the phrase to fill the chord exactly. Musically this is
     // a tempo change -- a bar of phrase in half a bar of chord plays twice as
     // fast -- which is why it is no longer the default.
-    const scale = source > 0 ? slot / source : 1
+    // Stretching fills the chord exactly, so speed has nothing left to do.
+    const scale = (phrase.lengthPulses || slot) > 0 ? slot / (phrase.lengthPulses || slot) : 1
     phrase.notes.forEach((played, index) => {
       const at = played.at * scale
       if (at >= slot) return
@@ -343,11 +380,11 @@ export function buildPhraseQueue(phrase, chord, event, settings, anchor = null) 
 
     for (let pass = 0, base = -offset; base < slot && pass < 64; pass++, base += step) {
       phrase.notes.forEach((played, index) => {
-        const at = base + played.at
+        const at = base + played.at * rate
         // Only notes that begin inside this chord: one that began under the
         // chord before was already played there, and released when it changed.
         if (at < 0 || at >= slot) return
-        add(at, index, played.duration)
+        add(at, index, played.duration * rate)
       })
     }
   }

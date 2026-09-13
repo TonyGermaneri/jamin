@@ -80,4 +80,72 @@ check('genre and decade become tags', result.progressions[0].tags, ['rock', '197
 result = parseProgressionImport([{ name: 'plain', chords: 'Csus4 Fsus2 G' }])
 check('plain chord strings are left alone', result.progressions[0].text, 'Csus4 Fsus2 G')
 
+
+/* ---------------- fetching Chordonomicon a page at a time ---------------- */
+check('the url names the dataset', chordonomiconUrl(0).includes('ailsntua%2FChordonomicon'), true)
+check('offset and length go in', chordonomiconUrl(250, 100).includes('offset=250&length=100'), true)
+// Their server refuses more than a hundred, so never ask for more.
+check('never asks for more than a page', chordonomiconUrl(0, 5000).includes('length=100'), true)
+check('the set is as big as advertised', CHORDONOMICON.rows > 600000, true)
+
+// A fake server that hands out a hundred rows at a time, as theirs does.
+function fakeServer(total) {
+  const calls = []
+  const fetcher = async (url) => {
+    const offset = Number(/offset=(\d+)/.exec(url)[1])
+    const length = Number(/length=(\d+)/.exec(url)[1])
+    calls.push([offset, length])
+    const rows = []
+    for (let i = 0; i < Math.min(length, 100) && offset + i < total; i++) {
+      rows.push({ row: { id: offset + i, chords: '<verse_1> C Amin F G' } })
+    }
+    return { ok: true, json: async () => ({ rows }) }
+  }
+  return { fetcher, calls }
+}
+
+const realRandom = Math.random
+Math.random = () => 0   // start at the top, so the arithmetic is checkable
+
+let server = fakeServer(1000)
+let rows = await fetchChordonomicon(250, { fetcher: server.fetcher })
+check('asked for as many as wanted', rows.length, 250)
+check('in three requests', server.calls.length, 3)
+check('paged by a hundred', server.calls.map((c) => c[0]), [0, 100, 200])
+check('the last request asks only for what is left', server.calls[2][1], 50)
+check('rows come back in order', [rows[0].id, rows[249].id], [0, 249])
+
+// One page is one request.
+server = fakeServer(1000)
+rows = await fetchChordonomicon(100, { fetcher: server.fetcher })
+check('a single page is a single request', server.calls.length, 1)
+check('and a hundred rows', rows.length, 100)
+
+// Running off the end stops rather than looping.
+server = fakeServer(120)
+rows = await fetchChordonomicon(500, { fetcher: server.fetcher })
+check('stops at the end of the data', rows.length, 120)
+
+// Progress is reported as it goes.
+const seen = []
+server = fakeServer(1000)
+await fetchChordonomicon(300, { fetcher: server.fetcher, onProgress: (got) => seen.push(got) })
+check('progress reported each page', seen, [100, 200, 300])
+
+// A server error is surfaced, not swallowed.
+let threw = ''
+try {
+  await fetchChordonomicon(100, { fetcher: async () => ({ ok: false, status: 503 }) })
+} catch (error) {
+  threw = error.message
+}
+check('a bad response throws', threw.includes('503'), true)
+
+// It starts somewhere random so repeated fetches are not the same songs.
+Math.random = () => 0.5
+server = fakeServer(679807)
+await fetchChordonomicon(100, { fetcher: server.fetcher })
+check('starts partway in', server.calls[0][0] > 100000, true)
+Math.random = realRandom
+
 console.log(failed === 0 ? 'importers: all checks passed' : `importers: ${failed} FAILED`)

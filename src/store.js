@@ -20,6 +20,7 @@ import {
   bindPhraseInText,
   unbindPhraseInText,
   normalizePhrase,
+  maxSimultaneous,
 } from './core/phrases.js'
 import {
   BUILTIN_PROGRESSIONS,
@@ -39,9 +40,10 @@ import {
 import { themeById } from './core/themes.js'
 import { detectKey, preferFlatKey } from './core/key.js'
 import { mod12 } from './core/voiceLeading.js'
-import { loadLicks, lickReport, licksForChord, searchLicks, defaultVocabularyUrl } from './core/licks.js'
+import { loadLicks, lickReport, searchLicks, defaultVocabularyUrl } from './core/licks.js'
 import { phrasesFromMidi } from './core/midiPhrases.js'
 import { loadParts } from './core/parts.js'
+import { fetchChordonomicon, chordonomiconUrl, CHORDONOMICON } from './core/importers.js'
 import { loadChordDictionary, nameForSet } from './core/chordDictionary.js'
 import { describeChord } from './core/chordParser.js'
 
@@ -80,11 +82,12 @@ export const state = reactive({
     phrases: false,
     progressions: false,
     settingsTab: 'midi',
-    phrasesTab: 'captured',
-    licksForCurrentChord: true,
+    phrasesTab: 'catalogue',
     lickTexture: 'any',
     progressionsTab: 'library',
     armed: false,
+    fetching: false,
+    fetchProgress: '',
     toast: null,
   },
 })
@@ -102,7 +105,20 @@ export const live = {
 
 export const player = new Player(engine, state.settings)
 
-player.getPhrase = (name) => state.phrases.find((phrase) => phrase.name === name) || null
+/**
+ * One catalogue: what shipped, and what you have captured or imported. They are
+ * the same kind of thing, so there is no reason to keep them in separate lists.
+ */
+export function catalogue() {
+  return [...state.phrases, ...state.licks]
+}
+
+/** Bindings store an id; charts written before ids existed store a name. */
+player.getPhrase = (ref) => {
+  if (!ref) return null
+  const all = catalogue()
+  return all.find((phrase) => phrase.id === ref) || all.find((phrase) => phrase.name === ref) || null
+}
 
 player.onEventChange = (event, info) => {
   live.eventIndex = event.index
@@ -405,10 +421,13 @@ export function keepCapture(name) {
   // Stored rooted on C, so what you played over one chord works over any.
   const phrase = normalizePhrase({
     ...state.pendingCapture,
+    id: newPhraseId(),
+    kind: 'captured',
     name: uniqueName(state.phrases, name || `${state.pendingCapture.sourceChord}-lick`),
   })
   delete phrase.capturedAt
   phrase.createdAt = Date.now()
+  phrase.voices = maxSimultaneous(phrase.notes)
   state.phrases = [phrase, ...state.phrases]
   savePhrases(state.phrases)
   state.pendingCapture = null
@@ -535,6 +554,8 @@ export function importMidiPhrases(bytes, options = {}) {
 
   const added = result.phrases.map((phrase) => ({
     ...phrase,
+    id: newPhraseId(),
+    kind: 'imported',
     name: uniqueName(state.phrases, phrase.name),
     createdAt: Date.now(),
   }))
@@ -573,7 +594,7 @@ export async function ensureLicks(options = {}) {
   return state.licks
 }
 
-export { defaultVocabularyUrl }
+export { defaultVocabularyUrl, chordonomiconUrl, CHORDONOMICON }
 
 /** The chord a lick would be adopted onto: the one playing, else the first. */
 export function targetChord() {
@@ -581,13 +602,32 @@ export function targetChord() {
   return token && token.chord && token.chord.ok && !token.chord.silent ? token.chord : null
 }
 
+/**
+ * What the catalogue shows.
+ *
+ * Deliberately not filtered by the chord you are on. A phrase is stored as
+ * degrees and re-pointed at whatever chord it lands on, so every one of them
+ * fits every chord -- hiding some of them would be pretending otherwise.
+ */
 export function visibleLicks(query) {
-  const all = state.licks
-  const chord = targetChord()
-  let pool = state.ui.licksForCurrentChord && chord ? licksForChord(all, chord) : all
-  if (state.ui.lickTexture === 'hands') pool = pool.filter((item) => item.kind === 'part')
-  else if (state.ui.lickTexture === 'line') pool = pool.filter((item) => item.kind !== 'part')
+  let pool = catalogue()
+  if (state.ui.lickTexture === 'hands') pool = pool.filter((item) => item.voices > 1)
+  else if (state.ui.lickTexture === 'line') pool = pool.filter((item) => !(item.voices > 1))
   return searchLicks(pool, query)
+}
+
+let phraseSerial = 0
+
+/** Ids have to survive being written into a chart, so keep them plain. */
+function newPhraseId() {
+  phraseSerial += 1
+  return `u${Date.now().toString(36)}${phraseSerial.toString(36)}`
+}
+
+/** Put a phrase to work: the whole song, or this chord if that is turned on. */
+export function usePhrase(entry) {
+  if (!entry) return
+  bindPhrase(entry.id || entry.name)
 }
 
 /**
@@ -596,6 +636,7 @@ export function visibleLicks(query) {
  */
 export function adoptLick(lick, bind = false) {
   const phrase = {
+    id: newPhraseId(),
     // The catalogue's own names often start with the chord already.
     name: uniqueName(
       state.phrases,
@@ -732,6 +773,31 @@ export function importProgressionJson(json, { targetPc = null, spelling = 'auto'
   saveProgressions(state.progressions)
   toast(`Imported ${added.length} progression${added.length === 1 ? '' : 's'}`)
   return { ...result, added }
+}
+
+/**
+ * Fetch progressions straight from Hugging Face, a page at a time.
+ *
+ * The data stays theirs -- CC-BY-NC-4.0, so jamin ships the converter and not
+ * the collection -- but there is no reason to make you copy a URL into a browser
+ * tab and paste the answer back.
+ */
+export async function fetchChordonomiconInto(count, options = {}) {
+  state.ui.fetching = true
+  try {
+    const rows = await fetchChordonomicon(count, {
+      onProgress: (got, want) => {
+        state.ui.fetchProgress = `${got} of ${want}`
+      },
+    })
+    return importProgressionJson(JSON.stringify(rows), options)
+  } catch (error) {
+    toast(`Could not reach Hugging Face: ${error.message}`)
+    return { ok: false, error: error.message, progressions: [] }
+  } finally {
+    state.ui.fetching = false
+    state.ui.fetchProgress = ''
+  }
 }
 
 export function exportProgressionJson() {

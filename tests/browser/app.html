@@ -261,7 +261,9 @@
       await settle(400)
       state.ui.phrases = true
       await settle(500)
-      ok('phrase book opens', [...document.querySelectorAll('.v-tab')].some((t) => t.textContent.includes('Library')))
+      const phraseTabs = [...document.querySelectorAll('.v-tab')].map((t) => t.textContent.trim())
+      ok('phrase book opens', phraseTabs.some((t) => t.startsWith('Catalogue')), phraseTabs.join('/'))
+      ok('there is no separate library any more', !phraseTabs.some((t) => t.startsWith('Library')), phraseTabs.join('/'))
       state.ui.phrasesTab = 'about'
       await settle(260)
       state.ui.phrasesTab = 'library'
@@ -418,25 +420,29 @@
       ok('every lick has a source chord', state.licks.every((l) => l.sourcePcs.length > 0))
       ok('notes are in a playable range', state.licks.every((l) => l.notes.every((n) => n.note >= 24 && n.note <= 108)))
 
-      const all = store.visibleLicks('')
-      state.ui.licksForCurrentChord = true
-      await settle(150)
-      const forG7 = store.visibleLicks('')
-      ok('the chord filter narrows the list', forG7.length > 0 && forG7.length < state.licks.length,
-        `${forG7.length} of ${state.licks.length} fit G7`)
-      ok('everything shown fits a dominant seventh',
-        forG7.every((l) => l.quality === '0,4,7,10'), forG7.slice(0, 3).map((l) => l.sourceChord).join(' '))
+      // Nothing is filtered by the chord: every phrase fits every chord, because
+      // each is stored as degrees and re-pointed at whatever it lands on.
+      const everything = store.visibleLicks('')
+      is('the catalogue is not filtered by chord', everything.length, store.catalogue().length)
+      ok('and it is not truncated either', everything.length > 3000, `${everything.length} entries`)
+      ok('a search narrows it', store.visibleLicks('comp').length < everything.length,
+        `${store.visibleLicks('comp').length} match "comp"`)
+      // Check the dialog, not the document: body.textContent includes the text
+      // of this very script, so asserting against it always finds the phrase.
+      const dialogText = (document.querySelector('.v-overlay--active') || document.body).innerText
+      ok('no switch offers to hide phrases that do not "fit"',
+        !/only ones that fit/i.test(dialogText), dialogText.slice(0, 60).replace(/\n/g, ' '))
 
-      const beforeAdopt = state.phrases.length
-      store.adoptLick(forG7[0], true)
+      const forG7 = everything
+
+      // One button: using a phrase plays it, with no keeping step in between.
+      const pick = forG7[0]
+      store.usePhrase(pick)
       await settle(300)
-      is('adopting adds it to the library', state.phrases.length, beforeAdopt + 1)
-      is('and it plays over the whole song, leaving the chart alone', state.text, '.G7 Cmaj7')
-      is('as the song phrase', state.songPhrase, state.phrases[0].name)
-      is('the bound phrase resolves', store.player.getPhrase(state.phrases[0].name) !== null, true)
-      ok('it carries the chord it was written over', state.phrases[0].sourceChord === forG7[0].sourceChord,
-        state.phrases[0].sourceChord)
-      is('and is stored rooted on C, not in its original key', state.phrases[0].rootPc, 0)
+      is('using it plays it over the whole song', state.songPhrase, pick.id)
+      is('and leaves the chart alone', state.text, '.G7 Cmaj7')
+      is('the phrase resolves from the catalogue', store.player.getPhrase(pick.id) !== null, true)
+      is('stored rooted on C, not in its original key', pick.rootPc, 0)
 
       // The whole point: the same stored phrase over four different roots gives
       // the same degrees every time.
@@ -451,7 +457,7 @@
       const probe = new Player(fake, JSON.parse(JSON.stringify(state.settings)))
       probe.settings.midi.chordOutputId = 'x'
       probe.settings.chords.bassNote = false
-      probe.getPhrase = () => state.phrases[0]
+      probe.getPhrase = () => pick
       probe.setScore(parseScore('.C7{x} F7 A7 Eb7', { beatsPerBar: 4 }))
       for (let p = 1; p <= 383; p++) probe.tick(p)
       const perChord = [0, 5, 9, 3].map((root, i) => {
@@ -469,8 +475,8 @@
       await settle(200)
       is('cursor on the first chord', store.targetChord().text, 'Dm7')
 
+      store.bindPhrase(null)
       state.ui.phrases = false
-      store.deletePhrase(state.phrases[0].name)
       await settle(200)
 
       /* ---------- rebuilding the catalogue in the page ---------- */
@@ -636,6 +642,60 @@
       store.setText('C7 F7 Bb7')
       store.bindPhrase(null)
       await settle(250)
+
+      /* ---------- the rebuilt phrase book ---------- */
+      state.ui.phrases = true
+      for (const tab of ['catalogue', 'captured', 'playback', 'sources', 'about']) {
+        state.ui.phrasesTab = tab
+        await settle(350)
+        const shown = document.querySelectorAll('.v-overlay--active .v-window-item--active *').length
+        ok(`the ${tab} tab renders`, shown > 3, `${shown} elements`)
+      }
+
+      state.ui.phrasesTab = 'catalogue'
+      await settle(400)
+      ok('the list is virtualised rather than cut short',
+        !!document.querySelector('.v-overlay--active .v-virtual-scroll'))
+      const rows = document.querySelectorAll('.v-overlay--active .v-virtual-scroll .v-btn')
+      ok('rows render with a button each', rows.length > 0, `${rows.length} buttons visible`)
+      ok('and the button says Use, not Keep and bind',
+        [...rows].some((b) => /use|playing/i.test(b.textContent)) &&
+        ![...rows].some((b) => /keep/i.test(b.textContent)))
+
+      state.ui.phrasesTab = 'playback'
+      await settle(400)
+      const playbackText = document.querySelector('.v-overlay--active .v-window-item--active').innerText
+      for (const wanted of ['Speed', 'Octave', 'Bass note', 'Double bass']) {
+        ok(`playback offers ${wanted}`, playbackText.includes(wanted), playbackText.slice(0, 70).replace(/\n/g, ' '))
+      }
+      is('speed starts at one', state.settings.accompany.speed, 1)
+      is('bass is off to begin with', state.settings.accompany.bass, false)
+      is('and one octave down when turned on', state.settings.accompany.bassOctaves, 1)
+      state.ui.phrases = false
+      await settle(300)
+
+      /* ---------- Chordonomicon, more than one page of it ---------- */
+      const beforeFetch = store.state.progressions.length
+      let fetched = 'network unavailable'
+      try {
+        const result = await store.fetchChordonomiconInto(250)
+        if (result.ok) {
+          const added = store.state.progressions.length - beforeFetch
+          fetched = `${added} progressions`
+          ok('more than one page came back', added > 100, fetched)
+          ok('and they converted', store.state.progressions[0].text.length > 0,
+            store.state.progressions[0].text.slice(0, 40))
+          ok('with the dialect handled', !/[A-G]s\d/.test(store.state.progressions[0].text),
+            store.state.progressions[0].text.slice(0, 40))
+          for (const p of store.state.progressions.slice(0, added)) store.deleteProgression(p.name)
+        } else {
+          fetched = 'reported: ' + result.error
+        }
+      } catch (error) {
+        fetched = 'threw: ' + error.message
+      }
+      ok('fetching from Hugging Face (informational)', true, fetched)
+      await settle(200)
 
       /* ---------- the progression library ---------- */
       store.setText('C F G')

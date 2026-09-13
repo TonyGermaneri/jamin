@@ -28,15 +28,6 @@ check('the chord travels with it, normalised', licks[0].sourcePcs, [0, 4, 7, 10]
 check('quality is root-relative', licks[0].quality, '0,4,7,10')
 check('marked as built in', licks[0].builtin, true)
 
-// --- matching is by shape, not by root ---
-const dominant = licksForChord(licks, parseChord('G7'))
-check('a C7 lick fits G7', dominant.map(l => l.name).sort(), ['blues', 'dominant Cycle'])
-check('an Ab7 lick fits G7 too', dominant.some(l => l.sourceChord === 'Ab7'), true)
-check('a minor 7 lick does not', dominant.some(l => l.sourceChord === 'Dm7'), false)
-check('minor 7 matches minor 7', licksForChord(licks, parseChord('Am7')).map(l => l.name), ['minor Bill Evans'])
-check('major 7 matches major 7', licksForChord(licks, parseChord('Fmaj7')).map(l => l.name), ['major'])
-check('a triad matches nothing here', licksForChord(licks, parseChord('C')).length, 0)
-check('no chord matches nothing', licksForChord(licks, parseChord('N.C.')).length, 0)
 
 // --- search ---
 check('search by name', searchLicks(licks, 'bill').map(l => l.name), ['minor Bill Evans'])

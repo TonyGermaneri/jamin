@@ -26,10 +26,6 @@ check('kind is part', parts[0].kind, 'part')
 check('polyphony counted', parts[0].voices, 3)
 check('the song is remembered', parts[0].song, '219')
 
-// It must match by shape, exactly as a lick does.
-check('an F part fits any major triad', licksForChord(parts, parseChord('Ab')).map((p) => p.name), ['F comp 1'])
-check('and not a minor one', licksForChord(parts, parseChord('Abm')).length, 0)
-check('a Dm7 part fits any minor seventh', licksForChord(parts, parseChord('F#m7')).map((p) => p.name), ['Dm7 comp 1'])
 
 // Moving it keeps both hands and the degrees.
 const notes = parts[0].notes.map((n) => n.note)

@@ -144,8 +144,11 @@ our own export, a bare array, `{progressions: [...]}`, entries using
 `title`/`chords` instead of `name`/`text`, and Hugging Face's `{rows: [...]}`
 envelope -- so a collection found elsewhere usually just goes in.
 
-**Chordonomicon** (680,000 progressions, with genre and section tags) converts on
-the way in. Its dialect differs from ours in exactly three ways, each confirmed
+**Chordonomicon** (679,807 progressions, with genre and section tags) is fetched
+for you, a page at a time -- their server hands out a hundred rows per request,
+which is why asking for a thousand used to quietly get you a hundred. It starts
+somewhere random in the set, so two fetches are not the same songs. It converts
+on the way in. Its dialect differs from ours in exactly three ways, each confirmed
 against the data rather than assumed: sharps are written `s` (`Fs7` is F#7);
 except when that `s` begins `sus` (`Fsus4` is F sus4, and nothing in the corpus
 contains `ss`, so F#sus4 never arises); and `no3d` means "no 3rd". Section tags

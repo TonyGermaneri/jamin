@@ -306,4 +306,67 @@ const halves = song.events.slice(6, 10).map((event) => {
 check('each half bar continues the pattern', halves, ['0,3', '7,10', '0,4', '7,9'])
 
 
+// --- speed, octave and the bass drone ---
+settings = makeSettings()
+const oneBar = { startPulse: 0, endPulse: 96, bars: 1, chord: parseChord('Cm7') }
+const onsetsAt = (speed) => {
+  settings.accompany.speed = speed
+  return buildPhraseQueue(pattern, oneBar.chord, oneBar, settings).queue.filter(q => q.on).map(q => q.at)
+}
+check('1x is the rhythm as played', onsetsAt(1), [0, 24, 48, 72])
+check('2x covers twice the ground', onsetsAt(2), [0, 12, 24, 36, 48, 60, 72, 84])
+check('half speed gets through half of it', onsetsAt(0.5), [0, 48])
+check('a quarter speed gets through a quarter', onsetsAt(0.25), [0])
+check('four times over', onsetsAt(4).length, 16)
+settings.accompany.speed = 1
+
+// Octave decides where a phrase sits when it is not following the chord before.
+const octaveMean = (octave) => {
+  settings.accompany.octave = octave
+  settings.accompany.keepRegister = false
+  const notes = buildPhraseQueue(pattern, oneBar.chord, oneBar, settings).notes
+  return notes.reduce((a, b) => a + b, 0) / notes.length
+}
+const low = octaveMean(2)
+const high = octaveMean(6)
+check('a higher octave setting sits higher', high > low, true)
+check('and it is octaves apart, not something else', (high - low) % 12, 0)
+settings.accompany.octave = 4
+settings.accompany.keepRegister = true
+
+// The bass drone: off unless asked for, then a held root.
+engine = new FakeEngine(); settings = makeSettings(); player = new Player(engine, settings)
+player.getPhrase = () => null
+player.setScore(parseScore('| Cm7 | F7 |', { beatsPerBar: 4 }))
+player.tick(1)
+check('off by default', engine.log.filter(l => l[0] === 'on').map(l => l[1]), [60, 63, 67, 70])
+
+engine = new FakeEngine(); settings = makeSettings(); player = new Player(engine, settings)
+settings.accompany.bass = true
+player.setScore(parseScore('| Cm7 | F7 |', { beatsPerBar: 4 }))
+player.tick(1)
+let droned = engine.log.filter(l => l[0] === 'on').map(l => l[1])
+check('one octave down by default', droned[droned.length - 1], 48)
+check('and it is the root of the chord', droned[droned.length - 1] % 12, 0)
+
+settings.accompany.doubleBass = true
+engine = new FakeEngine(); player = new Player(engine, settings)
+player.setScore(parseScore('| Cm7 | F7 |', { beatsPerBar: 4 }))
+player.tick(1)
+droned = engine.log.filter(l => l[0] === 'on').map(l => l[1])
+check('double bass adds one an octave lower', droned.slice(-2), [48, 36])
+
+// It follows the chord and is released with it.
+engine.log = []
+for (let p = 2; p <= 100; p++) player.tick(p)
+check('released when the chord changes', engine.log.some(l => l[0] === 'off' && l[1] === 48), true)
+check('and the new root is held', engine.log.filter(l => l[0] === 'on').map(l => l[1]).slice(-2), [53, 41])
+
+settings.accompany.bassOctaves = 3
+engine = new FakeEngine(); player = new Player(engine, settings)
+player.setScore(parseScore('| Cm7 |', { beatsPerBar: 4 }))
+player.tick(1)
+check('three octaves down', engine.log.filter(l => l[0] === 'on').map(l => l[1]).slice(-2), [24, 12])
+
+
 console.log(failed === 0 ? 'player: all checks passed' : `player: ${failed} FAILED`)

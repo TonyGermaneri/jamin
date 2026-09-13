@@ -28,6 +28,11 @@ def strip(path):
 
 def main():
     blob = "\n".join(strip(p) for p in sys.argv[1:])
+    # Suites may use `await` at the top level; JavaScriptCore has no module
+    # scope here, so run the whole thing inside an async function.
+    if re.search(r"(?m)^\s*(await |.*= await )", blob):
+        # `void` so osascript does not echo the promise as a result.
+        blob = "void (async () => {\n" + blob + "\n})().catch((e) => { console.log('THREW ' + e.message) })"
     with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
         fh.write(blob)
         path = fh.name

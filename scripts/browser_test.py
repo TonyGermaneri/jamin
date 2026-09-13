@@ -58,7 +58,7 @@ def main():
             print(f"\n=== {page_path} ===")
             page.goto(url, wait_until="load")
             try:
-                page.wait_for_function("window.__done === true", timeout=30000)
+                page.wait_for_function("window.__done === true", timeout=90000)
             except Exception as exc:
                 print("FAIL page never finished:", exc)
                 failures += 1

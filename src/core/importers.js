@@ -75,6 +75,63 @@ export function unwrapDatasetsServer(data) {
   return data.rows.map((entry) => (entry && entry.row ? entry.row : entry)).filter(Boolean)
 }
 
+export const CHORDONOMICON = {
+  dataset: 'ailsntua/Chordonomicon',
+  rows: 679807,
+  // The datasets-server refuses more than a hundred rows per request, which is
+  // why asking for a thousand quietly got you a hundred.
+  pageSize: 100,
+  licence: 'CC-BY-NC-4.0',
+}
+
+export function chordonomiconUrl(offset, length = CHORDONOMICON.pageSize) {
+  const dataset = encodeURIComponent(CHORDONOMICON.dataset)
+  const rows = Math.min(length, CHORDONOMICON.pageSize)
+  return `https://datasets-server.huggingface.co/rows?dataset=${dataset}&config=default&split=train&offset=${offset}&length=${rows}`
+}
+
+/**
+ * Pull `count` rows, a page at a time.
+ *
+ * Starts somewhere random in the six hundred and seventy-nine thousand, because
+ * always starting at the top would hand everybody the same hundred songs.
+ */
+export async function fetchChordonomicon(count, { onProgress = null, fetcher = fetch, timeout = 20000 } = {}) {
+  const wanted = Math.max(1, Math.min(count, 5000))
+  const start = Math.floor(Math.random() * Math.max(1, CHORDONOMICON.rows - wanted))
+  const rows = []
+
+  while (rows.length < wanted) {
+    // fetch waits forever by default, and a request that never answers would
+    // leave the app saying "fetching" until the page is reloaded.
+    const page = await withTimeout(
+      (signal) => fetcher(chordonomiconUrl(start + rows.length, wanted - rows.length), { signal }),
+      timeout
+    )
+    if (!page.ok) throw new Error(`Hugging Face said ${page.status}`)
+    const body = await page.json()
+    const batch = (body.rows || []).map((entry) => entry.row || entry)
+    if (!batch.length) break
+    rows.push(...batch)
+    if (onProgress) onProgress(rows.length, wanted)
+  }
+
+  return rows
+}
+
+async function withTimeout(run, ms) {
+  if (!ms || typeof AbortController !== 'function') return run(undefined)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  try {
+    return await run(controller.signal)
+  } catch (error) {
+    throw controller.signal.aborted ? new Error(`no answer after ${Math.round(ms / 1000)}s`) : error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /** A readable name for a row that has no title of its own. */
 export function describeChordonomiconRow(row, index) {
   const genre = row.main_genre || (Array.isArray(row.genres) ? row.genres[0] : row.genres) || ''
