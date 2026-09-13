@@ -307,7 +307,7 @@ export function buildPhraseQueue(phrase, chord, event, settings, anchor = null) 
     {
       anchor: accompany.keepRegister ? anchor : null,
       snapNonChordTones: accompany.snapNonChordTones,
-      range: [chords.rangeLow, chords.rangeHigh],
+      range: [accompany.rangeLow ?? chords.rangeLow, accompany.rangeHigh ?? chords.rangeHigh],
     }
   )
 

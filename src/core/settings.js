@@ -75,6 +75,9 @@ export function defaultSettings() {
       snapNonChordTones: false,
       keepBass: true,
       monitor: true,
+      // Wider than the chord voicing range: a two-handed phrase spans more.
+      rangeLow: 28,
+      rangeHigh: 100,
       quantize: 0, // pulses; 6 = 16th notes
       captureMode: 'once', // once | continuous
       // Off by default: one phrase plays for the whole song. Turn it on to bind

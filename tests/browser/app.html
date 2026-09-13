@@ -419,6 +419,61 @@
       await store.ensureLicks({ force: true })
       await settle(400)
 
+      /* ---------- two-hand phrases from a MIDI file ---------- */
+      // Built here rather than shipped: a tiny two-handed part, one chord a bar.
+      const smf = (() => {
+        const varint = (v) => { const out = [v & 0x7f]; v >>= 7; while (v > 0) { out.unshift((v & 0x7f) | 0x80); v >>= 7 } return out }
+        const be = (v, n) => { const out = []; for (let i = n - 1; i >= 0; i--) out.push((v >> (i * 8)) & 0xff); return out }
+        const chunk = (tag, body) => [...tag].map((c) => c.charCodeAt(0)).concat(be(body.length, 4), body)
+        const PPQ = 480, BAR = PPQ * 4
+        const bars = [[36, [60, 64, 67]], [38, [62, 65, 69, 72]], [43, [62, 65, 67, 71]], [41, [60, 64, 65, 69]]]
+        const events = []
+        bars.forEach(([bass, voicing], i) => {
+          events.push({ tick: i * BAR, bytes: [0x90, bass, 90] }, { tick: i * BAR + BAR - 10, bytes: [0x80, bass, 0] })
+          voicing.forEach((note, v) => {
+            events.push({ tick: i * BAR + v * 240, bytes: [0x90, note, 80] })
+            events.push({ tick: i * BAR + v * 240 + PPQ, bytes: [0x80, note, 0] })
+          })
+        })
+        const body = []
+        body.push(...varint(0), 0xff, 0x03, 5, ...[...'PIANO'].map((c) => c.charCodeAt(0)))
+        let last = 0
+        for (const e of events.sort((a, b) => a.tick - b.tick)) { body.push(...varint(e.tick - last), ...e.bytes); last = e.tick }
+        body.push(...varint(0), 0xff, 0x2f, 0x00)
+        return new Uint8Array(chunk('MThd', [...be(0, 2), ...be(1, 2), ...be(PPQ, 2)]).concat(chunk('MTrk', body)))
+      })()
+
+      const beforeMidi = state.phrases.length
+      const midiResult = store.importMidiPhrases(smf, { segmentBars: 1 })
+      await settle(250)
+      is('four phrases, one per bar', midiResult.added.length, 4)
+      is('the chords were read off the notes', midiResult.added.map((p) => p.sourceChord), ['C', 'Dm7', 'G7', 'Fmaj7'])
+      is('they went into the library', state.phrases.length, beforeMidi + 4)
+      ok('each is two hands, not a single line', midiResult.added.every((p) => p.voices >= 2),
+        midiResult.added.map((p) => p.voices).join(','))
+      ok('spanning more than an octave', midiResult.added.every((p) => {
+        const pitches = p.notes.map((n) => n.note)
+        return Math.max(...pitches) - Math.min(...pitches) >= 12
+      }), true)
+      is('and stored rooted on C like everything else', midiResult.added.map((p) => p.rootPc), [0, 0, 0, 0])
+
+      // Played over a different chord it keeps both hands and its degrees.
+      const twoHanded = midiResult.added[1]
+      const { realizePhrase } = await import('../../src/core/voiceLeading.js')
+      const overBb = realizePhrase(
+        twoHanded.notes.map((n) => n.note),
+        { rootPc: 0, pcs: twoHanded.sourcePcs },
+        { rootPc: 10, pcs: (await import('../../src/core/chordParser.js')).parseChord('Bbm7').absPcs },
+        { range: [28, 100] }
+      )
+      const degreesOf = (list, root) => [...new Set(list.map((n) => ((n % 12) - root + 12) % 12))].sort((a, b) => a - b)
+      is('degrees survive the move', degreesOf(overBb, 10), degreesOf(twoHanded.notes.map((n) => n.note), 0))
+      ok('and the hands stay apart', Math.max(...overBb) - Math.min(...overBb) >= 12,
+        Math.max(...overBb) - Math.min(...overBb))
+
+      for (const phrase of midiResult.added) store.deletePhrase(phrase.name)
+      await settle(200)
+
       /* ---------- key detection and transposing the song ---------- */
       store.setText('D-7 G7 Cmaj7 Cmaj7')
       await settle(250)

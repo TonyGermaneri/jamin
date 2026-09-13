@@ -19,6 +19,7 @@ import {
   targetChord,
   ensureLicks as rebuildLicks,
   defaultVocabularyUrl,
+  importMidiPhrases,
 } from '../store.js'
 import { summarize } from '../core/phrases.js'
 import { describeLick } from '../core/licks.js'
@@ -28,6 +29,19 @@ const renaming = ref(null)
 const renameTo = ref('')
 const lickSearch = ref('')
 const vocabUrl = ref('')
+const midiFile = ref(null)
+const midiBars = ref(1)
+
+async function openMidi(event) {
+  const file = event.target.files && event.target.files[0]
+  if (!file) return
+  importMidiPhrases(new Uint8Array(await file.arrayBuffer()), {
+    segmentBars: midiBars.value,
+    trackFilter: /piano|accomp|keys|chord/i,
+  })
+  event.target.value = ''
+  state.ui.phrasesTab = 'library'
+}
 const vocabFile = ref(null)
 const LICK_LIMIT = 40
 
@@ -241,6 +255,25 @@ function roll(phrase, width = 260, height = 54) {
                 </template>
               </v-list-item>
             </v-list>
+
+            <v-divider class="my-3" />
+            <div class="text-caption text-medium-emphasis mb-2">
+              A recorded keyboard part is a run of phrases already: this cuts one at the chord
+              changes and reads the chord off the notes, so you get two hands, real voicings and
+              real rhythm rather than a single line.
+            </div>
+            <div class="d-flex align-center flex-wrap mb-4" style="gap: 8px">
+              <v-btn size="small" prepend-icon="mdi-import" @click="midiFile && midiFile.click()">
+                Import a MIDI file…
+              </v-btn>
+              <input ref="midiFile" type="file" accept=".mid,.midi,audio/midi" style="display: none" @change="openMidi" />
+              <v-select
+                v-model="midiBars"
+                :items="[{ title: 'One bar each', value: 1 }, { title: 'Two bars each', value: 2 }, { title: 'Four bars each', value: 4 }]"
+                label="Cut into"
+                style="max-width: 180px"
+              />
+            </div>
 
             <v-divider class="my-3" />
             <div class="d-flex align-center flex-wrap" style="gap: 8px">

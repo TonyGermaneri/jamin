@@ -38,6 +38,7 @@ import { themeById } from './core/themes.js'
 import { detectKey, preferFlatKey } from './core/key.js'
 import { mod12 } from './core/voiceLeading.js'
 import { loadLicks, lickReport, licksForChord, searchLicks, defaultVocabularyUrl } from './core/licks.js'
+import { phrasesFromMidi } from './core/midiPhrases.js'
 import { loadChordDictionary, nameForSet } from './core/chordDictionary.js'
 import { describeChord } from './core/chordParser.js'
 
@@ -501,6 +502,42 @@ function currentTokenIndex() {
 export function currentToken() {
   const index = currentTokenIndex()
   return index === null ? null : state.score.tokens[index]
+}
+
+/**
+ * Read a MIDI performance into the phrase book.
+ *
+ * One phrase per chord, with whatever was being played at the time -- two hands,
+ * real voicings, real rhythm. The chord is read off the notes unless the file
+ * came with annotations, so this works on a part you played into your own DAW as
+ * readily as on a published corpus.
+ */
+export function importMidiPhrases(bytes, options = {}) {
+  let result
+  try {
+    result = phrasesFromMidi(bytes, {
+      beatsPerBar: state.settings.transport.beatsPerBar,
+      ...options,
+    })
+  } catch (error) {
+    toast(`Could not read that MIDI file: ${error.message}`)
+    return { phrases: [], error: error.message }
+  }
+
+  if (!result.phrases.length) {
+    toast('Nothing usable in that file')
+    return result
+  }
+
+  const added = result.phrases.map((phrase) => ({
+    ...phrase,
+    name: uniqueName(state.phrases, phrase.name),
+    createdAt: Date.now(),
+  }))
+  state.phrases = [...added, ...state.phrases]
+  savePhrases(state.phrases)
+  toast(`${added.length} phrase${added.length === 1 ? '' : 's'} from MIDI`)
+  return { ...result, added }
 }
 
 /* ------------------------------------------------------------------ *

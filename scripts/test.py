@@ -28,6 +28,11 @@ SUITES = [
     (["src/core/vocParser.js"], "tests/voc.test.js"),
     ([
         "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",
+        "src/core/score.js", "src/core/voiceLeading.js", "src/core/phrases.js",
+        "src/core/midiFile.js", "src/core/midiPhrases.js",
+    ], "tests/midi-import.test.js"),
+    ([
+        "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",
         "src/core/voiceLeading.js", "src/core/phrases.js", "src/core/vocParser.js",
         "src/core/licks.js",
     ], "tests/licks.test.js"),

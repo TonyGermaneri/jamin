@@ -151,21 +151,30 @@ export function remapPhraseNotes(notes, sourcePcs, targetPcs, opts = {}) {
  */
 export function anchorOctave(notes, anchor, range = [0, 127]) {
   if (!notes.length) return []
-  if (!anchor || !anchor.length) return notes.map((note) => clampOctave(note, range[0], range[1]))
 
-  const target = average(anchor)
-  let best = notes
-  let bestDistance = Infinity
-  for (const offset of [-24, -12, 0, 12, 24]) {
-    const candidate = notes.map((note) => note + offset)
-    if (candidate.some((note) => note < range[0] || note > range[1])) continue
-    const distance = Math.abs(average(candidate) - target)
-    if (distance < bestDistance) {
-      bestDistance = distance
-      best = candidate
+  // The phrase moves as a block. A two-handed part spans three octaves or more,
+  // and folding individual notes into range would drop the left hand on top of
+  // the right; better to shift the whole thing and accept the closest fit.
+  const target = anchor && anchor.length ? average(anchor) : average(notes)
+  let best = null
+  let bestScore = Infinity
+
+  for (let offset = -36; offset <= 36; offset += 12) {
+    const low = Math.min(...notes) + offset
+    const high = Math.max(...notes) + offset
+    const overflow = Math.max(0, range[0] - low) + Math.max(0, high - range[1])
+    const drift = Math.abs(average(notes) + offset - target)
+    // Staying inside the range matters far more than sitting near the anchor.
+    const score = overflow * 10 + drift
+    if (score < bestScore) {
+      bestScore = score
+      best = offset
     }
   }
-  return best.map((note) => clampOctave(note, range[0], range[1]))
+
+  const shifted = notes.map((note) => note + best)
+  // Only an individual note still outside the instrument gets folded.
+  return shifted.map((note) => (note < 0 || note > 127 ? clampOctave(note, 0, 127) : note))
 }
 
 const sameSet = (a, b) => a.length === b.length && a.every((value, i) => value === b[i])

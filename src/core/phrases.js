@@ -86,6 +86,7 @@ function isPhrase(value) {
   return value && typeof value === 'object' && Array.isArray(value.notes) && typeof value.name === 'string'
 }
 
+/** How many notes sound at once at the busiest moment -- one hand or two. */
 /** A one-line description for the phrase list. */
 export function summarize(phrase) {
   if (!phrase || !phrase.notes.length) return 'empty'
@@ -98,7 +99,8 @@ export function summarize(phrase) {
   return `${phrase.notes.length} notes · ${shape} · ${span} semitone range · over ${phrase.sourceChord}`
 }
 
-function maxSimultaneous(notes) {
+/** How many notes sound at once at the busiest moment -- one hand or two. */
+export function maxSimultaneous(notes) {
   const edges = []
   for (const note of notes) {
     edges.push({ at: note.at, delta: 1 })
