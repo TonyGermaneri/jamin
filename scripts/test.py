@@ -45,7 +45,7 @@ SUITES = [
     ([
         "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",
         "src/core/voiceLeading.js", "src/core/phrases.js", "src/core/vocParser.js",
-        "src/core/licks.js", "src/core/parts.js",
+        "src/core/licks.js", "src/core/chordDictionary.js", "src/core/parts.js",
     ], "tests/parts.test.js"),
     ([
         "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",
@@ -63,7 +63,15 @@ for modules, suite in SUITES:
     result = subprocess.run(args, cwd=ROOT, capture_output=True, text=True)
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
-    if result.returncode != 0 or "FAIL" in result.stdout:
+    # JavaScriptCore under osascript prints console.log to stderr and exits 0
+    # whatever the script did, so both streams are read and the suite's own
+    # sign-off line is required -- otherwise a suite that dies halfway through
+    # is indistinguishable from one that passed.
+    said = result.stdout + result.stderr
+    if (result.returncode != 0 or "FAIL" in said or "THREW" in said
+            or "all checks passed" not in said):
+        if "all checks passed" not in said and "FAIL" not in said:
+            sys.stdout.write(f"{suite}: never reached its sign-off line\n")
         failed += 1
 
 sys.exit(1 if failed else 0)

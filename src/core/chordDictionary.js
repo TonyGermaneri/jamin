@@ -15,12 +15,12 @@
  */
 
 let data = null
-let pending = null
+let dictionaryPending = null
 
 export async function loadChordDictionary() {
   if (data) return data
-  if (!pending) {
-    pending = fetch(new URL('../data/chordSets.json', import.meta.url))
+  if (!dictionaryPending) {
+    dictionaryPending = fetch(new URL('../data/chordSets.json', import.meta.url))
       .then((response) => (response.ok ? response.json() : Promise.reject(new Error(response.status))))
       .then((loaded) => {
         data = loaded
@@ -32,7 +32,7 @@ export async function loadChordDictionary() {
         return data
       })
   }
-  return pending
+  return dictionaryPending
 }
 
 const key = (pcs) => [...new Set(pcs.map((n) => ((n % 12) + 12) % 12))].sort((a, b) => a - b).join(',')

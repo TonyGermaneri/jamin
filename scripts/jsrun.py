@@ -39,6 +39,12 @@ def main():
     proc = subprocess.run(["osascript", "-l", "JavaScript", path], capture_output=True, text=True)
     sys.stdout.write(proc.stdout)
     sys.stderr.write(proc.stderr)
-    sys.exit(proc.returncode)
+    # osascript exits 0 whatever the script did, and JavaScriptCore prints
+    # console.log to stderr, so the status has to come from what was said: an
+    # unhandled rejection is reported by the catch above, and a failed assertion
+    # is a suite printing FAIL and carrying on. Without this a suite could die on
+    # its first line and be recorded as a pass.
+    said = proc.stdout + proc.stderr
+    sys.exit(proc.returncode or ("THREW" in said) or ("FAIL" in said))
 
 main()
