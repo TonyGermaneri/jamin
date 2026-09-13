@@ -704,20 +704,32 @@
       is('learning captures the next control', state.settings.midi.accentCc, 64)
       is('and stops listening', state.ui.learningAccent, false)
 
-      // A rising edge fires it; holding it down does not machine-gun.
-      let accentFires = 0
-      const realTrigger = store.player.triggerAccent.bind(store.player)
-      store.player.triggerAccent = (phrase) => { accentFires++; return realTrigger(phrase) }
+      // A rising edge arms it for the next chord; holding the pedal down does
+      // not machine-gun, and pressing again cancels.
+      let arms = 0
+      const realArm = store.player.armAccent.bind(store.player)
+      store.player.armAccent = (phrase, index) => { arms++; return realArm(phrase, index) }
+
       store.engine.onControl(64, 127)
-      store.engine.onControl(64, 127)
-      store.engine.onControl(64, 0)
-      store.engine.onControl(64, 127)
+      store.engine.onControl(64, 127)   // still held: not a second press
       await settle(150)
-      is('two presses, two fires', accentFires, 2)
+      is('a press arms it', arms, 1)
+      is('and the button says so', state.ui.accentArmed, true)
+
+      store.engine.onControl(64, 0)
+      store.engine.onControl(64, 127)   // released and pressed again
+      await settle(150)
+      is('pressing again cancels rather than arming twice', arms, 1)
+      is('and it is no longer armed', state.ui.accentArmed, false)
+
+      store.engine.onControl(64, 0)
       store.engine.onControl(7, 127)
       await settle(100)
-      is('another control does nothing', accentFires, 2)
-      store.player.triggerAccent = realTrigger
+      is('another control does nothing', arms, 1)
+
+      store.player.armAccent = realArm
+      store.player.disarmAccent()
+      state.ui.accentArmed = false
 
       state.settings.midi.accentCc = null
       store.setAccentPhrase(null)

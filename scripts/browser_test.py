@@ -52,7 +52,11 @@ def main():
 
             console = []
             page.on("console", lambda msg: console.append((msg.type, msg.text)))
-            page.on("pageerror", lambda err: console.append(("pageerror", str(err))))
+            # The stack, not just the message: an uncaught error inside the page is
+            # almost always the reason a harness "never finished", and the
+            # message alone rarely says where.
+            page.on("pageerror", lambda err: console.append(
+                ("pageerror", f"{err}\n      {(getattr(err, 'stack', '') or '').strip()[:700]}")))
 
             url = f"http://127.0.0.1:{port}/{page_path}"
             print(f"\n=== {page_path} ===")

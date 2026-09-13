@@ -485,11 +485,14 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
                     change it.
                   </span>
                   <span v-else>None yet. Right-click a phrase in the catalogue to choose one.</span>
-                  It plays over whatever chord is current, on top of the phrase, stopped or running.
+                  It replaces the phrase on the next chord rather than playing over the top of it,
+                  and waits for the chord change to do it — so pressing this half a bar early means
+                  the same thing as pressing it a beat early. Press it again to cancel.
                 </div>
                 <div class="d-flex align-center flex-wrap mb-2" style="gap: 8px">
-                  <v-btn size="small" prepend-icon="mdi-flash-outline" :disabled="!accent" @click="triggerAccent">
-                    Play it
+                  <v-btn size="small" :prepend-icon="state.ui.accentArmed ? 'mdi-flash' : 'mdi-flash-outline'"
+                         :color="state.ui.accentArmed ? 'warning' : undefined" :disabled="!accent" @click="triggerAccent">
+                    {{ state.ui.accentArmed ? 'Armed — cancel' : 'Play it on the next chord' }}
                   </v-btn>
                   <v-btn
                     size="small"

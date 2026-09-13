@@ -32,7 +32,7 @@ export class Player {
     this.chordNotes = [] // last voicing, remembered for voice leading
     this.soundingNotes = [] // what is actually held down right now
     this.droneNotes = [] // the held root under the accompaniment, if asked for
-    this.accentTimers = [] // an accent is a gesture, not part of the chart
+    this.accent = null // armed, waiting for the next chord: { phrase, index }
     this.activePhrase = null
     this.phraseQueue = []
     this.phraseCursor = 0
@@ -47,6 +47,7 @@ export class Player {
     this.onEventChange = null
     this.onCapture = null
     this.onNotes = null
+    this.onAccentSpent = null
   }
 
   /**
@@ -144,7 +145,15 @@ export class Player {
     const midi = this.settings.midi
     const accompany = this.settings.accompany
 
-    const phrase = accompany.enabled && event.phraseId ? this.getPhrase(event.phraseId) : null
+    // An accent replaces whatever this chord was going to play, and is not
+    // gated on the accompaniment being switched on: it is a deliberate gesture
+    // rather than part of the arrangement.
+    const accented = this.accentFor(event)
+    const phrase = accented || (accompany.enabled && event.phraseId ? this.getPhrase(event.phraseId) : null)
+    if (accented) {
+      this.accent = null
+      if (this.onAccentSpent) this.onAccentSpent(event)
+    }
     this.activePhrase = phrase || null
 
     const voicing = realizeChord(chord, {
@@ -216,55 +225,35 @@ export class Player {
   }
 
   /**
-   * Fire the accent phrase over whatever chord is current.
+   * Arm the accent.
    *
-   * Scheduled in real time rather than in pulses, for two reasons: it plays over
-   * the top of whatever the chart is doing rather than replacing it, and it
-   * works when the transport is stopped, which is when you are most likely to be
-   * poking at it.
+   * The accent does not play over the top of what is already happening; it
+   * **replaces the next phrase**, and it waits for the next chord to do it.
+   * That is what makes it musical rather than a sound effect: a phrase belongs
+   * to a chord, so the moment to swap one in is the moment the chord changes,
+   * and pressing the button half a bar early has to mean the same thing as
+   * pressing it a beat early.
    *
-   * @returns {boolean} whether anything was played
+   * @param phrase  what to play instead
+   * @param index   the event to play it on, or null for whichever comes next
    */
-  triggerAccent(phrase) {
-    if (!phrase || !phrase.notes || !phrase.notes.length) return false
-    const chord = this.current && this.current.chord
-    if (!chord || !chord.ok || chord.silent) return false
-
-    const accompany = this.settings.accompany
-    const chords = this.settings.chords
-    const midi = this.settings.midi
-    const outputId = midi.accompOutputId || midi.chordOutputId
-
-    const notes = realizePhrase(
-      phrase.notes.map((n) => n.note),
-      { rootPc: phrase.rootPc ?? 0, pcs: phrase.sourcePcs },
-      { rootPc: chord.rootPc, pcs: chord.absPcs },
-      {
-        home: [(accompany.octave ?? 4) * 12 + 12],
-        anchor: null,
-        snapNonChordTones: accompany.snapNonChordTones,
-        range: [accompany.rangeLow ?? chords.rangeLow, accompany.rangeHigh ?? chords.rangeHigh],
-      }
-    )
-
-    const bpm = this.engine.bpm > 20 ? this.engine.bpm : 120
-    const speed = accompany.speed > 0 ? accompany.speed : 1
-    const msPerPulse = 60000 / (bpm * 24 * speed)
-
-    this.stopAccent()
-    phrase.notes.forEach((played, index) => {
-      const note = notes[index]
-      const at = played.at * msPerPulse
-      const off = at + Math.max(1, played.duration) * msPerPulse
-      this.accentTimers.push(setTimeout(() => this.engine.noteOn(outputId, midi.accompChannel, note, midi.velocity), at))
-      this.accentTimers.push(setTimeout(() => this.engine.noteOff(outputId, midi.accompChannel, note), off))
-    })
-    return true
+  armAccent(phrase, index = null) {
+    this.accent = phrase && phrase.notes && phrase.notes.length ? { phrase, index } : null
+    return this.accent !== null
   }
 
-  stopAccent() {
-    for (const timer of this.accentTimers) clearTimeout(timer)
-    this.accentTimers = []
+  /** Forget an armed accent that has not been spent. */
+  disarmAccent() {
+    const had = this.accent !== null
+    this.accent = null
+    return had
+  }
+
+  /** Whether this event is the one the accent has been waiting for. */
+  accentFor(event) {
+    if (!this.accent) return null
+    if (this.accent.index !== null && this.accent.index !== event.index) return null
+    return this.accent.phrase
   }
 
   flushPhrase(local) {
@@ -286,7 +275,6 @@ export class Player {
   }
 
   stopAll() {
-    this.stopAccent()
     const midi = this.settings.midi
     for (const note of this.soundingNotes) this.engine.noteOff(midi.chordOutputId, midi.chordChannel, note)
     this.soundingNotes = []

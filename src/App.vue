@@ -70,7 +70,9 @@ const accent = computed(() => (state.accentPhrase ? accentPhrase() : null))
 const accentTitle = computed(() => {
   if (!accent.value) return 'Accent — right-click a phrase in the catalogue to choose one'
   const cc = state.settings.midi.accentCc
-  return `Accent: ${accent.value.name}${cc === null ? '' : ` (CC ${cc})`}`
+  const binding = cc === null ? '' : ` (CC ${cc})`
+  if (state.ui.accentArmed) return `Armed: ${accent.value.name} plays on the next chord — click to cancel`
+  return `Accent: ${accent.value.name} — plays instead of the next chord's phrase${binding}`
 })
 
 const readoutColor = computed(() => state.settings.theme.fg)
@@ -117,10 +119,10 @@ function toggleArm() {
           @click="transposeSong(1)"
         />
         <v-btn
-          icon="mdi-flash-outline"
+          :icon="state.ui.accentArmed ? 'mdi-flash' : 'mdi-flash-outline'"
           size="small"
           variant="text"
-          :color="accent ? 'secondary' : undefined"
+          :color="state.ui.accentArmed ? 'warning' : accent ? 'secondary' : undefined"
           :title="accentTitle"
           @click="triggerAccent"
         />

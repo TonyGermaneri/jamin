@@ -41,7 +41,7 @@ SUITES = [
     ([
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
         "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js",
-        "src/core/player.js",
+        "src/core/player.js", "src/core/compile.js",
     ], "tests/accent.test.js"),
     ([
         "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",

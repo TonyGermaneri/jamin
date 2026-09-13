@@ -1,97 +1,144 @@
-// The accent is scheduled in real time rather than in pulses, so it can play
-// over the top of the chart and can play while the transport is stopped.
-// JavaScriptCore has no timers, so here is one we can wind by hand.
+// The accent: it replaces the next chord's phrase rather than sounding over it.
 let failed = 0
-const check = (l, g, w) => {
-  if (JSON.stringify(g) !== JSON.stringify(w)) { failed++; console.log(`FAIL ${l}: got ${JSON.stringify(g)} want ${JSON.stringify(w)}`) }
+function check(label, got, want) {
+  const g = JSON.stringify(got); const w = JSON.stringify(want)
+  if (g !== w) { failed++; console.log(`FAIL ${label}: got ${g} want ${w}`) }
 }
+function ok(label, got) { if (!got) { failed++; console.log(`FAIL ${label}`) } }
 
-const timers = []
-globalThis.setTimeout = (fn, ms) => { timers.push({ fn, ms: ms || 0, dead: false }); return timers.length }
-globalThis.clearTimeout = (id) => { if (timers[id - 1]) timers[id - 1].dead = true }
-function wind(to) {
-  timers
-    .map((t, i) => ({ t, i }))
-    .filter(({ t }) => !t.dead && t.ms <= to)
-    .sort((a, b) => a.t.ms - b.t.ms || a.i - b.i)
-    .forEach(({ t }) => { t.dead = true; t.fn() })
-}
-
-class E {
-  constructor() { this.log = []; this.bpm = 120 }
-  noteOn(o, c, n) { this.log.push(['on', n, c]); return true }
-  noteOff(o, c, n) { this.log.push(['off', n, c]); return true }
+// A recorder in place of a MIDI port, as the compiler uses.
+class PortLog {
+  constructor() { this.on = []; this.off = [] }
+  noteOn(_out, channel, note, velocity) { this.on.push({ channel, note, velocity }); return true }
+  noteOff(_out, channel, note) { this.off.push({ channel, note }); return true }
+  get bpm() { return 120 }
 }
 
 const settings = defaultSettings()
-settings.midi.chordOutputId = 'out'
-settings.midi.accompOutputId = 'out'
-settings.chords.smartVoicing = false
+settings.midi.chordOutputId = 'test'
+settings.accompany.enabled = true
 
-// A two-note stab, an eighth long.
-const accent = {
-  id: 'a1', name: 'stab', rootPc: 0, sourcePcs: [0, 4, 7], sourceChord: 'C', lengthPulses: 24,
-  notes: [
-    { at: 0, note: 60, velocity: 100, duration: 12 },
-    { at: 12, note: 67, velocity: 100, duration: 12 },
-  ],
+const line = (name, notes) => ({
+  id: name, name, rootPc: 0, sourcePcs: [0, 4, 7], lengthPulses: 96,
+  notes: notes.map((note, i) => ({ at: i * 24, note, duration: 24, velocity: 90 })),
+})
+
+const ordinary = line('ordinary', [60, 62, 64])
+const accent = line('accent', [72, 74, 76, 77])
+
+/**
+ * Play a chart through, optionally pressing the accent button part way.
+ *
+ * `atPulse` matters: arming before anything has started means the very first
+ * chord is the next one, which is right but is not what pressing the button
+ * during a tune does.
+ */
+function playThrough(text, arm, atPulse = 12) {
+  const score = parseScore(text, scoreOptions(settings, 'ordinary'))
+  const engine = new PortLog()
+  const player = new Player(engine, settings)
+  player.getPhrase = (id) => (id === 'ordinary' ? ordinary : null)
+  player.setScore(score)
+  const spent = []
+  player.onAccentSpent = (event) => spent.push(event.index)
+  for (let pulse = 0; pulse < score.totalPulses; pulse++) {
+    if (arm && pulse === atPulse) arm(player)
+    player.tick(pulse)
+  }
+  return { engine, player, spent, score }
 }
 
-let engine = new E()
-let player = new Player(engine, settings)
-player.setScore(parseScore('| Fm7 | Bb7 |', { beatsPerBar: 4 }))
+const accompChannel = settings.midi.accompChannel
+const phraseNotes = (engine, from, to) =>
+  engine.on.filter((e) => e.channel === accompChannel).slice(from, to).map((e) => e.note)
 
-check('there is nothing to play it over before the clock moves', player.triggerAccent(accent), false)
-player.tick(1)
-engine.log = []
+/* ---------------- it does nothing until armed ---------------- */
 
-check('it fires once a chord is current', player.triggerAccent(accent), true)
-check('an empty phrase plays nothing', player.triggerAccent({ notes: [] }), false)
-check('nothing has sounded yet', engine.log.length, 0)
+let run = playThrough('| C | F | G |')
+const plain = phraseNotes(run.engine, 0, 99)
+ok('the ordinary phrase plays on every chord', plain.length >= 9)
+check('nothing was spent', run.spent, [])
 
-// At 120bpm a pulse is about 20.8ms, so an eighth note is a quarter of a second.
-wind(1)
-const first = engine.log.filter((l) => l[0] === 'on').map((l) => l[1])
-check('one note lands immediately', first.length, 1)
-// Harmonised to the chord that is current, so the phrase's root is F, not C.
-check('and it is the root of the chord under it', ((first[0] % 12) - 5 + 12) % 12, 0)
-wind(260)
-const fired = engine.log.filter((l) => l[0] === 'on').map((l) => l[1])
-check('both notes, in order', fired.length, 2)
-check('the second is a fifth above the first', fired[1] - fired[0], 7)
-wind(10000)
-const ons = engine.log.filter((l) => l[0] === 'on').length
-const offs = engine.log.filter((l) => l[0] === 'off').length
-check('everything it started, it stopped', ons, offs)
+/* ---------------- armed for whichever comes next ---------------- */
 
-// It is harmonised to the chord that is current, not to the one it was played over.
-check('over Fm7 it plays Fm7 notes', fired.map((n) => ((n % 12) - 5 + 12) % 12), [0, 7])
+run = playThrough('| C | F | G |', (p) => p.armAccent(accent))
+check('pressed during the first chord, it lands on the second', run.spent, [1])
 
-// A second trigger cancels the first rather than piling up.
-engine = new E(); player = new Player(engine, settings)
-player.setScore(parseScore('| Fm7 |', { beatsPerBar: 4 }))
-player.tick(1)
-player.triggerAccent(accent)
-const scheduled = player.accentTimers.length
-player.triggerAccent(accent)
-check('retriggering replaces rather than stacks', player.accentTimers.length, scheduled)
+// Pressed before anything is playing, the first chord is the next one.
+run = playThrough('| C | F | G |', (p) => p.armAccent(accent), 0)
+check('pressed before the downbeat, it lands on the downbeat', run.spent, [0])
+ok('the accent has more notes than the phrase it replaced', accent.notes.length > ordinary.notes.length)
 
-// Stopping the transport cancels it.
-player.transport('stop')
-check('stopping clears it', player.accentTimers.length, 0)
+// And it is spent: the third chord is back to the ordinary phrase.
+run = playThrough('| C | F | G | Am |', (p) => p.armAccent(accent))
+check('spent exactly once', run.spent.length, 1)
 
-// Speed applies to it as well.
-engine = new E(); player = new Player(engine, settings)
-player.setScore(parseScore('| Fm7 |', { beatsPerBar: 4 }))
-player.tick(1)
-settings.accompany.speed = 2
-timers.length = 0
-player.triggerAccent(accent)
-const fastest = Math.max(...timers.filter((t) => !t.dead).map((t) => t.ms))
-settings.accompany.speed = 1
-timers.length = 0
-player.triggerAccent(accent)
-const normal = Math.max(...timers.filter((t) => !t.dead).map((t) => t.ms))
-check('twice the speed is half the time', Math.round(normal / fastest), 2)
+/* ---------------- armed for a named event ---------------- */
+
+run = playThrough('| C | F | G | Am |', (p) => p.armAccent(accent, 2))
+check('it waits for the event it was given', run.spent, [2])
+
+run = playThrough('| C | F |', (p) => p.armAccent(accent, 9))
+check('an event that never comes is never spent', run.spent, [])
+ok('and the accent stays armed', run.player.accent !== null)
+
+/* ---------------- it replaces rather than layers ---------------- */
+
+const withAccent = playThrough('| C | F | G |', (p) => p.armAccent(accent, 1))
+const without = playThrough('| C | F | G |')
+const countOn = (r) => r.engine.on.filter((e) => e.channel === accompChannel).length
+check('replacing changes the note count by exactly the difference',
+  countOn(withAccent) - countOn(without), accent.notes.length - ordinary.notes.length)
+
+// Nothing is left sounding either way.
+const hanging = (r) => r.engine.on.length - r.engine.off.length
+check('nothing hangs without an accent', hanging(without), 0)
+check('nothing hangs with one', hanging(withAccent), 0)
+
+/* ---------------- arming, disarming, and no phrase ---------------- */
+
+const bare = new Player(new PortLog(), settings)
+ok('arming reports success', bare.armAccent(accent))
+ok('disarming reports it had one', bare.disarmAccent())
+ok('and not twice', !bare.disarmAccent())
+ok('a phrase with no notes cannot be armed', !bare.armAccent({ name: 'empty', notes: [] }))
+ok('nor can nothing at all', !bare.armAccent(null))
+
+/* ---------------- the accent is not gated on the accompaniment ---------------- */
+
+const quiet = defaultSettings()
+quiet.midi.chordOutputId = 'test'
+quiet.accompany.enabled = false
+{
+  const score = parseScore('| C | F |', scoreOptions(quiet, 'ordinary'))
+  const engine = new PortLog()
+  const player = new Player(engine, quiet)
+  player.getPhrase = () => ordinary
+  player.setScore(score)
+  const spent = []
+  player.onAccentSpent = (e) => spent.push(e.index)
+  for (let pulse = 0; pulse < score.totalPulses; pulse++) {
+    if (pulse === 12) player.armAccent(accent)
+    player.tick(pulse)
+  }
+  check('it plays with the accompaniment switched off', spent, [1])
+}
+
+/* ---------------- through the compiler, as the plugin sees it ---------------- */
+
+const request = { text: '| C | F | G |', settings, songPhrase: 'ordinary',
+                  phrases: { ordinary }, accent, accentAt: 1 }
+const compiled = compileSong(request)
+const plainCompiled = compileSong({ ...request, accent: null, accentAt: null })
+ok('the compiled song carries the accent', compiled.events.length > plainCompiled.events.length)
+check('and is otherwise the same length', compiled.lengthPulses, plainCompiled.lengthPulses)
+
+// The accent's own pitches appear in the second bar and nowhere else.
+const inBar = (song, from, to) => song.events
+  .filter((e) => e[0] >= from && e[0] < to && (e[1] & 0xf0) === 0x90 && (e[1] & 0x0f) === accompChannel)
+  .map((e) => e[2])
+ok('the accent sounds in the bar it was aimed at', inBar(compiled, 96, 192).length === accent.notes.length)
+check('and the bar before is untouched', inBar(compiled, 0, 96), inBar(plainCompiled, 0, 96))
+check('and the bar after', inBar(compiled, 192, 288), inBar(plainCompiled, 192, 288))
 
 console.log(failed === 0 ? 'accent: all checks passed' : `accent: ${failed} FAILED`)

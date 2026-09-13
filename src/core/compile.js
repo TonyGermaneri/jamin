@@ -94,6 +94,8 @@ const clampVelocity = (velocity) => Math.min(127, Math.max(1, velocity | 0))
  *                                     the page, because the catalogue is a
  *                                     browser thing and this is not
  * @param {string} [request.songPhrase] the phrase bound to the whole song
+ * @param {number} [request.accentAt]  an event index whose phrase is replaced by
+ *                                     the accent, or absent for none
  * @param {number} [request.generation] echoed back, so a stale answer is
  *                                     recognisable as one
  */
@@ -115,6 +117,13 @@ export function compileSong(request) {
   const player = new Player(recorder, settings)
   player.getPhrase = (id) => phrases[id] || null
   player.setScore(score)
+
+  // The accent replaces one chord's phrase, and which chord is decided by
+  // whoever pressed the button -- the page works out where the playhead will be
+  // by the time this compile lands and names that event.
+  if (typeof request.accentAt === 'number' && request.accent) {
+    player.armAccent(request.accent, request.accentAt)
+  }
 
   // One pass, a pulse at a time. The player is a state machine driven by the
   // clock, so this is the clock -- and stepping it rather than sampling it is

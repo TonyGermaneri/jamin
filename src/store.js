@@ -118,6 +118,7 @@ export const state = reactive({
     lickTexture: 'any',
     progressionsTab: 'library',
     armed: false,
+    accentArmed: false,
     learningAccent: false,
     fetching: false,
     fetchProgress: '',
@@ -321,6 +322,8 @@ function adoptSavedState(saved) {
 
 let hostGeneration = 0
 let compileTimer = null
+/** The event the armed accent lands on, or null. @see triggerAccent */
+let accentAt = null
 
 /**
  * Everything this instance needs to make its own noise, in one payload.
@@ -346,6 +349,8 @@ function compileRequest() {
     settings: state.settings,
     songPhrase: state.songPhrase,
     phrases,
+    accentAt,
+    accent: accentAt === null ? null : accentPhrase(),
     generation: ++hostGeneration,
   })
 }
@@ -783,18 +788,79 @@ export function accentPhrase() {
   return player.getPhrase(state.accentPhrase)
 }
 
-/** Play it now, over whatever chord is current. */
+/**
+ * Arm the accent for the next chord.
+ *
+ * It replaces the phrase that chord was going to play rather than sounding on
+ * top of it, and it waits for the chord change to do it -- pressing the button
+ * half a bar early means the same thing as pressing it a beat early, which is
+ * what makes it playable.
+ *
+ * Pressing it again while armed disarms it, so a misfire is one press to undo.
+ */
 export function triggerAccent() {
   const phrase = accentPhrase()
   if (!phrase) {
     toast('No accent phrase yet — right-click one in the catalogue')
     return false
   }
-  if (!player.triggerAccent(phrase)) {
-    toast('Nothing to play it over yet')
+
+  if (state.ui.accentArmed) {
+    player.disarmAccent()
+    state.ui.accentArmed = false
+    accentAt = null
+    if (state.host.active) pushToHost()
+    toast('Accent cancelled')
     return false
   }
+
+  // Inside the plugin the notes come from a sequence compiled ahead of the
+  // playhead, so the accent has to name the event it lands on rather than
+  // waiting to be noticed. In a browser tab the player takes whichever event
+  // comes next.
+  const index = state.host.active ? eventIndexForAccent() : null
+  player.armAccent(phrase, index)
+  state.ui.accentArmed = true
+  accentAt = index
+
+  if (state.host.active) pushToHost()
+  toast(`Accent armed — ${phrase.name}`)
   return true
+}
+
+/**
+ * Which event the accent should land on.
+ *
+ * The next one, unless the next one is so close that a compile could not reach
+ * the plugin in time -- in which case the one after, because an accent that
+ * arrives a moment late has missed its chord entirely, and landing on the
+ * following chord is at least the thing you asked for.
+ */
+function eventIndexForAccent() {
+  const events = state.score.events
+  if (!events.length) return null
+
+  const current = live.eventIndex >= 0 ? live.eventIndex : 0
+  const event = events[current]
+  let index = (current + 1) % events.length
+
+  if (event && clock().running) {
+    const bpm = clock().bpm > 20 ? clock().bpm : 120
+    const msPerPulse = 60000 / (bpm * 24)
+    const remaining = (event.endPulse - live.position) * msPerPulse
+    // The debounce plus a compile plus the plugin's collection tick.
+    if (remaining < 450) index = (index + 1) % events.length
+  }
+
+  return index
+}
+
+/** The accent has been played; put the plugin back to the plain song. */
+player.onAccentSpent = () => {
+  state.ui.accentArmed = false
+  if (accentAt === null) return
+  accentAt = null
+  if (state.host.active) pushToHost()
 }
 
 /* ------------------------------------------------------------------ *
