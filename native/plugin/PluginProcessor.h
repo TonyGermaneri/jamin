@@ -1,0 +1,112 @@
+#pragma once
+
+#include <jamin/Sequence.h>
+#include <jamin/SongBus.h>
+#include <juce_audio_processors/juce_audio_processors.h>
+
+#include <atomic>
+#include <memory>
+#include <vector>
+
+/**
+    jamin as a MIDI effect.
+
+    It makes no sound. It reads the host's playhead, performs the sequence the
+    page compiled, and emits the notes into whatever instrument is downstream --
+    which in Logic means the MIDI FX slot, directly above the instrument it is
+    playing. That is the shape the whole idea needs: one track, one articulation,
+    one instance, and every instance reading the same chart.
+
+    Deliberately, no harmony is worked out here. @see jamin::Sequence
+*/
+class JaminProcessor final : public juce::AudioProcessor,
+                             private juce::Timer
+{
+public:
+    JaminProcessor();
+    ~JaminProcessor() override;
+
+    void prepareToPlay (double sampleRate, int maximumExpectedSamplesPerBlock) override;
+    void releaseResources() override {}
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+
+    juce::AudioProcessorEditor* createEditor() override;
+    bool hasEditor() const override { return true; }
+
+    const juce::String getName() const override { return JucePlugin_Name; }
+    bool acceptsMidi() const override { return true; }
+    bool producesMidi() const override { return true; }
+    bool isMidiEffect() const override { return true; }
+    double getTailLengthSeconds() const override { return 0.0; }
+
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+
+    void getStateInformation (juce::MemoryBlock&) override;
+    void setStateInformation (const void*, int) override;
+
+    // ------------------------------------------------------------------ the bridge
+
+    /** Hand over a freshly compiled song. Safe to call from the message thread
+        while audio is running. */
+    void setSequence (std::unique_ptr<jamin::Sequence> next);
+
+    /** What the editor draws its playhead from. Written by the audio thread and
+        read by the message thread, so every field is its own atomic -- a torn
+        read here is a highlight one frame out of date, and locking the audio
+        thread to prevent that would be the far worse trade. */
+    struct TransportView
+    {
+        std::atomic<double> ppqPosition { 0.0 };
+        std::atomic<double> bpm { 120.0 };
+        std::atomic<int> timeSigNumerator { 4 };
+        std::atomic<int> timeSigDenominator { 4 };
+        std::atomic<bool> playing { false };
+        std::atomic<bool> hasPlayhead { false };
+    };
+    const TransportView& transport() const { return view; }
+
+    /** Everything the page keeps that belongs to this instance alone -- its
+        phrase, its channel, its octave. The chart is not in here; that is
+        shared. @see jamin::SongBus */
+    juce::String instanceState;
+
+    /** Distinct per instance, stable for its lifetime: what the page labels
+        itself with, and what tells two windows apart. */
+    const juce::String instanceId;
+
+    /** Incoming MIDI, forwarded to the editor for phrase capture and MIDI learn.
+        Written by the audio thread, drained by the message thread. */
+    juce::AbstractFifo captureFifo { 512 };
+    std::vector<juce::MidiMessage> captureRing { 512 };
+
+private:
+    void timerCallback() override;
+    void allNotesOff (juce::MidiBuffer& out, int sampleOffset);
+
+    TransportView view;
+
+    // Sequence hand-over, without a lock on the audio thread. The message thread
+    // publishes a pointer and retires the old one; a retired sequence is not
+    // freed until the audio thread has been round at least twice since the swap,
+    // which is what makes the free safe without either side waiting.
+    std::atomic<const jamin::Sequence*> live { nullptr };
+    std::atomic<uint64_t> blocksProcessed { 0 };
+    struct Retired { std::unique_ptr<jamin::Sequence> seq; uint64_t atBlock; };
+    std::vector<Retired> retired;
+    std::vector<std::unique_ptr<jamin::Sequence>> alive;
+
+    std::vector<jamin::SequencePlayer::Emitted> scratch;
+    double currentSampleRate { 44100.0 };
+
+    // Which notes this instance started, so they can be stopped on a locate, a
+    // stop, or a swap. Nothing else in the chain knows they are ours.
+    bool sounding[16][128] {};
+    bool wasPlaying { false };
+    double lastPpq { 0.0 };
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (JaminProcessor)
+};
