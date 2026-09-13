@@ -110,8 +110,8 @@ cp -R "native/build/plugin/JaminMidiFx_artefacts/RelWithDebInfo/AU/Jamin MIDI FX
 cp -R  native/build/plugin/JaminInstrument_artefacts/RelWithDebInfo/VST3/Jamin.vst3          ~/Library/Audio/Plug-Ins/VST3/
 
 killall -9 AudioComponentRegistrar   # macOS caches the component registry
-auval -v aumu Jam1 Jmin              # the instrument
-auval -v aumi JamF Jmin              # the MIDI effect
+auval -v aumu Jam1 WvCt              # the instrument
+auval -v aumi JamF WvCt              # the MIDI effect
 ```
 
 That `killall` is not optional the first time a plugin code changes. Until the
@@ -130,6 +130,9 @@ as an instrument as well.
 | --- | --- | --- |
 | **Jamin** | `aumu`, VST3 | Everywhere. Live, Bitwig, Cubase, Reaper. |
 | **Jamin MIDI FX** | `aumi` | Logic's **MIDI FX** slot, with nothing to route. |
+
+Both are published by **WaveContour**, under the manufacturer code `WvCt`, so a
+host lists them beside Waveshape rather than as a stranger's work.
 
 **In Logic:** *Jamin MIDI FX* in the MIDI FX slot above your instrument. Done.
 

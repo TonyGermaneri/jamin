@@ -36,17 +36,74 @@ option(JAMIN_SANITIZE     "Build with ASan and UBSan" OFF)
 
 # ---------------------------------------------------------------------------- identity
 #
+# WaveContour makes jamin, as it makes Waveshape. The company name is what a host
+# lists the plugin under and the manufacturer code is what it groups by, so both
+# have to match Waveshape's exactly or the two appear as unrelated products by
+# unrelated people.
+#
 # The four-character codes are the part that cannot be revised later: a host
 # remembers a plugin by its manufacturer and plugin codes and not by any of the
 # names, so changing them after a release orphans every saved session that used
 # the old pair. AU additionally requires at least one capital in the manufacturer
-# code. These are placeholders and want deciding before anything ships.
-set(JAMIN_COMPANY      "Jamin"       CACHE STRING "Company name shown by hosts")
-set(JAMIN_PRODUCT      "Jamin"       CACHE STRING "Product name shown by hosts")
-set(JAMIN_BUNDLE_ID    "dev.jamin"   CACHE STRING "Reverse-DNS bundle id prefix")
-set(JAMIN_MANUFACTURER "Jmin"        CACHE STRING "Four-character manufacturer code")
-set(JAMIN_PLUGIN_CODE  "Jam1"        CACHE STRING "Four-character code: the instrument")
-set(JAMIN_MIDIFX_CODE  "JamF"        CACHE STRING "Four-character code: the MIDI effect")
+# code, which is why WvCt is mixed case rather than the lowercase it would
+# otherwise be.
+#
+# The plugin codes are what keep the products apart under that shared
+# manufacturer. Waveshape holds Wvs1; jamin holds Jam1 and JamF.
+# Not cache variables, deliberately. A plugin's identity is a property of the
+# product rather than a per-build option, and a cached one goes stale: editing
+# the values here and rebuilding an existing tree would keep the old identity
+# without saying so, which ships a plugin under the wrong name and orphans every
+# session that loaded it. Any entry left by an earlier arrangement is cleared so
+# that this file is the only answer.
+foreach(_stale IN ITEMS JAMIN_COMPANY JAMIN_PRODUCT JAMIN_BUNDLE_ID
+                        JAMIN_MANUFACTURER JAMIN_PLUGIN_CODE JAMIN_MIDIFX_CODE)
+    unset(${_stale} CACHE)
+endforeach()
+
+set(JAMIN_COMPANY      "WaveContour")   # what a host lists it under
+set(JAMIN_PRODUCT      "Jamin")
+set(JAMIN_BUNDLE_ID    "dev.Jamin")
+set(JAMIN_MANUFACTURER "WvCt")          # what a host groups it by -- Waveshape's
+set(JAMIN_PLUGIN_CODE  "Jam1")          # the instrument
+set(JAMIN_MIDIFX_CODE  "JamF")          # the MIDI effect
+
+# A shared manufacturer code makes the plugin codes the whole of the identity, so
+# a collision between them is two plugins claiming to be the same one -- and the
+# host resolves that silently, by loading whichever it saw first.
+foreach(_code IN ITEMS JAMIN_MANUFACTURER JAMIN_PLUGIN_CODE JAMIN_MIDIFX_CODE)
+    string(LENGTH "${${_code}}" _length)
+    if(NOT _length EQUAL 4)
+        message(FATAL_ERROR "${_code} must be exactly four characters, not \"${${_code}}\"")
+    endif()
+endforeach()
+
+if(JAMIN_PLUGIN_CODE STREQUAL JAMIN_MIDIFX_CODE)
+    message(FATAL_ERROR
+        "The instrument and the MIDI effect share the plugin code "
+        "\"${JAMIN_PLUGIN_CODE}\". Under one manufacturer that makes them the same plugin.")
+endif()
+
+# The codes already taken under WvCt, read off `auval -a` on the machine that
+# makes them. Not variables: they are facts about other repositories, and a
+# variable would invite somebody to set one. Two plugins sharing a manufacturer
+# and a plugin code are the same plugin as far as a host is concerned, and it
+# resolves that silently by loading whichever it happened to see first -- so
+# this is worth failing a configure over rather than finding in a session.
+# Parallel lists rather than pairs: a CMake list is flat, so "Wvs1;Waveshape"
+# is two entries and not one.
+set(_taken_codes  Wvs1      PrPl             Wvr1)
+set(_taken_owners Waveshape "Prophet Panel"  Waveroll)
+
+list(LENGTH _taken_codes _count)
+math(EXPR _last "${_count} - 1")
+foreach(_i RANGE ${_last})
+    list(GET _taken_codes  ${_i} _code)
+    list(GET _taken_owners ${_i} _owner)
+    if(JAMIN_PLUGIN_CODE STREQUAL _code OR JAMIN_MIDIFX_CODE STREQUAL _code)
+        message(FATAL_ERROR "${_code} is already ${_owner}'s, under this same manufacturer.")
+    endif()
+endforeach()
 
 # ---------------------------------------------------------------------------- the web app
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")

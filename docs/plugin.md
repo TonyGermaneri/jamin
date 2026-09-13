@@ -240,9 +240,12 @@ four-character codes decided before anything leaves the machine.
 
 ## Risks worth naming
 
-**The codes are placeholders.** `Jmin` / `Jam1` / `dev.jamin`. A host remembers a plugin by its
-manufacturer and plugin codes and by nothing else, so changing them after a release orphans every
-saved session that used the old pair. They want deciding before phase 5, not during it.
+**~~The codes are placeholders.~~** *Settled.* `WvCt` / `Jam1` / `JamF` — WaveContour's
+manufacturer code, the same one Waveshape publishes under, so a host lists them together rather
+than as unrelated products by unrelated people. Under a shared manufacturer the plugin code is
+the entire identity, so the configure refuses any code already taken under `WvCt` (`Wvs1`,
+`PrPl`, `Wvr1`) and refuses to let jamin's own two share one. A host settles a collision
+silently, by loading whichever it saw first, which is not a thing to discover in a session.
 
 **A sandboxed host may refuse the shared segment.** `shm_open` can fail. It is handled — instances
 inside that process still share through the singleton, and the file still carries the chart

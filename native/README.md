@@ -106,15 +106,34 @@ whole idea is for — one chart, one instance per track, a different phrase on e
 
 ## Identity
 
-Placeholders, and they need deciding before anything ships — a host remembers a plugin by its
-four-character codes and by nothing else, so changing them later orphans every session that used
-the old pair.
+WaveContour makes jamin, as it makes Waveshape. The company name is what a host lists a plugin
+under and the manufacturer code is what it groups by, so both match Waveshape's exactly — with
+different plugin codes, which is the whole of what keeps the products apart:
 
 ```
--DJAMIN_MANUFACTURER=Jmin  -DJAMIN_PLUGIN_CODE=Jam1   # the instrument
--DJAMIN_COMPANY="Jamin"    -DJAMIN_MIDIFX_CODE=JamF   # the MIDI effect
--DJAMIN_BUNDLE_ID=dev.jamin
+$ auval -a | grep WvCt
+aufx Wvs1 WvCt  -  WaveContour: Waveshape
+aumf PrPl WvCt  -  WaveContour: Prophet Panel
+aumf Wvr1 WvCt  -  WaveContour: Waveroll
+aumu Jam1 WvCt  -  WaveContour: Jamin
+aumi JamF WvCt  -  WaveContour: Jamin MIDI FX
 ```
+
+The four-character codes are the part that cannot be revised later: a host remembers a plugin by
+its manufacturer and plugin codes and by nothing else, so changing them after a release orphans
+every saved session that used the old pair. AU also wants at least one capital in the
+manufacturer code, which is why `WvCt` is mixed case.
+
+Under a shared manufacturer the plugin code is the entire identity, so a collision means two
+plugins claiming to be the same one — and a host settles that silently, by loading whichever it
+saw first. `CMakeLists.txt` refuses to configure against any code already taken under `WvCt`,
+and refuses to let the two jamin targets share one.
+
+**None of these are cache variables**, deliberately. A plugin's identity is a property of the
+product rather than a per-build option, and a cached one goes stale: editing the values and
+rebuilding an existing tree would keep the old identity without saying so, which ships a plugin
+under the wrong name. `CMakeLists.txt` is the only answer, and it clears any stale entry left by
+an earlier arrangement.
 
 ---
 
@@ -138,8 +157,8 @@ cp -R "build/plugin/JaminMidiFx_artefacts/RelWithDebInfo/AU/Jamin MIDI FX.compon
 cp -R build/plugin/JaminInstrument_artefacts/RelWithDebInfo/VST3/Jamin.vst3               ~/Library/Audio/Plug-Ins/VST3/
 
 killall -9 AudioComponentRegistrar     # or the new codes are not found
-auval -v aumu Jam1 Jmin                # the instrument
-auval -v aumi JamF Jmin                # the MIDI effect
+auval -v aumu Jam1 WvCt                # the instrument
+auval -v aumi JamF WvCt                # the MIDI effect
 ```
 
 `killall` is not optional the first time a code changes. macOS caches the component registry,
