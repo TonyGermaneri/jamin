@@ -74,7 +74,7 @@ async function retryMidi() {
         <v-btn icon="mdi-close" size="small" variant="text" @click="state.ui.settings = false" />
       </v-card-title>
 
-      <v-tabs v-model="state.ui.settingsTab" density="compact" show-arrows>
+      <v-tabs v-model="state.ui.settingsTab" show-arrows>
         <v-tab value="midi">MIDI</v-tab>
         <v-tab value="transport">Transport</v-tab>
         <v-tab value="chords">Chords</v-tab>

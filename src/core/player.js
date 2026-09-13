@@ -154,13 +154,19 @@ export class Player {
     this.chordNotes = voicing.notes.slice()
     this.soundingNotes = []
     if (playBlock) {
-      for (const note of voicing.notes) this.engine.noteOn(midi.chordOutputId, midi.chordChannel, note, midi.velocity)
-      this.soundingNotes = voicing.notes.slice()
+      // Only remember notes that actually reached a port. With no output bound
+      // yet, recording them anyway would fire note-offs for notes that were
+      // never turned on the moment a port is chosen.
+      for (const note of voicing.notes) {
+        if (this.engine.noteOn(midi.chordOutputId, midi.chordChannel, note, midi.velocity)) {
+          this.soundingNotes.push(note)
+        }
+      }
     }
 
     if (chords.bassNote && voicing.bass !== null && (playBlock || accompany.keepBass)) {
-      this.engine.noteOn(midi.bassOutputId || midi.chordOutputId, midi.bassChannel, voicing.bass, midi.velocity)
-      this.chordBass = voicing.bass
+      const sent = this.engine.noteOn(midi.bassOutputId || midi.chordOutputId, midi.bassChannel, voicing.bass, midi.velocity)
+      if (sent) this.chordBass = voicing.bass
     }
 
     this.phraseQueue = phrase ? buildPhraseQueue(phrase, chord, event, this.settings) : []
@@ -182,8 +188,7 @@ export class Player {
       if (item.at > local) break
       this.phraseCursor++
       if (item.on) {
-        this.engine.noteOn(outputId, channel, item.note, item.velocity)
-        this.phraseSounding.add(item.note)
+        if (this.engine.noteOn(outputId, channel, item.note, item.velocity)) this.phraseSounding.add(item.note)
       } else {
         this.engine.noteOff(outputId, channel, item.note)
         this.phraseSounding.delete(item.note)

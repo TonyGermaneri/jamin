@@ -74,7 +74,7 @@ function roll(phrase, width = 260, height = 54) {
         <v-btn icon="mdi-close" size="small" variant="text" @click="state.ui.phrases = false" />
       </v-card-title>
 
-      <v-tabs v-model="state.ui.phrasesTab" density="compact">
+      <v-tabs v-model="state.ui.phrasesTab">
         <v-tab value="captured">Just played</v-tab>
         <v-tab value="library">Library ({{ state.phrases.length }})</v-tab>
         <v-tab value="about">How it works</v-tab>

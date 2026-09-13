@@ -67,6 +67,26 @@ MIDI clock carries tempo, start/stop and song position, but there is no standard
 MIDI message for time signature — no DAW can send it. Set *beats per bar* once
 in the Transport tab and forget about it.
 
+## The progression library
+
+The bookshelf icon. A progression is just a snippet of chart text with a name --
+the same notation you type -- so anything in the library drops straight into a
+chart and any part of a chart can be saved back. Fifteen starters ship with it:
+ii–V–I, both blues, rhythm changes, Giant Steps, the Andalusian cadence, and so
+on.
+
+The one thing done to a progression on the way in is transposition. Pick a key
+and it moves, spelled the way that key is normally written -- `D-7 G7 Cmaj7` into
+F gives `F-7 Bb7 Ebmaj7`, not `F-7 A#7 D#maj7`. Only roots and slash basses are
+rewritten; suffixes, inversions, commas, bar lines, phrase dots and bindings stay
+exactly where they were. Insert at the cursor, on a new line, or over the whole
+chart.
+
+Import and export are JSON. The importer is deliberately forgiving about shape --
+our own export, a bare array, `{progressions: [...]}`, entries using
+`title`/`chords` instead of `name`/`text` -- so a collection found elsewhere
+usually just goes in.
+
 ## Mr. Accompany Me
 
 Pick your keyboard as the accompaniment input, arm the red button, and play for
@@ -92,6 +112,7 @@ src/core/chordParser.js   shorthand -> root + interval stack
 src/core/score.js         text -> timeline of events, with source character ranges
 src/core/voiceLeading.js  minimal-movement chord mapping and phrase re-pointing
 src/core/voicing.js       interval stack -> actual MIDI notes
+src/core/progressions.js  the progression library, and transposition
 src/core/midi.js          Web MIDI: ports, clock, note IO
 src/core/player.js        clock in, chords and phrases out
 src/canvas/layout.js      per-line text fitting, caret and hit testing

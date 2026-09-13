@@ -252,20 +252,23 @@ export class MidiEngine {
 
   /* ---------------- note output ---------------- */
 
+  /** @returns {boolean} whether the note actually reached a port. */
   noteOn(outputId, channel, note, velocity) {
     const port = this.output(outputId)
-    if (!port) return
+    if (!port) return false
     const n = clamp7(note)
     port.send([0x90 | (channel & 0x0f), n, clamp7(velocity)])
     this._sounding.set(`${outputId}:${channel}:${n}`, true)
+    return true
   }
 
   noteOff(outputId, channel, note) {
     const port = this.output(outputId)
-    if (!port) return
+    if (!port) return false
     const n = clamp7(note)
     port.send([0x80 | (channel & 0x0f), n, 0])
     this._sounding.delete(`${outputId}:${channel}:${n}`)
+    return true
   }
 
   /** Release everything we personally turned on, then send All Notes Off. */

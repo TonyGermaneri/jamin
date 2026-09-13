@@ -35,6 +35,14 @@
       const results = []
       const problems = []
       const ok = (name, pass, detail = '') => results.push({ name, pass: !!pass, detail: String(detail) })
+      // `ok` takes a boolean; `is` compares. Keeping them separate stops an
+      // assertion from silently passing on truthiness.
+      const is = (name, got, want) =>
+        results.push({
+          name,
+          pass: JSON.stringify(got) === JSON.stringify(want),
+          detail: JSON.stringify(got) === JSON.stringify(want) ? JSON.stringify(got) : `got ${JSON.stringify(got)} want ${JSON.stringify(want)}`,
+        })
 
       // The browser bundle groups these into namespaces; the npm package splits
       // them into `vuetify/components` and `vuetify/directives` subpaths.
@@ -44,7 +52,7 @@
 
       // Every component the templates use must actually exist in this Vuetify.
       const sources = await Promise.all(
-        ['../../src/App.vue', '../../src/components/ChordCanvas.vue', '../../src/components/SettingsDialog.vue', '../../src/components/PhraseBook.vue']
+        ['../../src/App.vue', '../../src/components/ChordCanvas.vue', '../../src/components/SettingsDialog.vue', '../../src/components/PhraseBook.vue', '../../src/components/ProgressionBook.vue']
           .map((p) => fetch(p).then((r) => r.text()))
       )
       const used = new Set()
@@ -241,6 +249,129 @@
       ok('the phrase carries forward', store.state.score.events.map((e) => e.phraseId).join(',') === 'riff,riff,riff',
         store.state.score.events.map((e) => e.phraseId).join(','))
       ok('the textarea mirrors the rewrite', field.value === '.C{riff} F G', field.value)
+
+      /* ---------- the progression library ---------- */
+      store.setText('C F G')
+      await settle(200)
+      state.ui.progressions = true
+      await settle(700)
+      const progTabs = [...document.querySelectorAll('.v-tab')].map((t) => t.textContent.trim())
+      ok('progression library opens', progTabs.some((t) => t.startsWith('Library')), progTabs.join('/'))
+      ok('built-ins are listed', store.allProgressions().length >= 15, store.allProgressions().length)
+
+      const iiVI = store.allProgressions().find((p) => p.name.includes('ii–V–I major'))
+      ok('a built-in is there', !!iiVI, iiVI && iiVI.text)
+      is('preview transposes to a key', store.renderProgression(iiVI, 5), 'F-7 Bb7 Ebmaj7 Ebmaj7')
+      is('sharp keys stay sharp', store.renderProgression(iiVI, 4), 'E-7 A7 Dmaj7 Dmaj7')
+      is('spelling can be forced', store.renderProgression(iiVI, 4, 'flats'), 'E-7 A7 Dmaj7 Dmaj7')
+      is('forced flats where it matters', store.renderProgression(iiVI, 6, 'flats'), 'Gb-7 B7 Emaj7 Emaj7')
+      is('forced sharps where it matters', store.renderProgression(iiVI, 5, 'sharps'), 'F-7 A#7 D#maj7 D#maj7')
+      is('preview as written', store.renderProgression(iiVI, null), 'D-7 G7 Cmaj7 Cmaj7')
+
+      // Insert at the cursor, into a real selection published by the canvas.
+      field.focus()
+      field.setSelectionRange(2, 3)
+      await settle(120)
+      is('canvas publishes the selection', state.status.selection.join(','), '2,3')
+      store.insertProgression(iiVI, { mode: 'caret', targetPc: 5 })
+      await settle(200)
+      is('inserted at the cursor', state.text, 'C F-7 Bb7 Ebmaj7 Ebmaj7 G')
+      ok('what was inserted still parses', state.score.tokens.every((t) => t.type !== 'error'))
+
+      store.setText('C F G')
+      await settle(150)
+      store.insertProgression(iiVI, { mode: 'append' })
+      await settle(150)
+      is('appended on a new line', state.text, 'C F G\nD-7 G7 Cmaj7 Cmaj7')
+
+      store.insertProgression(iiVI, { mode: 'replace', targetPc: 2 })
+      await settle(150)
+      is('the key it is already in is left alone', state.text, 'D-7 G7 Cmaj7 Cmaj7')
+      store.insertProgression(iiVI, { mode: 'replace', targetPc: 9 })
+      await settle(150)
+      is('replaced the chart', state.text, 'A-7 D7 Gmaj7 Gmaj7')
+
+      // Save, rename, delete.
+      const before = store.state.progressions.length
+      store.saveProgression('Test save', 'A- F C G')
+      await settle(120)
+      is('saved into the library', store.state.progressions.length, before + 1)
+      is('saved text kept verbatim', store.state.progressions[0].text, 'A- F C G')
+      store.renameProgression('Test save', 'Renamed')
+      await settle(120)
+      is('renamed', store.state.progressions[0].name, 'Renamed')
+      is('a name collision is resolved', store.saveProgression('Renamed', 'C G').name, 'Renamed 2')
+      store.deleteProgression('Renamed')
+      store.deleteProgression('Renamed 2')
+      await settle(120)
+      is('deleted', store.state.progressions.length, before)
+
+      // Import a foreign shape, then export ours.
+      const imported = store.importProgressionJson('[{"title":"From the wild","chords":["D-7","G7","C"],"genre":"jazz"}]')
+      await settle(150)
+      ok('imported a foreign shape', imported.ok && store.state.progressions[0].text === 'D-7 G7 C',
+        store.state.progressions[0] && store.state.progressions[0].text)
+      is('import keeps the tag', (store.state.progressions[0].tags || []).join(','), 'jazz')
+      const exported = store.exportProgressionJson()
+      ok('export is valid json', (() => { try { return !!JSON.parse(exported).progressions } catch { return false } })())
+      store.deleteProgression('From the wild')
+      await settle(120)
+
+      ok('inserting closes the library', state.ui.progressions === false)
+      state.ui.progressions = true
+      state.ui.progressionsTab = 'save'
+      await settle(500)
+      ok('save tab renders', document.querySelectorAll('.v-window-item--active *').length > 3)
+      state.ui.progressionsTab = 'transfer'
+      await settle(300)
+      ok('transfer tab renders a textarea', !!document.querySelector('.v-window-item--active textarea'))
+      state.ui.progressions = false
+      await settle(300)
+
+      /*
+       * Geometry invariants. Vuetify's `density="compact"` shrank the tab strip
+       * below the height of its own tabs, quietly slicing every label in half --
+       * nothing throws, nothing warns, it just looks broken. Measure instead.
+       */
+      const clipped = []
+      for (const dialog of ['settings', 'phrases', 'progressions']) {
+        state.ui[dialog] = true
+        await settle(600)
+        const strip = document.querySelector('.v-overlay--active .v-tabs')
+        const tabs = [...document.querySelectorAll('.v-overlay--active .v-tab')]
+        if (strip && tabs.length) {
+          const box = strip.getBoundingClientRect()
+          for (const tab of tabs) {
+            const r = tab.getBoundingClientRect()
+            if (r.bottom > box.bottom + 1 || r.top < box.top - 1) {
+              clipped.push(`${dialog}:${tab.textContent.trim()} ${Math.round(r.height)}px in ${Math.round(box.height)}px`)
+            }
+          }
+        }
+        // Same class of bug one level down: a floating field label poking out
+        // of the top of v-window, which clips its overflow.
+        const clipperOf = (el) => {
+          let node = el.parentElement
+          while (node && node !== document.body) {
+            const cs = getComputedStyle(node)
+            if (/auto|scroll|hidden/.test(cs.overflowY) || /auto|scroll|hidden/.test(cs.overflowX)) return node
+            node = node.parentElement
+          }
+          return null
+        }
+        for (const el of document.querySelectorAll('.v-overlay--active .v-field-label, .v-overlay--active .v-tab')) {
+          const r = el.getBoundingClientRect()
+          if (!r.height || !r.width) continue
+          const box = clipperOf(el)
+          if (!box) continue
+          const b = box.getBoundingClientRect()
+          const cut = Math.max(Math.round(b.top - r.top), Math.round(r.bottom - b.bottom))
+          if (cut > 0.5) clipped.push(`${dialog}: "${el.textContent.trim()}" cut ${cut}px`)
+        }
+        state.ui[dialog] = false
+        await settle(350)
+      }
+      ok('nothing is clipped in any dialog', clipped.length === 0, clipped.join(' | ') || 'all three dialogs measure clean')
 
       const dictionary = await import('../../src/core/chordDictionary.js')
       await dictionary.loadChordDictionary()

@@ -15,6 +15,9 @@ SUITES = [
     ([
         "src/core/midi.js"], "tests/midi.test.js"),
     ([
+        "src/core/chordParser.js", "src/core/score.js", "src/core/progressions.js",
+    ], "tests/progressions.test.js"),
+    ([
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
         "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js", "src/core/player.js",
     ], "tests/player.test.js"),

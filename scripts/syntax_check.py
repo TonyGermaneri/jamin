@@ -21,7 +21,10 @@ def source_of(path):
         text = match.group(1) if match else ""
         # <script setup> compiler macros are not real globals.
         text = re.sub(r"\b(defineExpose|defineProps|defineEmits)\s*\(", "void(", text)
-    text = re.sub(r"(?m)^\s*import[^\n]*\n", "", text)
+    # Imports, including the multi-line `import {\n  a,\n  b,\n} from "x"` form.
+    text = re.sub(r"(?ms)^[ \t]*import\s+[^;]*?from\s*['\"][^'\"]*['\"]\s*;?[ \t]*$", "", text)
+    text = re.sub(r"(?m)^[ \t]*import\s*['\"][^'\"]*['\"]\s*;?[ \t]*$", "", text)
+    text = re.sub(r"(?m)^[ \t]*import[^\n]*\n", "", text)
     text = re.sub(r"(?m)^export default ", "const __d = ", text)
     text = re.sub(r"(?m)^export\s+(?=(const|let|var|function|class|async))", "", text)
     text = re.sub(r"(?m)^export\s*\{[^}]*\}\s*;?\s*$", "", text)

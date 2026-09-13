@@ -4,10 +4,12 @@ function check(label, got, want) {
   if (g !== w) { failed++; console.log(`FAIL ${label}: got ${g} want ${w}`) }
 }
 
+// noteOn/noteOff report whether the note reached a port, which is how the
+// player knows what it actually has to release later.
 class FakeEngine {
   constructor() { this.log = [] }
-  noteOn(out, ch, note, vel) { this.log.push(['on', note, ch]) }
-  noteOff(out, ch, note) { this.log.push(['off', note, ch]) }
+  noteOn(out, ch, note, vel) { this.log.push(['on', note, ch]); return true }
+  noteOff(out, ch, note) { this.log.push(['off', note, ch]); return true }
 }
 
 function makeSettings(patch = {}) {
@@ -148,6 +150,20 @@ engine.log = []
 player.transport('position')
 for (let p = 100; p <= 105; p++) player.tick(p)
 check('relocating re-sounds the new chord', engine.log.filter(l => l[0] === 'on').map(l => l[1]), [65, 69, 72])
+
+
+// --- with no output bound, nothing is remembered as sounding ---
+class DeafEngine {
+  constructor() { this.log = [] }
+  noteOn() { this.log.push('on'); return false }   // no port: nothing was sent
+  noteOff() { this.log.push('off'); return true }
+}
+engine = new DeafEngine(); settings = makeSettings(); player = new Player(engine, settings)
+player.setScore(parseScore('C F', { beatsPerBar: 4 }))
+for (let p = 1; p <= 20; p++) player.tick(p)
+engine.log = []
+player.transport('stop')
+check('no phantom note-offs when nothing was sent', engine.log, [])
 
 
 console.log(failed === 0 ? 'player: all checks passed' : `player: ${failed} FAILED`)

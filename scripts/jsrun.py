@@ -15,7 +15,10 @@ import tempfile
 
 def strip(path):
     src = open(path, encoding="utf-8").read()
-    src = re.sub(r"(?m)^\s*import[^\n]*\n", "", src)
+    # Imports, including the multi-line `import {\n  a,\n  b,\n} from "x"` form.
+    src = re.sub(r"(?ms)^[ \t]*import\s+[^;]*?from\s*['\"][^'\"]*['\"]\s*;?[ \t]*$", "", src)
+    src = re.sub(r"(?m)^[ \t]*import\s*['\"][^'\"]*['\"]\s*;?[ \t]*$", "", src)
+    src = re.sub(r"(?m)^[ \t]*import[^\n]*\n", "", src)
     src = re.sub(r"(?m)^export default ", "const __default = ", src)
     src = re.sub(r"(?m)^export\s+(?=(const|let|var|function|class|async))", "", src)
     src = re.sub(r"(?m)^export\s*\{[^}]*\}\s*;?\s*$", "", src)

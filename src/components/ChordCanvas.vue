@@ -90,7 +90,7 @@ watch(
 
 // Hand focus back to the chart when a dialog closes, so typing just works.
 watch(
-  () => state.ui.settings || state.ui.phrases,
+  () => state.ui.settings || state.ui.phrases || state.ui.progressions,
   (open) => {
     if (!open && input.value) input.value.focus()
   }
@@ -158,6 +158,13 @@ function syncCaret() {
   if (!field) return
   caret.value = field.selectionStart
   selection.value = [field.selectionStart, field.selectionEnd]
+  // Published so the progression library knows where "insert here" means.
+  // Written only on change; this runs every frame.
+  const status = state.status
+  if (status.caret !== field.selectionStart) status.caret = field.selectionStart
+  if (status.selection[0] !== field.selectionStart || status.selection[1] !== field.selectionEnd) {
+    status.selection = [field.selectionStart, field.selectionEnd]
+  }
 }
 
 function setCaret(start, end = start) {

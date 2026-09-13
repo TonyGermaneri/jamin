@@ -14,6 +14,19 @@ import { Player } from './core/player.js'
 import { parseScore } from './core/score.js'
 import { loadSettings, saveSettings, defaultSettings, TEXT_KEY, SAMPLE_CHART } from './core/settings.js'
 import { loadPhrases, savePhrases, uniqueName, bindPhraseInText, unbindPhraseInText } from './core/phrases.js'
+import {
+  BUILTIN_PROGRESSIONS,
+  loadProgressions,
+  saveProgressions,
+  uniqueProgressionName,
+  cleanName,
+  transposeChart,
+  shiftToRoot,
+  usesFlats,
+  preferFlatForRoot,
+  parseProgressionImport,
+  exportProgressions,
+} from './core/progressions.js'
 import { themeById } from './core/themes.js'
 import { loadChordDictionary, nameForSet } from './core/chordDictionary.js'
 import { describeChord } from './core/chordParser.js'
@@ -25,6 +38,7 @@ export const state = reactive({
   score: parseScore(''),
   settings: loadSettings(),
   phrases: [],
+  progressions: [],
   pendingCapture: null,
   midi: { state: 'idle', error: null, inputs: [], outputs: [] },
   status: {
@@ -37,10 +51,21 @@ export const state = reactive({
     chord: '',
     chordName: '',
     caretChord: '',
+    caret: 0,
+    selection: [0, 0],
     phrase: null,
     notes: [],
   },
-  ui: { settings: false, phrases: false, settingsTab: 'midi', phrasesTab: 'captured', armed: false, toast: null },
+  ui: {
+    settings: false,
+    phrases: false,
+    progressions: false,
+    settingsTab: 'midi',
+    phrasesTab: 'captured',
+    progressionsTab: 'library',
+    armed: false,
+    toast: null,
+  },
 })
 
 /** Mutated at clock rate; never watched. */
@@ -108,6 +133,7 @@ export async function initApp() {
   state.text = readStoredText()
   reparse()
   loadPhraseBook()
+  state.progressions = loadProgressions()
   loadChordDictionary().then(() => refreshChordName())
 
   engine.autoStartOnClock = state.settings.transport.autoStartOnClock
@@ -370,6 +396,112 @@ function currentTokenIndex() {
 export function currentToken() {
   const index = currentTokenIndex()
   return index === null ? null : state.score.tokens[index]
+}
+
+/* ------------------------------------------------------------------ *
+ * Progression library
+ * ------------------------------------------------------------------ */
+
+/** Built-ins first-class alongside saved ones, but never editable. */
+export function allProgressions() {
+  return [...state.progressions, ...BUILTIN_PROGRESSIONS]
+}
+
+export function saveProgression(name, text) {
+  const body = String(text || '').trim()
+  if (!body) {
+    toast('Nothing to save')
+    return null
+  }
+  const progression = {
+    name: uniqueProgressionName(allProgressions(), name || 'Progression'),
+    text: body,
+    tags: [],
+    source: '',
+    createdAt: Date.now(),
+  }
+  state.progressions = [progression, ...state.progressions]
+  saveProgressions(state.progressions)
+  toast(`Saved ${progression.name}`)
+  return progression
+}
+
+export function deleteProgression(name) {
+  state.progressions = state.progressions.filter((item) => item.name !== name)
+  saveProgressions(state.progressions)
+}
+
+export function renameProgression(oldName, newName) {
+  const item = state.progressions.find((entry) => entry.name === oldName)
+  if (!item) return null
+  const clean = uniqueProgressionName(allProgressions().filter((entry) => entry.name !== oldName), newName)
+  item.name = clean
+  saveProgressions(state.progressions)
+  return clean
+}
+
+/**
+ * Work out the text a progression would contribute, already transposed.
+ * Shared by the preview and the insert so the two can never disagree.
+ */
+export function renderProgression(progression, targetPc, spelling = 'auto') {
+  if (!progression) return ''
+  if (targetPc === null || targetPc === undefined) return progression.text
+  const preferFlat =
+    spelling === 'flats' ? true : spelling === 'sharps' ? false : preferFlatForRoot(targetPc)
+  return transposeChart(progression.text, shiftToRoot(progression.text, targetPc), { preferFlat })
+}
+
+/**
+ * Put a progression into the chart.
+ *
+ * `caret` drops it where the cursor is (replacing a selection), `append` starts
+ * a fresh line at the end, `replace` takes the whole chart over.
+ */
+export function insertProgression(progression, { mode = 'caret', targetPc = null, spelling = 'auto' } = {}) {
+  const body = renderProgression(progression, targetPc, spelling)
+  if (!body) return
+
+  if (mode === 'replace') {
+    setText(body)
+  } else if (mode === 'append') {
+    const current = state.text.replace(/\s+$/, '')
+    setText(current ? `${current}\n${body}` : body)
+  } else {
+    const [from, to] = state.status.selection[0] <= state.status.selection[1]
+      ? state.status.selection
+      : [state.status.selection[1], state.status.selection[0]]
+    const before = state.text.slice(0, from)
+    const after = state.text.slice(to)
+    const pad = before && !/\s$/.test(before) ? ' ' : ''
+    const tail = after && !/^\s/.test(after) ? ' ' : ''
+    setText(before + pad + body + tail + after)
+  }
+
+  state.ui.progressions = false
+  toast(`${progression.name} → chart`)
+}
+
+export function importProgressionJson(json) {
+  const result = parseProgressionImport(json)
+  if (!result.ok) {
+    toast(result.error || 'Nothing imported')
+    return result
+  }
+  const existing = allProgressions()
+  const added = result.progressions.map((item) => ({
+    ...item,
+    name: uniqueProgressionName(existing.concat(state.progressions), cleanName(item.name)),
+    createdAt: Date.now(),
+  }))
+  state.progressions = [...added, ...state.progressions]
+  saveProgressions(state.progressions)
+  toast(`Imported ${added.length} progression${added.length === 1 ? '' : 's'}`)
+  return { ...result, added }
+}
+
+export function exportProgressionJson() {
+  return exportProgressions(state.progressions)
 }
 
 /* ------------------------------------------------------------------ *

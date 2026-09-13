@@ -3,6 +3,7 @@ import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import ChordCanvas from './components/ChordCanvas.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import PhraseBook from './components/PhraseBook.vue'
+import ProgressionBook from './components/ProgressionBook.vue'
 import { state, initApp, armCapture, disarmCapture, panic, toggleInternalTransport, engine } from './store.js'
 
 const idle = ref(false)
@@ -88,6 +89,7 @@ function toggleArm() {
           @click="toggleArm"
         />
         <v-btn icon="mdi-book-music-outline" size="small" variant="text" title="Phrase book" @click="state.ui.phrases = true" />
+        <v-btn icon="mdi-bookshelf" size="small" variant="text" title="Progression library" @click="state.ui.progressions = true" />
         <v-btn icon="mdi-cog-outline" size="small" variant="text" title="Settings" @click="state.ui.settings = true" />
         <v-btn icon="mdi-volume-off" size="small" variant="text" title="All notes off" @click="panic" />
         <v-tooltip :text="midiHint" location="bottom">
@@ -121,6 +123,7 @@ function toggleArm() {
 
       <SettingsDialog />
       <PhraseBook />
+      <ProgressionBook />
     </div>
   </v-app>
 </template>

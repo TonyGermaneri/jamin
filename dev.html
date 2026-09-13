@@ -17,8 +17,11 @@
     <link rel="stylesheet" href="./src/styles/app.css" />
     <style>
       html, body, #app { height: 100%; width: 100%; margin: 0; padding: 0; overflow: hidden; }
-      body { background: #07080c; color: #8b93ad; font: 13px ui-monospace, "SF Mono", monospace; }
-      #boot { position: fixed; inset: 0; display: grid; place-content: center; gap: 10px; text-align: center; }
+      /* No global font here: index.html sets none either, and imposing one
+         changes Vuetify's own type metrics. Keep it on the splash only. */
+      body { background: #07080c; }
+      #boot { position: fixed; inset: 0; display: grid; place-content: center; gap: 10px; text-align: center;
+              color: #8b93ad; font: 13px ui-monospace, "SF Mono", monospace; }
       #boot b { color: #7c5cff; font-weight: 600; letter-spacing: .3em; font-size: 22px }
       #boot.failed { color: #ff5470 }
     </style>

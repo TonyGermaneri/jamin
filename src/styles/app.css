@@ -121,3 +121,25 @@ body,
 .jamin-mono {
   font-family: ui-monospace, "SF Mono", monospace;
 }
+
+/*
+ * The tab strip is a flex item in the dialog card's column, so when the card's
+ * content is taller than the dialog it gets shrunk -- down to ~27px while its
+ * own tabs stay 48px, and overflow:hidden then slices every label in half.
+ * Only the tallest dialog showed it, which is exactly the kind of thing that
+ * ships. Below the lg breakpoint the mobile slide group compounds it by
+ * dropping the height rule entirely, hence the min-height as well.
+ */
+.v-card > .v-tabs {
+  flex: none;
+  min-height: var(--v-tabs-height);
+}
+
+/*
+ * A floating field label sits about 9px above its own field, and v-window clips
+ * its overflow -- so any tab panel that opens with a row of fields loses the top
+ * of every label. Give the panels that much room back.
+ */
+.v-card-text .v-window-item {
+  padding-top: 10px;
+}
