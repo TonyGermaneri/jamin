@@ -108,6 +108,12 @@ async function retryMidi() {
                   <tr><td>transport</td><td>{{ state.status.running ? 'rolling' : 'stopped' }}</td></tr>
                   <tr><td>position</td><td>{{ state.host.ppq }} ♩ — bar {{ state.status.bar }}.{{ state.status.beat }}</td></tr>
                   <tr><td>tempo</td><td>{{ state.status.bpm }} bpm</td></tr>
+                  <tr>
+                    <td>compiled</td>
+                    <td v-if="state.host.compileError" class="text-error">{{ state.host.compileError }}</td>
+                    <td v-else-if="state.host.events < 0">not yet</td>
+                    <td v-else>{{ state.host.events.toLocaleString() }} notes</td>
+                  </tr>
                   <tr><td>shared chart</td><td>{{ state.host.shared ? 'connected' : 'this process only' }}</td></tr>
                   <tr><td>instance</td><td class="text-truncate" style="max-width: 15rem">{{ state.host.instanceId || '—' }}</td></tr>
                 </table>

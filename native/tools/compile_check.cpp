@@ -1,0 +1,124 @@
+/*
+    jamin-compile — the plugin's own compiler, run without a DAW.
+
+    It loads the built bundle into JavaScriptCore exactly as the plugin does,
+    compiles a chart, and prints what came back. This is the claim the whole of
+    phase 2 rests on made executable: that jamin's music code runs headless in
+    the plugin and produces the same notes as the page.
+
+    Exit status is the gate, so ctest can hold the build to it.
+
+      jamin-compile <path to jamin-compile.js> [chart]
+*/
+#include "../plugin/Compiler.h"
+
+#include <juce_core/juce_core.h>
+
+namespace
+{
+int failures = 0;
+
+void check (const char* label, bool condition, const juce::String& detail = {})
+{
+    if (condition)
+        return;
+    ++failures;
+    std::printf ("FAIL %s%s\n", label, detail.isEmpty() ? "" : (" — " + detail).toRawUTF8());
+}
+
+/** The settings the compiler needs, written out rather than loaded: this tool
+    has no browser to read them from, and pinning them keeps the assertions
+    below meaningful when a default changes. */
+juce::String settingsJson()
+{
+    return R"({
+        "version": 5,
+        "midi": { "chordOutputId": "x", "chordChannel": 0, "accompChannel": 1,
+                  "bassChannel": 0, "accompOutputId": "", "bassOutputId": "", "velocity": 90 },
+        "transport": { "beatsPerBar": 4, "loop": true, "latencyPulses": 0 },
+        "chords": { "octave": 4, "rangeLow": 48, "rangeHigh": 84, "smartVoicing": true,
+                    "maxVoices": 5, "mergeRepeats": true,
+                    "omitThirdOnDominant11": true, "omitElevenOnThirteen": true },
+        "accompany": { "enabled": true, "mode": "layer", "perChordPhrases": false,
+                       "bass": false, "bassOctaves": 1, "doubleBass": false,
+                       "octave": 4, "speed": 1, "fit": "follow", "snapToChord": true }
+    })";
+}
+} // namespace
+
+int main (int argc, char** argv)
+{
+    if (argc < 2)
+    {
+        std::printf ("usage: jamin-compile <jamin-compile.js> [chart]\n");
+        return 1;
+    }
+
+    const juce::File bundle { juce::String (argv[1]) };
+    const juce::String chart = argc > 2 ? juce::String (argv[2]) : "| Cmaj7 | A-7 | D-7 | G7 |";
+
+    jamin::Compiler compiler;
+    if (! compiler.load (bundle))
+    {
+        std::printf ("FAIL could not load the bundle — %s\n", compiler.lastError.toRawUTF8());
+        return 1;
+    }
+
+    std::printf ("jamin-compile\n  bundle   %s (%lld bytes)\n",
+                 bundle.getFullPathName().toRawUTF8(), (long long) bundle.getSize());
+
+    const auto request = "{\"text\":" + juce::JSON::toString (juce::var (chart))
+                       + ",\"generation\":42,\"settings\":" + settingsJson() + "}";
+
+    const auto sequence = compiler.compile (request);
+    check ("it compiled at all", sequence != nullptr, compiler.lastError);
+    if (sequence == nullptr)
+        return 1;
+
+    std::printf ("  chart    %s\n  notes    %zu events over %d pulses (%d chords)\n",
+                 chart.toRawUTF8(), sequence->events.size(),
+                 sequence->lengthPulses, compiler.lastChordCount);
+
+    check ("four bars of four is 384 pulses", sequence->lengthPulses == 384,
+           juce::String (sequence->lengthPulses));
+    check ("it found four chords", compiler.lastChordCount == 4);
+    check ("it produced notes", ! sequence->events.empty());
+    check ("the generation came back", sequence->generation == 42);
+
+    // Sorted, in range, and balanced: every note that is started is stopped.
+    bool sorted = true, inRange = true;
+    std::map<int, int> held;
+    for (size_t i = 0; i < sequence->events.size(); ++i)
+    {
+        const auto& e = sequence->events[i];
+        if (i > 0 && e.pulse < sequence->events[i - 1].pulse)
+            sorted = false;
+        if (e.data1 > 127 || e.data2 > 127 || e.pulse < 0)
+            inRange = false;
+
+        const int key = ((e.status & 0x0f) << 8) | e.data1;
+        held[key] += (e.status & 0xf0) == 0x90 ? 1 : -1;
+    }
+    check ("events are sorted by pulse", sorted);
+    check ("notes and velocities are in range", inRange);
+
+    int hanging = 0;
+    for (const auto& [key, count] : held)
+        if (count != 0)
+            ++hanging;
+    check ("nothing is left sounding at the end of a pass", hanging == 0, juce::String (hanging));
+
+    // A chart with nothing in it is not an error; it is a chart with nothing in it.
+    const auto empty = compiler.compile (R"({"text":"","settings":)" + settingsJson() + "}");
+    check ("an empty chart compiles", empty != nullptr, compiler.lastError);
+    if (empty != nullptr)
+        check ("and produces nothing", empty->events.empty());
+
+    // Nonsense in the request must come back as an explanation, not a crash.
+    const auto broken = compiler.compile ("{not json");
+    check ("bad json is refused rather than fatal", broken == nullptr);
+    check ("and says why", compiler.lastError.isNotEmpty());
+
+    std::printf (failures == 0 ? "  ok       all checks passed\n" : "  %d FAILED\n", failures);
+    return failures == 0 ? 0 : 1;
+}

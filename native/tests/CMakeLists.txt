@@ -14,6 +14,14 @@ add_test(NAME jamin-tests COMMAND jamin-tests)
 # The page, running in the editor's own web view. This is the test that would
 # catch a Vite change that breaks module loading over a custom scheme, which no
 # amount of testing in Chrome ever would.
+# The compiler, against the bundle the plugin will actually load.
+if(APPLE AND TARGET jamin-compile AND TARGET JaminInstrument_AU)
+    add_test(NAME jamin-compile
+             COMMAND jamin-compile
+                     "$<TARGET_BUNDLE_CONTENT_DIR:JaminInstrument_AU>/Resources/web/jamin-compile.js")
+    set_tests_properties(jamin-compile PROPERTIES TIMEOUT 60)
+endif()
+
 if(APPLE AND TARGET jamin-boot AND TARGET JaminInstrument_AU)
     add_test(NAME jamin-boot
              COMMAND jamin-boot

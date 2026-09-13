@@ -35,7 +35,7 @@ Safari or Firefox. Grant the MIDI prompt and the ports bind themselves; the gear
 icon is there if you want different ones.
 
 ```sh
-npm run build     # production bundle in dist/
+npm run build     # production bundle in dist/, plus the plugin's compiler
 npm test          # pure-logic test suites
 npm run chords    # regenerate the chord dictionary data
 ```

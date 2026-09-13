@@ -10,13 +10,14 @@
 
 import { reactive, watch } from 'vue'
 import { MidiEngine } from './core/midi.js'
-import { hosted, hostData, callHost, HostClock } from './core/host.js'
+import { hosted, hostData, callHost, onHost, HostClock } from './core/host.js'
 import { Player } from './core/player.js'
 import { parseScore } from './core/score.js'
 import {
   loadSettings,
   saveSettings,
   defaultSettings,
+  mergeSettings,
   TEXT_KEY,
   SONG_PHRASE_KEY,
   ACCENT_KEY,
@@ -88,6 +89,9 @@ export const state = reactive({
     hasPlayhead: false,
     ppq: 0,
     pulse: 0,
+    // What the plugin made of the last chart we sent it.
+    events: -1,
+    compileError: null,
   },
   status: {
     running: false,
@@ -278,12 +282,87 @@ async function adoptHost() {
   state.midi.error = null
 
   hostClock.attach()
+  onHost('jaminCompiled', (report) => {
+    if (!report) return
+    state.host.events = report.events | 0
+    state.host.compileError = report.error || null
+  })
 
   const info = await callHost('jaminReady').catch(() => null)
   if (!info) return
 
   if (info.instanceId) state.host.instanceId = info.instanceId
   state.host.shared = Boolean(info.shared)
+
+  // What this instance was last set to. It is saved with the DAW's project, so
+  // reopening a session has to bring the chart back -- and the plugin has
+  // already started playing it, having compiled the same thing without waiting
+  // for anybody to open this window.
+  adoptSavedState(info.state)
+  pushToHost()
+}
+
+function adoptSavedState(saved) {
+  if (!saved) return
+  try {
+    const request = JSON.parse(saved)
+    if (typeof request.text === 'string' && request.text.length) state.text = request.text
+    if ('songPhrase' in request) state.songPhrase = request.songPhrase || null
+    if (request.settings) state.settings = mergeSettings(state.settings, request.settings)
+    reparse()
+  } catch {
+    // A state written by an older version is not worth refusing to start over.
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Compiling, when we are the plugin's editor
+ * ------------------------------------------------------------------ */
+
+let hostGeneration = 0
+let compileTimer = null
+
+/**
+ * Everything this instance needs to make its own noise, in one payload.
+ *
+ * The phrases are resolved here rather than sent as names, because the
+ * catalogue is a browser thing -- it is fetched, it lives in IndexedDB, and the
+ * headless compiler inside the plugin has neither. Only the phrases this chart
+ * actually uses go, which is one or two of several thousand.
+ */
+function compileRequest() {
+  const phrases = {}
+  const include = (ref) => {
+    if (!ref || phrases[ref]) return
+    const phrase = player.getPhrase(ref)
+    if (phrase) phrases[ref] = phrase
+  }
+
+  include(state.songPhrase)
+  for (const event of state.score.events) include(event.phraseId)
+
+  return JSON.stringify({
+    text: state.text,
+    settings: state.settings,
+    songPhrase: state.songPhrase,
+    phrases,
+    generation: ++hostGeneration,
+  })
+}
+
+/**
+ * Hand the plugin a new song to play.
+ *
+ * Debounced, because this is called on every keystroke and only the last one is
+ * worth compiling. A quarter of a second is below the point at which a pause in
+ * typing feels like waiting, and far above the cost of the compile.
+ */
+function pushToHost() {
+  if (!state.host.active) return
+  clearTimeout(compileTimer)
+  compileTimer = setTimeout(() => {
+    callHost('jaminCompile', compileRequest()).catch(() => {})
+  }, 250)
 }
 
 function readStored(key) {
@@ -486,9 +565,16 @@ export function resetSettings() {
 
 watch(
   () => JSON.stringify(state.settings),
-  () => saveSettings(state.settings),
+  () => {
+    saveSettings(state.settings)
+    pushToHost()
+  },
   { flush: 'post' }
 )
+
+// The chart and the phrase bound to it are the other two things that decide
+// what comes out. Everything else the plugin is told is derived from these.
+watch(() => [state.text, state.songPhrase], () => pushToHost())
 
 watch(
   () => [

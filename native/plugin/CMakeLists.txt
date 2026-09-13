@@ -29,12 +29,22 @@ function(jamin_add_plugin target)
         FORMATS                   ${ARG_FORMATS}
         COPY_PLUGIN_AFTER_BUILD   FALSE)
 
-    target_sources(${target} PRIVATE PluginProcessor.cpp PluginEditor.cpp)
+    target_sources(${target} PRIVATE
+        PluginProcessor.cpp
+        PluginEditor.cpp
+        PluginPaths.cpp
+        Compiler.cpp)
 
     target_compile_definitions(${target} PUBLIC
         JUCE_WEB_BROWSER=1              # the editor is the web app
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0)
+
+    # JavaScriptCore runs jamin's own music code headless, so the plugin keeps no
+    # implementation of the harmony at all. @see Compiler.h
+    if(APPLE)
+        target_link_libraries(${target} PRIVATE "-framework JavaScriptCore")
+    endif()
 
     target_link_libraries(${target} PRIVATE
         jamin_core

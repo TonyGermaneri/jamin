@@ -12,7 +12,7 @@ ctest --test-dir build --output-on-failure
 JUCE is fetched by the build. CMake 3.22+, a C++20 compiler, and a `dist/` in the repository
 root (`npm run build`, or `cmake --build build --target web`) are the whole list.
 
-[The plan](../docs/plugin.md), through phase 1.
+[The plan](../docs/plugin.md), through phase 2.
 
 ---
 
@@ -27,6 +27,13 @@ stopping: the sequence outlives the web view that produced it.
 
 If the plugin ever needs to know what `Abmaj7/C` means, the design has failed.
 
+The compiler is how that holds. `Compiler.cpp` evaluates `jamin-compile.js` — the page's own
+music code, built as a plain script — in a `JSContext`, and asks it for the sequence.
+JavaScriptCore is on every Mac and is the engine the test suite has always used, so this is not
+a new dependency so much as an existing one being admitted to. And because the compiler is not in
+the editor, the editor window can be shut without the music stopping or a chart edit going
+uncompiled.
+
 ---
 
 ## What is here
@@ -35,7 +42,7 @@ If the plugin ever needs to know what `Abmaj7/C` means, the design has failed.
 | --- | --- |
 | `core/` | No JUCE, no plugin API. `Sequence` and `SequencePlayer` — the audio-thread reader, allocation-free and lock-free — and `SongBus`, the chart every instance shares. |
 | `plugin/` | The plugin targets, built twice from one set of sources. `processBlock` reads the playhead and emits; the editor is a `WebBrowserComponent` and nothing else. |
-| `tools/` | `jamin-boot` — loads the real bundled page in a real `WKWebView` and fails if the application reports so much as a console error. With `--host` it stands in for the plugin, drives a playhead, and checks the chart followed. |
+| `tools/` | `jamin-boot` — loads the real bundled page in a real `WKWebView` and fails if the application reports so much as a console error. With `--host` it stands in for the plugin, drives a playhead, and checks the chart followed. `jamin-compile` — the plugin's own compiler without a plugin. |
 | `tests/` | The sequence reader against a loop point, and the bus between two instances. The page's own half of the bridge is `tests/host.test.js`, in the JavaScript suite. |
 | `cmake/` | Copying the built page into the bundle. |
 

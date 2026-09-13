@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Compiler.h"
+
 #include <jamin/Sequence.h>
 #include <jamin/SongBus.h>
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -68,6 +70,28 @@ public:
         while audio is running. */
     void setSequence (std::unique_ptr<jamin::Sequence> next);
 
+    /**
+        Compile a chart into a sequence and start playing it.
+
+        The argument is everything this instance needs to make its own noise --
+        the chart, the settings, and the phrases already resolved, because the
+        catalogue is a browser thing. It is kept as the instance's saved state
+        too, so reopening a session brings the music back without anybody having
+        to open the editor.
+
+        Returns immediately; the work happens on a background thread and the
+        answer is picked up by the timer. A chart edit therefore takes a frame
+        or two to be heard, which is imperceptible, and never a millisecond of
+        the audio thread, which matters.
+    */
+    void requestCompile (const juce::String& requestJson);
+
+    /** What the last compile did, for the editor to report. `events` is -1
+        before anything has been compiled at all. */
+    std::atomic<int> compiledEvents { -1 };
+    std::atomic<int> compiledChords { 0 };
+    juce::String compileError;
+
     /** What the editor draws its playhead from. Written by the audio thread and
         read by the message thread, so every field is its own atomic -- a torn
         read here is a highlight one frame out of date, and locking the audio
@@ -98,6 +122,9 @@ public:
     std::vector<juce::MidiMessage> captureRing { 512 };
 
 private:
+    class CompileThread;
+    std::unique_ptr<CompileThread> compiler;
+
     void timerCallback() override;
     void allNotesOff (juce::MidiBuffer& out, int sampleOffset);
 

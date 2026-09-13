@@ -23,11 +23,6 @@ public:
 
     void resized() override;
 
-    /** Where the built page is read from: $JAMIN_WEB_DIR if it is set, so a
-        `npm run build` is the whole iteration loop, otherwise Resources/web
-        inside this bundle. */
-    static juce::File webRoot();
-
 private:
     void timerCallback() override;
     std::optional<juce::WebBrowserComponent::Resource> provide (const juce::String& path);
@@ -36,6 +31,7 @@ private:
     juce::WebBrowserComponent browser;
 
     uint64_t lastSongGeneration { 0 };
+  int lastCompiledEvents { -1 };
     double lastPpqSent { -1.0 };
     bool lastPlayingSent { false };
 

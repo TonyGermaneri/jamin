@@ -1,5 +1,92 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "PluginPaths.h"
+
+/**
+    Compiling, off the message thread.
+
+    A long chart is tens of thousands of pulses, and the page's own player is
+    stepped through every one of them to produce the sequence. That is fast, but
+    not so fast that it belongs in a DAW's message thread, so it happens here and
+    the answer is collected by the processor's timer.
+
+    Latest request wins. Typing produces a request per keystroke and only the
+    last one is worth anything; compiling the intermediate ones would be work
+    done to be thrown away.
+*/
+class JaminProcessor::CompileThread final : public juce::Thread
+{
+public:
+    CompileThread() : juce::Thread ("jamin compile") { startThread (juce::Thread::Priority::low); }
+    ~CompileThread() override { stopThread (4000); }
+
+    void submit (juce::String request)
+    {
+        {
+            const juce::ScopedLock guard (lock);
+            pending = std::move (request);
+            havePending = true;
+        }
+        notify();
+    }
+
+    /** Collect a finished sequence, if there is one. Message thread. */
+    std::unique_ptr<jamin::Sequence> collect (juce::String& error, int& chords)
+    {
+        const juce::ScopedLock guard (lock);
+        if (! haveResult)
+            return nullptr;
+
+        haveResult = false;
+        error = resultError;
+        chords = resultChords;
+        return std::move (result);
+    }
+
+private:
+    void run() override
+    {
+        while (! threadShouldExit())
+        {
+            juce::String job;
+            {
+                const juce::ScopedLock guard (lock);
+                if (havePending)
+                {
+                    job = pending;
+                    havePending = false;
+                }
+            }
+
+            if (job.isEmpty())
+            {
+                wait (250);
+                continue;
+            }
+
+            // Loaded once, on first use rather than at construction: an instance
+            // that is never given a chart should not pay for a JavaScript engine,
+            // and a plugin scan opens a lot of instances.
+            if (! compiler.isLoaded())
+                compiler.load (jamin::webRoot().getChildFile ("jamin-compile.js"));
+
+            auto sequence = compiler.compile (job);
+
+            const juce::ScopedLock guard (lock);
+            result = std::move (sequence);
+            resultError = compiler.lastError;
+            resultChords = compiler.lastChordCount;
+            haveResult = true;
+        }
+    }
+
+    jamin::Compiler compiler;
+    juce::CriticalSection lock;
+    juce::String pending, resultError;
+    std::unique_ptr<jamin::Sequence> result;
+    int resultChords { 0 };
+    bool havePending { false }, haveResult { false };
+};
 
 JaminProcessor::JaminProcessor()
     : juce::AudioProcessor (
@@ -14,7 +101,8 @@ JaminProcessor::JaminProcessor()
         BusesProperties().withOutput ("Silence", juce::AudioChannelSet::stereo(), true)
        #endif
       ),
-      instanceId (juce::Uuid().toDashedString())
+      instanceId (juce::Uuid().toDashedString()),
+      compiler (std::make_unique<CompileThread>())
 {
     startTimerHz (20);
 }
@@ -166,8 +254,32 @@ void JaminProcessor::setSequence (std::unique_ptr<jamin::Sequence> next)
     }
 }
 
+void JaminProcessor::requestCompile (const juce::String& requestJson)
+{
+    // The request is the instance's state. Saving it here rather than in a
+    // second call means a session reopens playing what it was playing, without
+    // the editor ever being opened.
+    instanceState = requestJson;
+    compiler->submit (requestJson);
+}
+
 void JaminProcessor::timerCallback()
 {
+    juce::String error;
+    int chords = 0;
+    if (auto next = compiler->collect (error, chords))
+    {
+        compiledEvents.store ((int) next->events.size(), std::memory_order_relaxed);
+        compiledChords.store (chords, std::memory_order_relaxed);
+        compileError = error;
+        setSequence (std::move (next));
+    }
+    else if (error.isNotEmpty())
+    {
+        compileError = error;
+        compiledEvents.store (0, std::memory_order_relaxed);
+    }
+
     // A sequence the audio thread might still be reading cannot be freed. Two
     // whole blocks after the swap it certainly is not, because the pointer it
     // loads at the top of a block is the new one. Freeing happens here rather
@@ -191,7 +303,14 @@ void JaminProcessor::setStateInformation (const void* data, int size)
 {
     if (data == nullptr || size <= 0)
         return;
+
     instanceState = juce::String::fromUTF8 (static_cast<const char*> (data), size);
+
+    // Reopening a session has to bring the music back, and the editor may never
+    // be opened at all -- so the saved request is compiled straight away rather
+    // than waiting for a page to ask for it.
+    if (instanceState.isNotEmpty() && instanceState != "{}")
+        compiler->submit (instanceState);
 }
 
 juce::AudioProcessorEditor* JaminProcessor::createEditor()

@@ -27,6 +27,11 @@ SUITES = [
     ], "tests/importers.test.js"),
     (["src/core/themes.js", "src/core/settings.js"], "tests/settings.test.js"),
     (["src/core/host.js"], "tests/host.test.js"),
+    ([
+        "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
+        "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js",
+        "src/core/player.js", "src/core/compile.js",
+    ], "tests/compile.test.js"),
     (["src/core/vocParser.js"], "tests/voc.test.js"),
     ([
         "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",

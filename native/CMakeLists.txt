@@ -133,12 +133,14 @@ endif()
 
 add_subdirectory(core)
 
-if(JAMIN_BUILD_TOOLS)
-    add_subdirectory(tools)
-endif()
-
 if(JAMIN_BUILD_PLUGIN)
     add_subdirectory(plugin)
+endif()
+
+# After the plugin, because jamin-compile links juce_core and shares the
+# plugin's Compiler.cpp.
+if(JAMIN_BUILD_TOOLS)
+    add_subdirectory(tools)
 endif()
 
 if(JAMIN_BUILD_TESTS)

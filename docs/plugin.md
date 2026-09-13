@@ -231,9 +231,25 @@ anything passing between them.
 bundle, drives a playhead past it, and asserts the chart followed — the bar count advanced, the
 chord changed, the host's tempo is the one on screen, and stopping was noticed.
 
-**Phase 2 — the compiler.** `compile(chart, settings) → Sequence`, built by Vite as a second,
-DOM-free entry point, run in a `JSContext` in the processor. *Exit:* notes come out of the MIDI
-FX slot into an instrument, in time, and keep coming when the window is closed.
+**Phase 2 — the compiler. *Done; see `src/core/compile.js` and `native/plugin/Compiler.cpp`.***
+`compileSong(request) → Sequence`, built by Vite as a second, DOM-free entry point
+(`vite.compile.config.js`, an IIFE defining one global — JavaScriptCore has no module loader),
+evaluated in a `JSContext` inside the processor.
+
+**It reimplements nothing.** It runs the real `Player` against a synthetic clock, with an engine
+that writes down what it was asked to send instead of sending it. So the compiled sequence is by
+construction exactly what the browser would have played — including every correction the player
+has ever had — and it cannot drift, because there is nothing to drift from.
+
+Compiling happens on a background thread with latest-request-wins, and the finished `Sequence` is
+collected by the processor's timer, so a chart edit costs a frame or two and never a millisecond
+of the audio thread. The request is also the instance's saved state, so reopening a session
+starts playing without the editor ever being opened.
+
+*Verified:* `jamin-compile` loads the built bundle into JavaScriptCore exactly as the plugin
+does, compiles a chart, and asserts the result is sorted, in range, balanced (nothing left
+sounding) and the right length. `tests/compile.test.js` does the same from the JavaScript side —
+in JavaScriptCore, which is the engine the plugin embeds, so it is not a stand-in.
 
 **Phase 3 — several instances.** The `SongBus` wired to the page both ways; per-instance state in
 `getStateInformation`; a live edit on one track appearing on the others. *Exit:* four tracks,

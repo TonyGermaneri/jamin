@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "PluginPaths.h"
 
 #include <jamin/SongBus.h>
 
@@ -51,42 +52,6 @@ juce::var readJsonEvents (const juce::var& events, jamin::Sequence& into)
 }
 
 } // namespace
-
-juce::File JaminEditor::webRoot()
-{
-    // Set JAMIN_WEB_DIR to the repository's dist and the page can be rebuilt and
-    // reloaded without rebuilding or reinstalling the plugin.
-    const auto chosen = [&]
-    {
-        if (auto fromEnvironment = juce::SystemStats::getEnvironmentVariable ("JAMIN_WEB_DIR", {});
-            fromEnvironment.isNotEmpty())
-        {
-            const juce::File dir (fromEnvironment);
-            if (dir.getChildFile ("index.html").existsAsFile())
-                return dir;
-
-            // Naming a directory that has no page in it is a typo, not a
-            // preference, and falling through to the bundle in silence is how
-            // you spend an afternoon editing a copy nothing is reading. Once
-            // per process: this is reached for every file the page asks for.
-            static bool warned = false;
-            if (! std::exchange (warned, true))
-                juce::Logger::writeToLog ("jamin: JAMIN_WEB_DIR has no index.html: " + fromEnvironment);
-        }
-
-        // Inside the bundle: .../Contents/MacOS/<binary> -> .../Contents/Resources/web
-        const auto binary = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-        return binary.getParentDirectory().getSiblingFile ("Resources").getChildFile ("web");
-    }();
-
-    // Said once per process. A blank editor is almost always a page that is not
-    // where the plugin looked, and this is the one line that answers it.
-    static bool announced = false;
-    if (! std::exchange (announced, true))
-        juce::Logger::writeToLog ("jamin: serving the page from " + chosen.getFullPathName());
-
-    return chosen;
-}
 
 JaminEditor::JaminEditor (JaminProcessor& p)
     : juce::AudioProcessorEditor (&p),
@@ -164,11 +129,18 @@ JaminEditor::JaminEditor (JaminProcessor& p)
 
                            complete (juce::var (url.launchInDefaultBrowser()));
                        })
-                   .withNativeFunction ("jaminSaveState",
+                   .withNativeFunction ("jaminCompile",
                        [this] (const juce::Array<juce::var>& args, auto complete)
                        {
-                           if (! args.isEmpty())
-                               plugin.instanceState = args[0].toString();
+                           // Everything this instance needs to make its own
+                           // noise, in one payload: the chart, the settings, and
+                           // the phrases already resolved. It is the saved state
+                           // as well as the compile request, so a reopened
+                           // session plays without the editor being opened.
+                           if (args.isEmpty())
+                               return complete (juce::var (false));
+
+                           plugin.requestCompile (args[0].toString());
                            complete (juce::var (true));
                        }))
 {
@@ -188,7 +160,7 @@ void JaminEditor::resized() { browser.setBounds (getLocalBounds()); }
 
 std::optional<juce::WebBrowserComponent::Resource> JaminEditor::provide (const juce::String& path)
 {
-    const auto root = webRoot();
+    const auto root = jamin::webRoot();
     auto relative = path.startsWith ("/") ? path.substring (1) : path;
 
     if (relative.isEmpty())
@@ -228,6 +200,20 @@ void JaminEditor::timerCallback()
             object->setProperty ("generation", (juce::int64) song.generation);
             browser.emitEventIfBrowserIsVisible ("jaminSong", juce::var (object));
         }
+    }
+
+    // Say what the last compile produced, once per change. The page shows it in
+    // the host readout: "0 events" with a chart on screen is a different problem
+    // from "no reports received", and they are hard to tell apart otherwise.
+    if (const auto events = plugin.compiledEvents.load (std::memory_order_relaxed);
+        events != lastCompiledEvents)
+    {
+        lastCompiledEvents = events;
+        auto* report = new juce::DynamicObject();
+        report->setProperty ("events", events);
+        report->setProperty ("chords", plugin.compiledChords.load (std::memory_order_relaxed));
+        report->setProperty ("error", plugin.compileError);
+        browser.emitEventIfBrowserIsVisible ("jaminCompiled", juce::var (report));
     }
 
     const auto& transport = plugin.transport();
