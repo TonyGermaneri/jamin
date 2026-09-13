@@ -285,6 +285,41 @@
       state.settings.accompany.perChordPhrases = false
       await settle(200)
 
+      /* ---------- a split bar must not double-time the phrase ---------- */
+      store.state.phrases = [{
+        name: 'pattern', rootPc: 0, sourcePcs: [0, 3, 7, 10], sourceChord: 'Cm7', lengthPulses: 96,
+        notes: [[0, 60], [24, 63], [48, 67], [72, 70]].map(([at, note]) => ({ at, note, velocity: 90, duration: 12 })),
+      }]
+      store.setText('| Fm7 Gm7 |')
+      await settle(250)
+      store.bindPhrase('pattern')
+      await settle(250)
+
+      const tapeNotes = []
+      const tape = { noteOn: (o, c, note) => { tapeNotes.push(note); return true }, noteOff: () => true }
+      const { Player: SplitPlayer } = await import('../../src/core/player.js')
+      const { parseScore: parseSplit } = await import('../../src/core/score.js')
+      const rig = new SplitPlayer(tape, JSON.parse(JSON.stringify(state.settings)))
+      rig.settings.midi.chordOutputId = 'x'
+      rig.settings.chords.bassNote = false
+      rig.getPhrase = (n) => (n === 'pattern' ? state.phrases[0] : null)
+      rig.setScore(parseSplit('| Fm7 Gm7 |', { beatsPerBar: 4, songPhrase: 'pattern' }))
+      const fired = []
+      for (let p = 1; p <= 95; p++) { const before = tapeNotes.length; rig.tick(p); if (tapeNotes.length > before) fired.push(p) }
+
+      is('four notes across the bar, not eight', tapeNotes.length, 4)
+      // About a beat apart. The first lands on tick 1 rather than 0 because the
+      // loop starts there; what matters is that it is a beat and not half of one.
+      ok('spaced a beat apart, not half a beat',
+        fired.every((at, i) => i === 0 || Math.abs(at - fired[i - 1] - 24) <= 1), fired.join(','))
+      const degreeOver = (note, root) => ((note % 12) - root + 12) % 12
+      is('the first half is harmonised as Fm7', tapeNotes.slice(0, 2).map((n) => degreeOver(n, 5)), [0, 3])
+      is('the second half as Gm7, continuing the pattern', tapeNotes.slice(2).map((n) => degreeOver(n, 7)), [7, 10])
+
+      store.bindPhrase(null)
+      store.state.phrases = []
+      await settle(200)
+
       /* ---------- bar lines: the conventional reading ---------- */
       store.setText('| Dm7 G7 | Cmaj7 | % |')
       await settle(300)

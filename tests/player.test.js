@@ -101,17 +101,56 @@ check('phrase replaces the block chord', played.length, 6)
 check('first chord plays the phrase as recorded', played.slice(0, 3), [60, 64, 67])
 check('second chord is the phrase over F', played.slice(3).map(n => n % 12).sort((a, b) => a - b), [0, 5, 9])
 
-// --- fit modes ---
+// --- a split bar must not double-time the phrase ---
+// A one-bar pattern under `| Fm7 Gm7 |`: each chord gets half a bar. The rhythm
+// is the rhythm; only the harmony changes.
+const pattern = {
+  name: 'pattern', rootPc: 0, sourcePcs: [0, 3, 7, 10], sourceChord: 'Cm7', lengthPulses: 96,
+  notes: [[0, 60], [24, 63], [48, 67], [72, 70]].map(([at, note]) => ({ at, note, velocity: 90, duration: 12 })),
+}
+const splitBar = parseScore('| Fm7 Gm7 |', { beatsPerBar: 4, songPhrase: 'pattern' })
+settings = makeSettings()
+const queueFor = (event) => buildPhraseQueue(pattern, event.chord, event, settings).queue.filter(q => q.on)
+
+let first = queueFor(splitBar.events[0])
+let second = queueFor(splitBar.events[1])
+check('half a bar gets half the pattern', [first.length, second.length], [2, 2])
+check('at the rhythm it was played', first.map(q => q.at), [0, 24])
+check('and so does the second half', second.map(q => q.at), [0, 24])
+check('the gap is never halved', first[1].at - first[0].at, 24)
+
+// The second chord gets the *second* half of the pattern, not the first again.
+const degreesOf = (list, root) => list.map(q => ((q.note % 12) - root + 12) % 12)
+check('first chord plays the first half', degreesOf(first, 5), [0, 3])
+check('second chord plays the second half', degreesOf(second, 7), [7, 10])
+
+// A chord longer than the phrase gets it more than once, still at its own speed.
+const twoBar = parseScore('| Cm7 | % |', { beatsPerBar: 4, songPhrase: 'pattern' })
+const long = queueFor(twoBar.events[0])
+check('two bars, pattern twice', long.map(q => q.at), [0, 24, 48, 72, 96, 120, 144, 168])
+
+// Restart begins the pattern again on every chord and cuts it short.
+settings.accompany.fit = 'restart'
+check('restart: second chord starts over', degreesOf(queueFor(splitBar.events[1]), 7), [0, 3])
+check('restart: still at the right speed', queueFor(splitBar.events[1]).map(q => q.at), [0, 24])
+
+// Stretch is still available for anyone who wants it, and is still a tempo change.
+settings.accompany.fit = 'stretch'
+check('stretch: everything crammed in', queueFor(splitBar.events[0]).map(q => q.at), [0, 12, 24, 36])
+settings.accompany.fit = 'follow'
+
+// --- fit modes over a two-bar chord ---
 const event = { startPulse: 0, endPulse: 192, bars: 2, chord: parseChord('C') }
 settings.accompany.fit = 'stretch'
 let queue = buildPhraseQueue(phrase, event.chord, event, settings).queue
 check('stretched to 2 bars', queue.filter(q => q.on).map(q => q.at), [0, 48, 96])
-settings.accompany.fit = 'repeat'
+settings.accompany.fit = 'follow'
 queue = buildPhraseQueue(phrase, event.chord, event, settings).queue
-check('repeated twice', queue.filter(q => q.on).map(q => q.at), [0, 24, 48, 96, 120, 144])
-settings.accompany.fit = 'truncate'
+check('followed, so it simply repeats', queue.filter(q => q.on).map(q => q.at), [0, 24, 48, 96, 120, 144])
+settings.accompany.fit = 'restart'
 queue = buildPhraseQueue(phrase, event.chord, event, settings).queue
-check('truncated', queue.filter(q => q.on).map(q => q.at), [0, 24, 48])
+check('restart fills the same way from zero', queue.filter(q => q.on).map(q => q.at), [0, 24, 48, 96, 120, 144])
+settings.accompany.fit = 'follow'
 
 // --- stop releases everything ---
 engine = new FakeEngine(); settings = makeSettings(); player = new Player(engine, settings)

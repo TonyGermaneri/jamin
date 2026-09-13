@@ -357,11 +357,13 @@ async function retryMidi() {
                 <v-select
                   v-model="state.settings.accompany.fit"
                   :items="[
-                    { title: 'Stretch to the chord', value: 'stretch' },
-                    { title: 'Repeat to fill', value: 'repeat' },
-                    { title: 'Play once and stop', value: 'truncate' },
+                    { title: 'Keep the rhythm, follow the chart', value: 'follow' },
+                    { title: 'Keep the rhythm, restart each chord', value: 'restart' },
+                    { title: 'Stretch to fit the chord', value: 'stretch' },
                   ]"
-                  label="When lengths differ"
+                  label="When the phrase and the chord are different lengths"
+                  hint="Stretching changes the tempo of the phrase: a bar of phrase in half a bar of chord plays twice as fast."
+                  persistent-hint
                 />
               </v-col>
               <v-col cols="12" md="4">

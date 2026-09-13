@@ -70,7 +70,10 @@ export function defaultSettings() {
     accompany: {
       enabled: true,
       mode: 'replace', // replace | layer
-      fit: 'stretch', // stretch | repeat | truncate
+      // follow: natural rhythm, pattern runs with the chart, chords only change
+      // the harmony. restart: natural rhythm, pattern begins again each chord.
+      // stretch: squeezed to fit the chord exactly, which changes the tempo.
+      fit: 'follow',
       keepRegister: true,
       snapNonChordTones: false,
       keepBass: true,

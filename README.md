@@ -185,6 +185,17 @@ Getting it over a chord happens in that order, and the order matters:
    in the previous chord, so a figure repeating through a progression walks
    rather than leaps.
 
+The phrase's *rhythm* is never touched. It runs at the rate it was played and
+keeps time with the chart, and a chord simply decides the harmony for the stretch
+of time it occupies. Under `| Fm7 Gm7 |` a one-bar pattern does not get rushed
+through twice; the first half of it is heard as F minor and the second half as G
+minor. A chord longer than the phrase hears the phrase more than once, still at
+its own speed.
+
+There are two other settings for this if you want them -- restarting the pattern
+on every chord, or stretching it to fill the chord exactly. Stretching is a tempo
+change by definition, which is why it is not the default.
+
 Doing step 2 before step 1 -- which is what "minimal movement" means if you
 forget about the root -- silently rotates the degrees. From Fm7 to Dm7 the
 cheapest mapping leaves F where it is, and a lick that outlined the root comes

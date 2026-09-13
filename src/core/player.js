@@ -14,6 +14,8 @@ import { eventAtPulse, sameChord, wrapPulse } from './score.js'
 import { realizeChord } from './voicing.js'
 import { realizePhrase } from './voiceLeading.js'
 
+const mod = (n, m) => ((n % m) + m) % m
+
 export class Player {
   constructor(engine, settings) {
     this.engine = engine
@@ -311,24 +313,43 @@ export function buildPhraseQueue(phrase, chord, event, settings, anchor = null) 
     }
   )
 
-  const passes = []
-  if (accompany.fit === 'repeat' && source > 0) {
-    for (let start = 0; start < slot; start += source) passes.push({ offset: start, scale: 1 })
-  } else if (accompany.fit === 'truncate') {
-    passes.push({ offset: 0, scale: 1 })
-  } else {
-    passes.push({ offset: 0, scale: source > 0 ? slot / source : 1 })
+  const queue = []
+  const add = (at, index, length) => {
+    const stop = Math.min(at + Math.max(1, length), slot - 1)
+    queue.push({ at, on: true, note: mapped[index], velocity: phrase.notes[index].velocity })
+    queue.push({ at: stop, on: false, note: mapped[index], velocity: 0 })
   }
 
-  const queue = []
-  for (const pass of passes) {
+  if (accompany.fit === 'stretch') {
+    // Squeeze or spread the phrase to fill the chord exactly. Musically this is
+    // a tempo change -- a bar of phrase in half a bar of chord plays twice as
+    // fast -- which is why it is no longer the default.
+    const scale = source > 0 ? slot / source : 1
     phrase.notes.forEach((played, index) => {
-      const at = pass.offset + played.at * pass.scale
-      const end = at + Math.max(1, played.duration * pass.scale)
+      const at = played.at * scale
       if (at >= slot) return
-      queue.push({ at, on: true, note: mapped[index], velocity: played.velocity })
-      queue.push({ at: Math.min(end, slot - 1), on: false, note: mapped[index], velocity: 0 })
+      add(at, index, played.duration * scale)
     })
+  } else {
+    /*
+     * Natural rate: the rhythm is whatever was played, and the chord decides
+     * only the harmony. `follow` keeps the pattern running with the chart, so a
+     * chord lasting half a bar gets the half of the pattern that belongs to
+     * that stretch of time rather than the whole thing rushed through it.
+     * `restart` begins the pattern again on every chord and cuts it short.
+     */
+    const offset = accompany.fit === 'restart' || source <= 0 ? 0 : mod(event.startPulse, source)
+    const step = source > 0 ? source : slot
+
+    for (let pass = 0, base = -offset; base < slot && pass < 64; pass++, base += step) {
+      phrase.notes.forEach((played, index) => {
+        const at = base + played.at
+        // Only notes that begin inside this chord: one that began under the
+        // chord before was already played there, and released when it changed.
+        if (at < 0 || at >= slot) return
+        add(at, index, played.duration)
+      })
+    }
   }
 
   // Note-offs sort before note-ons at the same instant so a repeated note
