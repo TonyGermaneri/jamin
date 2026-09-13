@@ -25,7 +25,8 @@ export const DEFAULT_VOICING = {
  */
 export function realizeChord(chord, opts = {}) {
   const config = { ...DEFAULT_VOICING, ...opts }
-  if (!chord || !chord.ok) return { notes: [], bass: null }
+  // A no-chord bar is valid and takes up time; it just has nothing to play.
+  if (!chord || !chord.ok || !chord.intervals.length) return { notes: [], bass: null }
 
   const base = (config.octave + 1) * 12 + chord.rootPc
   let intervals = chord.intervals.slice()

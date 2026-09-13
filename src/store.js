@@ -28,6 +28,7 @@ import {
   exportProgressions,
 } from './core/progressions.js'
 import { themeById } from './core/themes.js'
+import { loadLicks, loadedLicks, licksForChord, searchLicks } from './core/licks.js'
 import { loadChordDictionary, nameForSet } from './core/chordDictionary.js'
 import { describeChord } from './core/chordParser.js'
 
@@ -39,6 +40,8 @@ export const state = reactive({
   settings: loadSettings(),
   phrases: [],
   progressions: [],
+  licks: [],
+  licksLoading: false,
   pendingCapture: null,
   midi: { state: 'idle', error: null, inputs: [], outputs: [] },
   status: {
@@ -62,6 +65,7 @@ export const state = reactive({
     progressions: false,
     settingsTab: 'midi',
     phrasesTab: 'captured',
+    licksForCurrentChord: true,
     progressionsTab: 'library',
     armed: false,
     toast: null,
@@ -240,6 +244,7 @@ export function reparse() {
     },
   })
   player.setScore(state.score)
+  if (!engine.running) state.status.eventIndex = -1
 }
 
 function refreshChordName() {
@@ -386,16 +391,88 @@ export function unbindPhrase(tokenIndex) {
   if (next !== null) setText(next)
 }
 
+/**
+ * The chord "now" means.
+ *
+ * While the DAW is running that is the one you can hear. Stopped, it is the one
+ * under the cursor -- which is also the only answer that stays right when you
+ * edit the chart, since the playing event index goes stale the moment the text
+ * changes underneath it.
+ */
 function currentTokenIndex() {
-  const event = state.score.events[state.status.eventIndex]
-  if (event && event.tokens.length) return event.tokens[0]
-  const first = state.score.tokens.findIndex((token) => token.type === 'chord')
+  if (engine.running) {
+    const event = state.score.events[state.status.eventIndex]
+    if (event && event.tokens.length) return event.tokens[0]
+  }
+
+  const caret = state.status.caret
+  let containing = -1
+  let preceding = -1
+  let first = -1
+
+  state.score.tokens.forEach((token, index) => {
+    if (token.type !== 'chord' || !token.chord || !token.chord.ok) return
+    if (first < 0) first = index
+    if (token.start <= caret && caret <= token.end) containing = index
+    if (token.start <= caret) preceding = index
+  })
+
+  if (containing >= 0) return containing
+  if (preceding >= 0) return preceding
   return first >= 0 ? first : null
 }
 
 export function currentToken() {
   const index = currentTokenIndex()
   return index === null ? null : state.score.tokens[index]
+}
+
+/* ------------------------------------------------------------------ *
+ * Lick catalogue
+ * ------------------------------------------------------------------ */
+
+export async function ensureLicks() {
+  if (state.licks.length || state.licksLoading) return state.licks
+  state.licksLoading = true
+  const licks = await loadLicks()
+  state.licks = licks
+  state.licksLoading = false
+  return licks
+}
+
+/** The chord a lick would be adopted onto: the one playing, else the first. */
+export function targetChord() {
+  const token = currentToken()
+  return token && token.chord && token.chord.ok && !token.chord.silent ? token.chord : null
+}
+
+export function visibleLicks(query) {
+  const all = loadedLicks()
+  const chord = targetChord()
+  const pool = state.ui.licksForCurrentChord && chord ? licksForChord(all, chord) : all
+  return searchLicks(pool, query)
+}
+
+/**
+ * Copy a lick into the phrase book. It becomes an ordinary phrase -- editable,
+ * bindable, indistinguishable from one you played.
+ */
+export function adoptLick(lick, bind = false) {
+  const phrase = {
+    name: uniqueName(state.phrases, `${lick.sourceChord}-${lick.name}`),
+    notes: lick.notes.map((note) => ({ ...note })),
+    lengthPulses: lick.lengthPulses,
+    sourcePcs: lick.sourcePcs.slice(),
+    sourceChord: lick.sourceChord,
+    bars: lick.lengthPulses / 96,
+    origin: 'Impro-Visor',
+    createdAt: Date.now(),
+  }
+  state.phrases = [phrase, ...state.phrases]
+  savePhrases(state.phrases)
+  if (bind) bindPhrase(phrase.name)
+  else toast(`Kept ${phrase.name}`)
+  return phrase
 }
 
 /* ------------------------------------------------------------------ *

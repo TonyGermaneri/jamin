@@ -3,12 +3,29 @@
  * The phrase book: what you just played, and everything you kept.
  */
 import { computed, ref, watch } from 'vue'
-import { state, keepCapture, deletePhrase, renamePhrase, bindPhrase, unbindPhrase, armCapture, currentToken, toast } from '../store.js'
+import {
+  state,
+  keepCapture,
+  deletePhrase,
+  renamePhrase,
+  bindPhrase,
+  unbindPhrase,
+  armCapture,
+  currentToken,
+  toast,
+  ensureLicks,
+  visibleLicks,
+  adoptLick,
+  targetChord,
+} from '../store.js'
 import { summarize } from '../core/phrases.js'
+import { describeLick } from '../core/licks.js'
 
 const name = ref('')
 const renaming = ref(null)
 const renameTo = ref('')
+const lickSearch = ref('')
+const LICK_LIMIT = 40
 
 watch(
   () => state.pendingCapture,
@@ -18,6 +35,21 @@ watch(
 )
 
 const target = computed(() => currentToken())
+const chord = computed(() => targetChord())
+
+// Depend on the loaded catalogue explicitly so the list refreshes when it lands.
+const matchingLicks = computed(() => {
+  if (!state.licks.length) return []
+  return visibleLicks(lickSearch.value)
+})
+
+watch(
+  () => [state.ui.phrases, state.ui.phrasesTab],
+  ([open, tab]) => {
+    if (open && tab === 'licks') ensureLicks()
+  },
+  { immediate: true }
+)
 
 function keepAndBind() {
   const phrase = keepCapture(name.value)
@@ -77,6 +109,7 @@ function roll(phrase, width = 260, height = 54) {
       <v-tabs v-model="state.ui.phrasesTab">
         <v-tab value="captured">Just played</v-tab>
         <v-tab value="library">Library ({{ state.phrases.length }})</v-tab>
+        <v-tab value="licks">Licks</v-tab>
         <v-tab value="about">How it works</v-tab>
       </v-tabs>
 
@@ -190,6 +223,67 @@ function roll(phrase, width = 260, height = 54) {
             </div>
           </v-window-item>
 
+          <v-window-item value="licks">
+            <div class="text-caption text-medium-emphasis mb-3">
+              1,900 licks, cells and idioms from
+              <a href="https://github.com/Impro-Visor/Impro-Visor" target="_blank" rel="noreferrer">Impro-Visor</a>
+              (GPL-2.0-or-later). Each was written over one chord; keeping one copies it into
+              your library, where it behaves like anything you played yourself.
+            </div>
+
+            <v-row dense class="mb-1">
+              <v-col cols="12" md="7">
+                <v-text-field v-model="lickSearch" label="Search" prepend-inner-icon="mdi-magnify" clearable />
+              </v-col>
+              <v-col cols="12" md="5" class="d-flex align-center">
+                <v-switch
+                  v-model="state.ui.licksForCurrentChord"
+                  :disabled="!chord"
+                  :label="chord ? `Only ones that fit ${chord.text}` : 'No chord to match'"
+                />
+              </v-col>
+            </v-row>
+
+            <div v-if="state.licksLoading" class="text-center py-8 text-caption text-medium-emphasis">
+              Loading the catalogue…
+            </div>
+            <div v-else-if="!matchingLicks.length" class="text-center py-8 text-caption text-medium-emphasis">
+              Nothing matches. Try turning off the chord filter.
+            </div>
+
+            <v-list v-else density="compact" class="py-0">
+              <v-list-item v-for="lick in matchingLicks.slice(0, LICK_LIMIT)" :key="lick.id" class="px-0">
+                <template #prepend>
+                  <svg :width="120" :height="34" class="mr-3" style="background: rgba(255, 255, 255, 0.04); border-radius: 4px">
+                    <rect
+                      v-for="(note, index) in roll(lick, 120, 34)"
+                      :key="index"
+                      :x="note.x"
+                      :y="note.y"
+                      :width="note.w"
+                      :height="note.h"
+                      :opacity="note.o"
+                      fill="currentColor"
+                      rx="1"
+                    />
+                  </svg>
+                </template>
+                <v-list-item-title>{{ lick.name }}</v-list-item-title>
+                <v-list-item-subtitle class="text-caption">{{ describeLick(lick) }}</v-list-item-subtitle>
+                <template #append>
+                  <v-btn size="x-small" variant="tonal" class="mr-1" :disabled="!target" @click="adoptLick(lick, true)">
+                    Keep and bind
+                  </v-btn>
+                  <v-btn size="x-small" variant="text" @click="adoptLick(lick, false)">Keep</v-btn>
+                </template>
+              </v-list-item>
+            </v-list>
+
+            <div v-if="matchingLicks.length > LICK_LIMIT" class="text-caption text-medium-emphasis mt-2">
+              Showing {{ LICK_LIMIT }} of {{ matchingLicks.length }}. Narrow it with the search box.
+            </div>
+          </v-window-item>
+
           <v-window-item value="about">
             <div class="text-body-2" style="line-height: 1.7">
               <p class="mb-3">
@@ -209,6 +303,12 @@ function roll(phrase, width = 260, height = 54) {
                 A phrase applies from the chord it is bound to until the next chord wearing
                 a dot. The dot you see above a chord is literally the <code>.</code> in the
                 text — bindings live in the chart, so they survive copy, paste and reload.
+              </p>
+              <p class="mb-3">
+                The Licks tab is a catalogue of 1,900 phrases from Impro-Visor, each written
+                over a single chord. They are matched to the chord you are on by shape rather
+                than by root — a lick written over C7 belongs over any dominant seventh,
+                because it gets re-pointed on the way in.
               </p>
             </div>
           </v-window-item>

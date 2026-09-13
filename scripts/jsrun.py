@@ -22,6 +22,8 @@ def strip(path):
     src = re.sub(r"(?m)^export default ", "const __default = ", src)
     src = re.sub(r"(?m)^export\s+(?=(const|let|var|function|class|async))", "", src)
     src = re.sub(r"(?m)^export\s*\{[^}]*\}\s*;?\s*$", "", src)
+    # Not a module here, so import.meta would be a syntax error.
+    src = src.replace("import.meta.url", '"file:///"')
     return src
 
 def main():

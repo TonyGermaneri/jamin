@@ -162,6 +162,21 @@
       const settle = (ms) => new Promise((r) => setTimeout(r, ms))
       await settle(1800)
 
+      /*
+       * This machine has a live MIDI clock running on an IAC bus, and jamin will
+       * find it and start playing -- correct behaviour, and covered by the midi
+       * suite, but it makes every assertion here a race. Unbind it.
+       */
+      const boot = await import('../../src/store.js')
+      boot.state.settings.transport.autoDetectClock = false
+      boot.state.settings.midi.clockInputId = ''
+      boot.engine.autoDetectClock = false
+      boot.engine.clockInputId = ''
+      boot.engine.running = false
+      boot.player.transport('stop')
+      await settle(200)
+      ok('transport parked for the UI tests', boot.engine.running === false)
+
       /* ---------- is the chart actually there? ---------- */
       const root = document.querySelector('.jamin-root')
       ok('chart root mounted', !!root)
@@ -249,6 +264,68 @@
       ok('the phrase carries forward', store.state.score.events.map((e) => e.phraseId).join(',') === 'riff,riff,riff',
         store.state.score.events.map((e) => e.phraseId).join(','))
       ok('the textarea mirrors the rewrite', field.value === '.C{riff} F G', field.value)
+
+      /* ---------- notation: the new spellings, in the real chart ---------- */
+      store.setText('Fs7 As5 Csmin7 A/Cs Fsus4 N.C. C:maj7 C:maj(9) Ano3d')
+      await settle(300)
+      is('every spelling is readable', state.score.tokens.filter((t) => t.type === 'error').map((t) => t.text), [])
+      is('s is a sharp', state.score.tokens[0].chord.rootPc, 6)
+      is('As5 is A# with no third', state.score.tokens[1].chord.intervals, [0, 7])
+      is('sus is not a sharp', state.score.tokens[4].chord.rootPc, 5)
+      is('no chord is silent', state.score.tokens[5].chord.silent, true)
+      is('harte parses', state.score.tokens[6].chord.intervals, [0, 4, 7, 11])
+      is('harte parens add rather than extend', state.score.tokens[7].chord.intervals, [0, 4, 7, 14])
+      is('no3d is understood', state.score.tokens[8].chord.intervals, [0, 7])
+
+      /* ---------- the lick catalogue ---------- */
+      store.setText('.G7 Cmaj7')
+      await settle(250)
+      // "Current chord" is the one under the cursor while stopped.
+      field.focus()
+      field.setSelectionRange(2, 2)
+      await settle(150)
+      is('the cursor picks the chord', store.targetChord().text, 'G7')
+      state.ui.phrases = true
+      state.ui.phrasesTab = 'licks'
+      await settle(400)
+      await store.ensureLicks()
+      await settle(600)
+      ok('the catalogue loaded', state.licks.length > 1500, `${state.licks.length} licks`)
+      ok('every lick has notes', state.licks.every((l) => l.notes.length > 0))
+      ok('every lick has a source chord', state.licks.every((l) => l.sourcePcs.length > 0))
+      ok('notes are in a playable range', state.licks.every((l) => l.notes.every((n) => n.note >= 24 && n.note <= 108)))
+
+      const all = store.visibleLicks('')
+      state.ui.licksForCurrentChord = true
+      await settle(150)
+      const forG7 = store.visibleLicks('')
+      ok('the chord filter narrows the list', forG7.length > 0 && forG7.length < state.licks.length,
+        `${forG7.length} of ${state.licks.length} fit G7`)
+      ok('everything shown fits a dominant seventh',
+        forG7.every((l) => l.quality === '0,4,7,10'), forG7.slice(0, 3).map((l) => l.sourceChord).join(' '))
+
+      const beforeAdopt = state.phrases.length
+      store.adoptLick(forG7[0], true)
+      await settle(300)
+      ok('bound to the chord under the cursor', state.text.startsWith('.G7{'), state.text)
+      is('adopting adds it to the library', state.phrases.length, beforeAdopt + 1)
+      ok('and binds it to the chord', state.text.includes('{' + state.phrases[0].name + '}'), state.text)
+      is('the bound phrase resolves', store.player.getPhrase(state.phrases[0].name) !== null, true)
+      ok('it carries the chord it was written over', state.phrases[0].sourceChord === forG7[0].sourceChord,
+        state.phrases[0].sourceChord)
+      // And the cursor still decides after an edit -- the playing index would be stale.
+      store.setText('Dm7 G7 Cmaj7')
+      await settle(250)
+      field.setSelectionRange(5, 5)
+      await settle(200)
+      is('cursor on the second chord', store.targetChord().text, 'G7')
+      field.setSelectionRange(0, 0)
+      await settle(200)
+      is('cursor on the first chord', store.targetChord().text, 'Dm7')
+
+      state.ui.phrases = false
+      store.deletePhrase(state.phrases[0].name)
+      await settle(200)
 
       /* ---------- the progression library ---------- */
       store.setText('C F G')

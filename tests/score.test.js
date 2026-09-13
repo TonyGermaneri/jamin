@@ -84,4 +84,14 @@ check('label offsets are right', [s.tokens[0].start, s.tokens[0].end], [0, 9])
 check('chords after a label still parse', s.tokens[1].chord.ok, true)
 check('an unclosed bracket is just an unreadable chord', parseScore('[oops C').tokens[0].type, 'error')
 
+// a no-chord bar still takes up time
+s = parseScore('C N.C. F', { beatsPerBar: 4 })
+check('no-chord is an event', s.events.length, 3)
+check('no-chord takes a bar', s.events[1].endPulse - s.events[1].startPulse, 96)
+check('no-chord parses', s.events[1].chord.ok, true)
+check('no-chord is silent', s.events[1].chord.silent, true)
+check('no-chord is not an error token', s.tokens[1].type, 'chord')
+check('adjacent no-chords merge', parseScore('N.C. N.C. C', { beatsPerBar: 4 }).events.length, 2)
+
+
 console.log(failed === 0 ? 'score: all checks passed' : `score: ${failed} FAILED`)

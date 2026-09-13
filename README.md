@@ -46,8 +46,38 @@ Everything is separated by spaces, the way you'd write it on a napkin.
 | `C % F` | `%` repeats the previous bar |
 
 **Quality.** `A- Am Ami Amin Aminor` are all the same chord, and so are
-`A AM Ama Amaj Amajor`. Also `dim` `°` `o`, `ø` `halfdim`, `aug` `+`,
-`sus` `sus2` `sus4`, `alt`, `mmaj` `minmaj` `-maj`.
+`A AM Ama Amaj Amajor`. Also `dim` `°` `o`, `ø` `halfdim`, `aug` `+`, `alt`,
+`mmaj` `minmaj` `-maj`. Suspensions say what they mean: `sus` is sus4, `sus2` is
+sus2, `sus4` is sus4.
+
+**Accidentals.** Sharps may be written `#`, `♯` or `s`; flats `b` or `♭`. So
+`Fs7` is F♯7, `A/Cs` is A/C♯, and `As5` is A♯ with no third. The only place `s`
+could be misread is `sus`, so an `s` is a sharp *unless* `sus` starts there:
+`Fsus4` is F suspended, and F♯sus4 is `F#sus4` or `Fssus4`.
+
+**Harte notation** works too, for importing corpora: `C:maj7`, `C:min7`,
+`C:hdim7`, `C:minmaj7`, `C:1`, `C:sus4(b7)`, and degree basses like `C:maj/5`.
+Inside Harte form parentheses *add* a degree, so `C:maj(9)` is a triad plus a
+ninth rather than a major ninth — while a plain `C(9)` keeps meaning what it
+always did here.
+
+**Nothing at all.** `N`, `NC` or `N.C.` is a bar with no chord in it. It still
+takes up its time.
+
+### The three places this notation could be ambiguous
+
+Each is decided, and each has a test pinning it down.
+
+- An accidental always belongs to the root, so `Bb5` is a B-flat power chord.
+  Write `B(b5)` for B with a flattened fifth.
+- `s` is a sharp unless `sus` starts there, so `Fsus4` is never F♯ followed by
+  nonsense. Nothing in any corpus examined spells a sharp suspension without the
+  guard being decidable.
+- Degree basses (`/5`, `/b7`) are read only in Harte form, because outside it
+  `C6/9` is the six-nine chord and not C6 over a ninth.
+
+One wart remains: `Cmi` is C minor, not C major in first inversion. Write `C-i`
+or `Cmini` for the inversion.
 
 **Numbers.** `C5` is the triad without the 3rd; `C3` is the triad without the
 5th. Anything above 5 stacks diatonically: `C7 C9 C11 C13`. Colour tones work

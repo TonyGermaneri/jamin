@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "serve": "python3 scripts/serve.py",
     "chords": "python3 scripts/build_chord_sets.py",
+    "licks": "python3 scripts/build_licks.py",
     "test": "python3 scripts/test.py",
     "test:browser": "python3 scripts/browser_test.py tests/browser/modules.html tests/browser/app.html tests/browser/midi.html"
   },

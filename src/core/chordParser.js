@@ -95,6 +95,8 @@ const TOKENS = [
   ...expand(['6'], (s) => { s.sixth = true }),
   // Bare 5 and 3 are "triad without the degree that isn't written".
   ...expand(['5'], (s) => { s.omit.add(3) }),
+  // Harte's `1` is the root on its own.
+  ...expand(['1'], (s) => { s.omit.add(3); s.omit.add(5) }),
   ...expand(['3'], (s) => { s.omit.add(5) }),
   ...expand(['4'], (s) => { s.sus = 5 }),
   ...expand(['2'], (s) => { s.sus = 2 }),
@@ -123,21 +125,93 @@ function seventhFor(s) {
 
 /**
  * Split a raw chord word into its root and everything after it.
- * Accidentals glued to the letter always belong to the root, so `Bb5` is a
- * B-flat power chord.  Write `B(b5)` when you mean B with a flattened fifth.
+ *
+ * Sharps may be written `#`, `♯` or `s`; flats `b` or `♭`.  Accidentals glued to
+ * the letter always belong to the root, so `Bb5` is a B-flat power chord -- write
+ * `B(b5)` when you mean B with a flattened fifth.
+ *
+ * The one place `s` could be misread is `sus`: `Fsus4` is F suspended, not F#
+ * followed by nonsense.  So an `s` counts as a sharp unless `sus` starts there.
+ * `F#sus4` is spelled `Fssus4` (or just `F#sus4`), which stays unambiguous
+ * because the first `s` is not followed by `us`.
  */
 function readRoot(text) {
-  const m = /^([A-Ga-g])((?:#|♯|b|♭)*)/.exec(text)
-  if (!m) return null
-  let pc = LETTER_PC[m[1].toLowerCase()]
-  for (const ch of m[2]) pc += SHARP.test(ch) ? 1 : FLAT.test(ch) ? -1 : 0
-  const accidental = m[2].replace(/♯/g, '#').replace(/♭/g, 'b')
+  const first = /^[A-Ga-g]/.exec(text)
+  if (!first) return null
+
+  let pc = LETTER_PC[text[0].toLowerCase()]
+  let accidental = ''
+  let i = 1
+  let flats = 0
+
+  while (i < text.length) {
+    const ch = text[i]
+    if (ch === '#' || ch === '♯') {
+      pc += 1
+      accidental += '#'
+      i += 1
+    } else if (ch === 'b' || ch === '♭') {
+      pc -= 1
+      accidental += 'b'
+      flats += 1
+      i += 1
+    } else if ((ch === 's' || ch === 'S') && !/^sus/i.test(text.slice(i))) {
+      pc += 1
+      accidental += '#'
+      i += 1
+    } else {
+      break
+    }
+  }
+
   return {
     pc: ((pc % 12) + 12) % 12,
-    name: m[1].toUpperCase() + accidental,
-    length: m[0].length,
-    prefersFlat: FLAT.test(m[2]),
+    name: text[0].toUpperCase() + accidental,
+    length: i,
+    prefersFlat: flats > 0,
   }
+}
+
+/** `N`, `NC`, `N.C.` -- a bar with no chord in it. */
+const NO_CHORD = /^(n|nc|n\.c\.|no ?chord|silence|rest)$/i
+
+/**
+ * Harte writes the bass as a scale degree rather than a note name: `C:maj/5` is
+ * C major over G.  Only read that way for chords written in Harte form, because
+ * outside it `C6/9` is the six-nine chord and not C6 over a ninth.
+ */
+const DEGREE_SEMITONES = { 1: 0, 2: 2, 3: 4, 4: 5, 5: 7, 6: 9, 7: 11, 9: 14, 11: 17, 13: 21 }
+
+function readDegree(text) {
+  const m = /^([#b]?)(\d{1,2})$/.exec(text)
+  if (!m) return null
+  const base = DEGREE_SEMITONES[Number(m[2])]
+  if (base === undefined) return null
+  return base + (m[1] === '#' ? 1 : m[1] === 'b' ? -1 : 0)
+}
+
+/**
+ * Harte writes added and omitted degrees in parentheses: `C:maj(9)` is a major
+ * triad plus a ninth, not a major ninth chord, and `C:maj(*5)` drops the fifth.
+ * Only applied when a `:` marked the word as Harte, so `C(9)` keeps meaning what
+ * it always did here.
+ */
+function expandHarteParens(suffix) {
+  return suffix.replace(/\(([^)]*)\)/g, (_, body) =>
+    body
+      .split(',')
+      .map((part) => harteDegree(part.trim()))
+      .join('')
+  )
+}
+
+function harteDegree(part) {
+  if (!part) return ''
+  if (part.startsWith('*')) return `no${part.slice(1).replace(/[#b]/g, '')}`
+  if (/^b7$/i.test(part)) return '7'
+  if (/^7$/.test(part)) return 'maj7'
+  if (/^[#b]/.test(part)) return part
+  return `add${part}`
 }
 
 /**
@@ -155,12 +229,23 @@ function readInversion(suffix) {
   return { suffix: head, inversion: m[1].length }
 }
 
-function readBass(suffix) {
+function readBass(suffix, rootPc, harte) {
   const idx = suffix.lastIndexOf('/')
   if (idx < 0) return { suffix, bass: null }
   const tail = suffix.slice(idx + 1)
-  if (!/^[A-Ga-g](?:#|♯|b|♭)*$/.test(tail)) return { suffix, bass: null }
-  return { suffix: suffix.slice(0, idx), bass: readRoot(tail) }
+
+  if (/^[A-Ga-g](?:#|♯|b|♭|s|S)*$/.test(tail)) {
+    const note = readRoot(tail)
+    if (note && note.length === tail.length) return { suffix: suffix.slice(0, idx), bass: note }
+  }
+
+  const degree = harte ? readDegree(tail) : null
+  if (degree !== null) {
+    const pc = (((rootPc + degree) % 12) + 12) % 12
+    return { suffix: suffix.slice(0, idx), bass: { pc, name: pcName(pc), length: tail.length, prefersFlat: false } }
+  }
+
+  return { suffix, bass: null }
 }
 
 function newState() {
@@ -193,11 +278,36 @@ export function parseChord(text, conventions = DEFAULT_CONVENTIONS) {
   const raw = String(text || '').trim()
   if (!raw) return { ok: false, text: raw, error: 'empty' }
 
+  // A bar with nothing in it still takes up time.
+  if (NO_CHORD.test(raw)) {
+    return {
+      ok: true,
+      silent: true,
+      text: raw,
+      rootPc: null,
+      rootName: 'N.C.',
+      prefersFlat: false,
+      quality: 'no chord',
+      intervals: [],
+      pcs: [],
+      absPcs: [],
+      inversion: 0,
+      bassPc: null,
+      bassName: null,
+      tokens: [],
+    }
+  }
+
   const root = readRoot(raw)
   if (!root) return { ok: false, text: raw, error: 'no root' }
 
-  let suffix = raw.slice(root.length).replace(/[()\s]/g, '')
-  const bassRead = readBass(suffix)
+  let suffix = raw.slice(root.length)
+  // Harte separates root from quality with a colon: `C:maj7`, `A:7`.
+  const harte = suffix.startsWith(':')
+  if (harte) suffix = expandHarteParens(suffix.slice(1))
+  suffix = suffix.replace(/[()\s]/g, '').replace(/no3d/gi, 'no3')
+
+  const bassRead = readBass(suffix, root.pc, harte)
   suffix = bassRead.suffix
   const invRead = readInversion(suffix)
   suffix = invRead.suffix
@@ -288,6 +398,7 @@ const INVERSION_LABEL = ['', '1st inv', '2nd inv', '3rd inv']
 /** Short description of what the parser decided a chord word means. */
 export function describeChord(chord, dictionaryName) {
   if (!chord || !chord.ok) return chord?.error ? `?  ${chord.error}` : '?'
+  if (chord.silent) return 'no chord'
   const parts = [chord.rootName]
   if (dictionaryName) parts.push(dictionaryName)
   else parts.push(chord.quality)

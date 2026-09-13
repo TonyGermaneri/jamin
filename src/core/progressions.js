@@ -41,7 +41,7 @@ export function transposeChart(text, semitones, opts = {}) {
 
   for (const token of score.tokens) {
     const chord = token.chord
-    if (!chord || !chord.ok) continue
+    if (!chord || !chord.ok || chord.silent) continue
 
     const body = token.body
     let rest = body.slice(chord.rootName.length)
@@ -86,7 +86,7 @@ export function usesFlats(text) {
   let flats = 0
   let sharps = 0
   for (const token of score.tokens) {
-    if (!token.chord || !token.chord.ok) continue
+    if (!token.chord || !token.chord.ok || token.chord.silent) continue
     if (token.chord.prefersFlat) flats++
     else if (/[#♯]/.test(token.chord.rootName)) sharps++
   }
@@ -97,7 +97,7 @@ export function usesFlats(text) {
 export function firstRoot(text) {
   const score = parseScore(text)
   for (const token of score.tokens) {
-    if (token.chord && token.chord.ok) return token.chord.rootPc
+    if (token.chord && token.chord.ok && !token.chord.silent) return token.chord.rootPc
   }
   return null
 }

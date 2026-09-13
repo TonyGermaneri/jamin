@@ -166,4 +166,16 @@ player.transport('stop')
 check('no phantom note-offs when nothing was sent', engine.log, [])
 
 
+// --- a no-chord bar releases the previous chord and plays nothing ---
+engine = new FakeEngine(); settings = makeSettings(); player = new Player(engine, settings)
+player.setScore(parseScore('C N.C. F', { beatsPerBar: 4 }))
+for (let p = 1; p <= 95; p++) player.tick(p)
+engine.log = []
+for (let p = 96; p <= 191; p++) player.tick(p)
+check('no-chord releases and sounds nothing', engine.log, [['off', 60, 0], ['off', 64, 0], ['off', 67, 0]])
+engine.log = []
+for (let p = 192; p <= 200; p++) player.tick(p)
+check('the chord after it plays normally', engine.log.filter(l => l[0] === 'on').map(l => l[1]), [65, 69, 72])
+
+
 console.log(failed === 0 ? 'player: all checks passed' : `player: ${failed} FAILED`)

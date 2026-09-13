@@ -23,6 +23,9 @@ SUITES = [
         "src/core/importers.js", "src/core/progressions.js",
     ], "tests/importers.test.js"),
     ([
+        "src/core/chordParser.js", "src/core/voiceLeading.js", "src/core/licks.js",
+    ], "tests/licks.test.js"),
+    ([
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
         "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js", "src/core/player.js",
     ], "tests/player.test.js"),
