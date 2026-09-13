@@ -43,4 +43,25 @@ check('an upgraded install keeps the rhythm', upgraded.accompany.fit, 'follow')
 check('and a fresh one does too', defaultSettings().accompany.fit, 'follow')
 check('a fresh install is already current', defaultSettings().version, SETTINGS_VERSION)
 
+/* ---------------- one bass setting instead of two ---------------- */
+// Chords had their own bass note and phrases had "keep the bass under a phrase".
+// The phrase book's one does both jobs, so the other two go -- carrying the old
+// answer across rather than silently turning off something that was on.
+const hadBass = migrateSettings({ version: 3, chords: { bassNote: true, bassOctave: 2 }, accompany: {} })
+check('the old chord bass turns the remaining one on', hadBass.accompany.bass, true)
+check('one octave down, as that one defaults', hadBass.accompany.bassOctaves, 1)
+check('and the old setting is gone', hadBass.chords.bassNote, undefined)
+check('along with its octave', hadBass.chords.bassOctave, undefined)
+
+const hadNoBass = migrateSettings({ version: 3, chords: { bassNote: false }, accompany: {} })
+check('off stays off', hadNoBass.accompany.bass, undefined)
+
+const alreadyChosen = migrateSettings({ version: 3, chords: { bassNote: true }, accompany: { bass: false } })
+check('a choice already made in the new place wins', alreadyChosen.accompany.bass, false)
+
+check('keepBass goes too', migrateSettings({ version: 3, accompany: { keepBass: true } }).accompany.keepBass, undefined)
+check('a fresh install has no chord bass setting', defaultSettings().chords.bassNote, undefined)
+check('and its bass is off', defaultSettings().accompany.bass, false)
+
+
 console.log(failed === 0 ? 'settings: all checks passed' : `settings: ${failed} FAILED`)

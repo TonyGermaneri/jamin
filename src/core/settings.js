@@ -16,8 +16,12 @@ export const STORAGE_KEY = 'jamin.settings.v1'
  *        fit was the default. Stretching is a tempo change: a bar of phrase in
  *        half a bar of chord plays twice as fast. Anyone upgrading still had
  *        `stretch` saved and would keep hearing that, having never chosen it.
+ *   4 -- there were two bass settings doing much the same thing. The one in the
+ *        phrase book won, since it holds a root under a phrase and under a plain
+ *        chord alike; `chords.bassNote` and `accompany.keepBass` are gone, and
+ *        anyone who had the chord one on gets the remaining one on.
  */
-export const SETTINGS_VERSION = 3
+export const SETTINGS_VERSION = 4
 export const TEXT_KEY = 'jamin.chart.v1'
 export const PHRASE_KEY = 'jamin.phrases.v1'
 export const SONG_PHRASE_KEY = 'jamin.songPhrase.v1'
@@ -51,8 +55,6 @@ export function defaultSettings() {
       rangeHigh: 88,
       maxVoices: 5,
       smartVoicing: true,
-      bassNote: true,
-      bassOctave: 2,
       mergeRepeats: true,
       omitThirdOnDominant11: true,
       omitElevenOnThirteen: true,
@@ -87,7 +89,6 @@ export function defaultSettings() {
       fit: 'follow',
       keepRegister: true,
       snapNonChordTones: false,
-      keepBass: true,
       monitor: true,
       // How fast a phrase plays over the chords: 1 is as it was played.
       speed: 1,
@@ -148,6 +149,20 @@ export function migrateSettings(stored) {
   if (version < 3) {
     // The catalogue stopped filtering by chord, so the switch that did it goes.
     delete next.accompany.matchChord
+  }
+
+  if (version < 4) {
+    // One bass setting instead of two. Carry the old answer over rather than
+    // silently turning something off that was on.
+    const chords = next.chords || {}
+    if (chords.bassNote && next.accompany.bass === undefined) {
+      next.accompany.bass = true
+      if (next.accompany.bassOctaves === undefined) next.accompany.bassOctaves = 1
+    }
+    next.chords = { ...chords }
+    delete next.chords.bassNote
+    delete next.chords.bassOctave
+    delete next.accompany.keepBass
   }
 
   next.version = SETTINGS_VERSION

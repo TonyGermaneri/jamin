@@ -49,7 +49,9 @@ check('clampOctave high', clampOctave(120, 36, 96), 96)
 let c = parseChord('C')
 let v = realizeChord(c, { octave: 4, smartVoicing: false })
 check('C triad notes', v.notes, [60, 64, 67])
-check('C bass', v.bass, 36)
+// Chords do not carry a bass note of their own any more: there is one bass
+// setting, in the phrase book, and it holds a root under everything.
+check('and no bass of its own', v.bass, undefined)
 
 v = realizeChord(parseChord('Dii'), { octave: 4, smartVoicing: false })
 check('D 2nd inversion', v.notes, [69, 74, 78])
@@ -58,7 +60,8 @@ v = realizeChord(parseChord('C7'), { octave: 4, smartVoicing: false })
 check('C7', v.notes, [60, 64, 67, 70])
 
 v = realizeChord(parseChord('C/E'), { octave: 4, smartVoicing: false })
-check('slash bass note', v.bass, 40)
+check('a slash chord voices the same', v.notes, [60, 64, 67])
+check('its bass is the drone\'s business', v.bass, undefined)
 
 // smart voicing should stay near the previous chord
 const prev = realizeChord(parseChord('C'), { octave: 4, smartVoicing: false }).notes

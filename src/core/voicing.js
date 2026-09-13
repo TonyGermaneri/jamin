@@ -13,20 +13,22 @@ export const DEFAULT_VOICING = {
   octave: 4,
   range: [36, 96],
   smartVoicing: true,
-  bassNote: true,
-  bassOctave: 2,
   maxVoices: 6,
 }
 
 /**
  * @param {object} chord parsed chord from chordParser
+ * A bass note is not this function's business: there is one bass setting, in
+ * the phrase book, and it holds a root under everything whether a phrase is
+ * playing or not.
+ *
  * @param {object} opts see DEFAULT_VOICING, plus `previousNotes`
- * @returns {{notes: number[], bass: number|null}}
+ * @returns {{notes: number[]}}
  */
 export function realizeChord(chord, opts = {}) {
   const config = { ...DEFAULT_VOICING, ...opts }
   // A no-chord bar is valid and takes up time; it just has nothing to play.
-  if (!chord || !chord.ok || !chord.intervals.length) return { notes: [], bass: null }
+  if (!chord || !chord.ok || !chord.intervals.length) return { notes: [] }
 
   const base = (config.octave + 1) * 12 + chord.rootPc
   let intervals = chord.intervals.slice()
@@ -46,16 +48,7 @@ export function realizeChord(chord, opts = {}) {
 
   notes = fitToRange(notes, config.range)
 
-  let bass = null
-  if (config.bassNote) {
-    const bassPc = chord.bassPc ?? chord.rootPc
-    bass = (config.bassOctave + 1) * 12 + bassPc
-    const lowest = Math.min(...notes)
-    while (bass >= lowest && bass >= 12) bass -= 12
-    while (bass < 0) bass += 12
-  }
-
-  return { notes: [...new Set(notes)].sort((a, b) => a - b), bass }
+  return { notes: [...new Set(notes)].sort((a, b) => a - b) }
 }
 
 /** Move the lowest `count` notes up an octave each. */

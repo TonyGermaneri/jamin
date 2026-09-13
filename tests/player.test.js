@@ -340,6 +340,7 @@ player.getPhrase = () => null
 player.setScore(parseScore('| Cm7 | F7 |', { beatsPerBar: 4 }))
 player.tick(1)
 check('off by default', engine.log.filter(l => l[0] === 'on').map(l => l[1]), [60, 63, 67, 70])
+check('and a plain chord has no bass under it', engine.log.length, 4)
 
 engine = new FakeEngine(); settings = makeSettings(); player = new Player(engine, settings)
 settings.accompany.bass = true
@@ -367,6 +368,24 @@ engine = new FakeEngine(); player = new Player(engine, settings)
 player.setScore(parseScore('| Cm7 |', { beatsPerBar: 4 }))
 player.tick(1)
 check('three octaves down', engine.log.filter(l => l[0] === 'on').map(l => l[1]).slice(-2), [24, 12])
+
+// A slash chord says what belongs in the bass, and the drone plays that.
+settings.accompany.bassOctaves = 1
+settings.accompany.doubleBass = false
+engine = new FakeEngine(); player = new Player(engine, settings)
+player.setScore(parseScore('| C/E |', { beatsPerBar: 4 }))
+player.tick(1)
+const slashed = engine.log.filter(l => l[0] === 'on').map(l => l[1])
+check('a slash chord puts its own note in the bass', slashed[slashed.length - 1] % 12, 4)
+check('and the chord above it is unchanged', slashed.slice(0, 3), [60, 64, 67])
+
+// It plays under a phrase too, not only under a plain chord.
+engine = new FakeEngine(); player = new Player(engine, settings)
+player.getPhrase = () => pattern
+player.setScore(parseScore('| Cm7 |', { beatsPerBar: 4, songPhrase: 'pattern' }))
+player.tick(1)
+check('the drone sounds under a phrase as well',
+  engine.log.filter(l => l[0] === 'on').map(l => l[1]).includes(48), true)
 
 
 console.log(failed === 0 ? 'player: all checks passed' : `player: ${failed} FAILED`)

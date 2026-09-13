@@ -31,7 +31,6 @@ export class Player {
 
     this.chordNotes = [] // last voicing, remembered for voice leading
     this.soundingNotes = [] // what is actually held down right now
-    this.chordBass = null
     this.droneNotes = [] // the held root under the accompaniment, if asked for
     this.activePhrase = null
     this.phraseQueue = []
@@ -151,8 +150,6 @@ export class Player {
       octave: chords.octave,
       range: [chords.rangeLow, chords.rangeHigh],
       smartVoicing: chords.smartVoicing,
-      bassNote: chords.bassNote,
-      bassOctave: chords.bassOctave,
       maxVoices: chords.maxVoices,
       previousNotes: this.chordNotes.length ? this.chordNotes : null,
     })
@@ -171,11 +168,6 @@ export class Player {
       }
     }
 
-    if (chords.bassNote && voicing.bass !== null && (playBlock || accompany.keepBass)) {
-      const sent = this.engine.noteOn(midi.bassOutputId || midi.chordOutputId, midi.bassChannel, voicing.bass, midi.velocity)
-      if (sent) this.chordBass = voicing.bass
-    }
-
     if (phrase) {
       const built = buildPhraseQueue(phrase, chord, event, this.settings, this.lastPhraseNotes)
       this.phraseQueue = built.queue
@@ -189,7 +181,7 @@ export class Player {
     this.startDrone(chord)
 
     if (this.onEventChange) {
-      this.onEventChange(event, { notes: voicing.notes, bass: voicing.bass, phrase: phrase ? phrase.name : null })
+      this.onEventChange(event, { notes: voicing.notes, phrase: phrase ? phrase.name : null })
     }
     if (this.onNotes) this.onNotes(playBlock ? voicing.notes : [])
   }
@@ -206,7 +198,9 @@ export class Player {
     const midi = this.settings.midi
     const outputId = midi.accompOutputId || midi.chordOutputId
     const octaves = Math.max(0, accompany.bassOctaves ?? 1)
-    const root = (accompany.octave ?? 4) * 12 + 12 + chord.rootPc - octaves * 12
+    // A slash chord says what belongs in the bass, so play that.
+    const pitch = chord.bassPc ?? chord.rootPc
+    const root = (accompany.octave ?? 4) * 12 + 12 + pitch - octaves * 12
 
     const wanted = [root]
     if (accompany.doubleBass) wanted.push(root - 12)
@@ -239,15 +233,11 @@ export class Player {
     const midi = this.settings.midi
     for (const note of this.soundingNotes) this.engine.noteOff(midi.chordOutputId, midi.chordChannel, note)
     this.soundingNotes = []
-    if (this.chordBass !== null) {
-      this.engine.noteOff(midi.bassOutputId || midi.chordOutputId, midi.bassChannel, this.chordBass)
-    }
     const accompOut = midi.accompOutputId || midi.chordOutputId
     for (const note of this.phraseSounding) this.engine.noteOff(accompOut, midi.accompChannel, note)
     this.phraseSounding.clear()
     for (const note of this.droneNotes) this.engine.noteOff(accompOut, midi.accompChannel, note)
     this.droneNotes = []
-    this.chordBass = null
     this.phraseQueue = []
     this.phraseCursor = 0
     if (this.onNotes) this.onNotes([])

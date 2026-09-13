@@ -361,6 +361,10 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
               <v-col cols="12">
                 <v-divider class="mb-3" />
                 <v-switch v-model="accompany.bass" label="Bass note — a held root under everything" />
+                <div class="text-caption text-medium-emphasis mb-2">
+                  Held for the whole chord, under a phrase or a plain chord alike, and a slash
+                  chord puts its own note in the bass.
+                </div>
               </v-col>
               <v-col cols="12" md="6">
                 <div class="text-caption mb-1">

@@ -679,6 +679,18 @@
       }
       is('speed starts at one', state.settings.accompany.speed, 1)
       is('bass is off to begin with', state.settings.accompany.bass, false)
+      // One bass setting, in one place.
+      is('chords no longer carry a bass note of their own', state.settings.chords.bassNote, undefined)
+      state.ui.settings = true
+      state.ui.settingsTab = 'chords'
+      await settle(500)
+      ok('and the Chords tab does not offer one',
+        !/root\/slash bass/i.test(document.querySelector('.jamin-settings .v-window-item--active').innerText))
+      state.ui.settings = false
+      await settle(300)
+      state.ui.phrases = true
+      state.ui.phrasesTab = 'playback'
+      await settle(400)
       is('and one octave down when turned on', state.settings.accompany.bassOctaves, 1)
       state.ui.phrases = false
       await settle(300)

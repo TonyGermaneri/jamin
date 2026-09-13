@@ -204,12 +204,7 @@ async function retryMidi() {
                 />
               </v-col>
               <v-col cols="12" md="6">
-                <div class="text-caption mb-1">Bass octave — {{ state.settings.chords.bassOctave }}</div>
-                <v-slider v-model="state.settings.chords.bassOctave" :min="0" :max="4" :step="1" />
-              </v-col>
-              <v-col cols="12" md="6">
                 <v-switch v-model="state.settings.chords.smartVoicing" label="Voice-lead between chords" />
-                <v-switch v-model="state.settings.chords.bassNote" label="Play a root/slash bass note" />
                 <v-switch v-model="state.settings.chords.mergeRepeats" label="A chord repeated is one long chord, not two attacks" />
               </v-col>
               <v-col cols="12" md="6">
@@ -340,7 +335,6 @@ async function retryMidi() {
                   persistent-hint
                 />
                 <v-switch v-model="state.settings.accompany.monitor" label="Hear your keyboard through the accompaniment output" />
-                <v-switch v-model="state.settings.accompany.keepBass" label="Keep the bass note under a phrase" />
               </v-col>
               <v-col cols="12" md="6">
                 <v-switch v-model="state.settings.accompany.keepRegister" label="Keep phrases in the register they were played" />
