@@ -38,6 +38,11 @@ SUITES = [
     ], "tests/licks.test.js"),
     ([
         "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",
+        "src/core/voiceLeading.js", "src/core/phrases.js", "src/core/vocParser.js",
+        "src/core/licks.js", "src/core/parts.js",
+    ], "tests/parts.test.js"),
+    ([
+        "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",
         "src/core/voiceLeading.js", "src/core/phrases.js",
     ], "tests/phrase-keys.test.js"),
     ([

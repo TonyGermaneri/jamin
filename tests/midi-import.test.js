@@ -127,4 +127,39 @@ check('harte labels kept', spans.map((s) => s.label), ['C:maj', 'D:min7'])
 check('no-chord spans dropped', spans.some((s) => s.label === 'N'), false)
 check('zero-length spans dropped', spans.some((s) => s.label === 'G:7'), false)
 
+/* ---------------- seconds and ticks, both ways ---------------- */
+const steady = [{ tick: 0, usPerQuarter: 500000 }]            // 120bpm
+const changing = [{ tick: 0, usPerQuarter: 500000 }, { tick: 960, usPerQuarter: 1000000 }]  // then 60bpm
+check('a beat is half a second at 120', tickToSeconds(480, 480, steady), 0.5)
+check('and back again', secondsToTick(0.5, 480, steady), 480)
+check('two beats in, tempo halves', tickToSeconds(960, 480, changing), 1)
+check('a beat at 60bpm is a second', tickToSeconds(1440, 480, changing), 2)
+check('inverse across a tempo change', Math.round(secondsToTick(2, 480, changing)), 1440)
+check('round trip at an awkward point', Math.round(secondsToTick(tickToSeconds(1234, 480, changing), 480, changing)), 1234)
+
+/* ---------------- annotated spans carry their own chord ---------------- */
+check('harte major', resolveSpanChord({ label: 'C:maj' }).pcs, [0, 4, 7])
+check('harte minor seventh', resolveSpanChord({ label: 'D:min7' }).pcs, [0, 2, 5, 9])
+check('harte sharp root', resolveSpanChord({ label: 'C#:maj' }).rootPc, 1)
+// Re-spelled in our notation, not passed through as Harte.
+check('names it readably', resolveSpanChord({ label: 'D:min7' }).text, 'Dm7')
+check('harte suffixes are normalised', resolveSpanChord({ label: 'C:sus4(b7)' }).text, 'C7sus4')
+check('and inversions dropped, since a phrase is rooted anyway', resolveSpanChord({ label: 'C:maj7/3' }).text, 'Cmaj7')
+check('an unknown shape keeps its own suffix', resolveSpanChord({ label: 'C:maj(9)' }).text.startsWith('C'), true)
+check('no chord resolves to nothing', resolveSpanChord({ label: 'N' }), null)
+check('nonsense resolves to nothing', resolveSpanChord({ label: 'zz:zz' }), null)
+check('a span with pcs already is left alone', resolveSpanChord({ rootPc: 2, pcs: [2, 5, 9], text: 'Dm' }).text, 'Dm')
+
+// Annotated spans beat inference: the label wins even where the notes are thin.
+const annotated = phrasesFromMidi(file, {
+  trackFilter: /piano/i,
+  chordSpans: [
+    { startPulse: 0, endPulse: 96, label: 'C:maj' },
+    { startPulse: 96, endPulse: 192, label: 'D:min7' },
+  ],
+})
+check('one phrase per annotated span', annotated.phrases.length, 2)
+check('and the labels were used', annotated.phrases.map((p) => p.sourceChord), ['C', 'Dm7'])
+
+
 console.log(failed === 0 ? 'midi-import: all checks passed' : `midi-import: ${failed} FAILED`)

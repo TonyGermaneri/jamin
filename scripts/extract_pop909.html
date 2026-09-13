@@ -1,0 +1,149 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><title>POP909 extraction</title></head>
+  <body>
+    <pre id="out">working…</pre>
+    <script type="module">
+      /*
+       * Cuts POP909 into two-handed phrases, using the application's own code so
+       * there is no second implementation to drift. Driven by
+       * scripts/extract_pop909.py, which serves the dataset alongside src/ and
+       * writes the result to src/data/pop909Phrases.json.
+       *
+       * POP909 is MIT licensed. https://github.com/music-x-lab/POP909-Dataset
+       */
+      import { phrasesFromMidi, parseChordAnnotations } from '/src/core/midiPhrases.js'
+      import { parseMidiFile, secondsToTick } from '/src/core/midiFile.js'
+      import { maxSimultaneous } from '/src/core/phrases.js'
+
+      const out = document.getElementById('out')
+      const say = (text) => { out.textContent = text }
+
+      const CONFIG = window.__config || {}
+      const SONGS = CONFIG.songs || []
+      const PER_QUALITY = CONFIG.perQuality || 160
+      const MIN_NOTES = 5
+      const MAX_NOTES = 44
+      const MIN_SPREAD = 14      // two hands, not one
+      const MIN_VOICES = 2
+      const MIN_PITCH_CLASSES = 3  // an octave tremolo is not a keyboard part
+
+      async function songPhrases(id) {
+        const midi = new Uint8Array(await (await fetch(`/pop909/${id}/${id}.mid`)).arrayBuffer())
+        const file = parseMidiFile(midi)
+        const toPulses = (seconds) => (secondsToTick(seconds, file.ppq, file.tempos) * 24) / file.ppq
+        const spans = parseChordAnnotations(
+          await (await fetch(`/pop909/${id}/chord_midi.txt`)).text(),
+          toPulses
+        )
+        if (!spans.length) return []
+        return phrasesFromMidi(midi, {
+          chordSpans: spans,
+          trackFilter: /piano/i,
+          minNotes: MIN_NOTES,
+          maxPhrases: 4000,
+        }).phrases.map((phrase) => ({ ...phrase, song: id }))
+      }
+
+      /** Is this actually a two-handed part worth keeping? */
+      function usable(phrase) {
+        const pitches = phrase.notes.map((n) => n.note)
+        if (phrase.notes.length < MIN_NOTES || phrase.notes.length > MAX_NOTES) return false
+        if (Math.max(...pitches) - Math.min(...pitches) < MIN_SPREAD) return false
+        if (maxSimultaneous(phrase.notes) < MIN_VOICES) return false
+        // A bass octave hammered back and forth spans an octave and has two
+        // voices, and is not what anyone means by a two-handed part.
+        if (new Set(pitches.map((p) => p % 12)).size < MIN_PITCH_CLASSES) return false
+        if (phrase.lengthPulses < 48 || phrase.lengthPulses > 384) return false
+        if (Math.min(...pitches) < 24 || Math.max(...pitches) > 104) return false
+        return true
+      }
+
+      /** Same notes at the same times is the same phrase, whatever song it is from. */
+      const signature = (phrase) =>
+        phrase.notes.map((n) => `${n.at}:${n.note}:${n.duration}`).join(',') + '|' + phrase.lengthPulses
+
+      const onsets = (phrase) => new Set(phrase.notes.map((n) => n.at)).size
+      const style = (phrase) => {
+        const count = onsets(phrase)
+        return count <= 2 ? 'pad' : count <= 6 ? 'comp' : 'busy'
+      }
+
+      const collected = new Map()   // quality -> phrases
+      const seen = new Set()
+      let scanned = 0
+
+      for (const id of SONGS) {
+        scanned++
+        if (scanned % 25 === 0) say(`scanning ${scanned}/${SONGS.length}…`)
+        let phrases = []
+        try {
+          phrases = await songPhrases(id)
+        } catch (error) {
+          continue
+        }
+        for (const phrase of phrases) {
+          if (!usable(phrase)) continue
+          const key = signature(phrase)
+          if (seen.has(key)) continue
+          seen.add(key)
+          const quality = phrase.sourcePcs.join(',')
+          if (!collected.has(quality)) collected.set(quality, [])
+          collected.get(quality).push(phrase)
+        }
+      }
+
+      // Keep a spread across chord qualities rather than a pile of major triads,
+      // and inside each quality prefer the rhythmically interesting ones.
+      const chosen = []
+      for (const [, phrases] of [...collected.entries()].sort((a, b) => b[1].length - a[1].length)) {
+        // Sorted by how typical the rhythm is rather than how busy: sampling a
+        // spread through this gives ordinary comping first and oddities later,
+        // instead of a page of tremolos.
+        phrases.sort((a, b) => Math.abs(onsets(a) - 6) - Math.abs(onsets(b) - 6) || a.notes.length - b.notes.length)
+        // Spread the picks through the sorted list rather than taking the top N,
+        // which would give a page of near-identical busiest bars.
+        const step = Math.max(1, Math.floor(phrases.length / PER_QUALITY))
+        for (let i = 0, taken = 0; i < phrases.length && taken < PER_QUALITY; i += step, taken++) {
+          chosen.push(phrases[i])
+        }
+      }
+
+      const counters = new Map()
+      const parts = chosen.map((phrase) => {
+        const label = `${phrase.sourceChord} ${style(phrase)}`
+        const n = (counters.get(label) || 0) + 1
+        counters.set(label, n)
+        return {
+          n: `${label} ${n}`,
+          k: 'part',
+          c: phrase.sourceChord,
+          d: phrase.lengthPulses,
+          s: phrase.song,
+          // A handful of notes come through at velocity 1, which is inaudible.
+          // Floor them rather than dropping the phrase around them.
+          v: phrase.notes.map((note) => [note.at, note.note, note.duration, Math.max(24, note.velocity)]),
+        }
+      })
+
+      window.__result = {
+        source: 'https://github.com/music-x-lab/POP909-Dataset',
+        license: 'MIT',
+        note:
+          'Two-handed piano phrases cut from POP909 at its own chord annotations by ' +
+          'scripts/extract_pop909.html, which runs jamin’s own MIDI and phrase code. ' +
+          'Copyright (c) 2020 Music X Lab.',
+        ppqn: 24,
+        parts,
+      }
+      window.__stats = {
+        songs: scanned,
+        unique: seen.size,
+        qualities: collected.size,
+        kept: parts.length,
+      }
+      say(JSON.stringify(window.__stats, null, 1))
+      window.__done = true
+    </script>
+  </body>
+</html>

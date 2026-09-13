@@ -15,7 +15,7 @@
  */
 
 import { parseMidiFile } from './midiFile.js'
-import { pcName } from './chordParser.js'
+import { pcName, parseChord } from './chordParser.js'
 import { normalizePhrase, maxSimultaneous } from './phrases.js'
 import { mod12 } from './voiceLeading.js'
 import { PPQN } from './score.js'
@@ -29,6 +29,7 @@ export const SHAPES = [
   { symbol: 'dim', pcs: [0, 3, 6] },
   { symbol: 'aug', pcs: [0, 4, 8] },
   { symbol: '7', pcs: [0, 4, 7, 10] },
+  { symbol: '7sus4', pcs: [0, 5, 7, 10] },
   { symbol: 'maj7', pcs: [0, 4, 7, 11] },
   { symbol: 'm7', pcs: [0, 3, 7, 10] },
   { symbol: 'm7b5', pcs: [0, 3, 6, 10] },
@@ -147,10 +148,18 @@ export function phrasesFromMidi(bytes, opts = {}) {
   const phrases = []
   const skipped = { tooFew: 0, noChord: 0 }
 
+  // Notes and spans are both in order, so walk them together rather than
+  // rescanning every note for every span -- that is quadratic, and a corpus has
+  // thousands of each.
+  let first = 0
+
   for (const span of spans) {
     if (phrases.length >= maxPhrases) break
+    while (first < notes.length && notes[first].at + notes[first].duration <= span.startPulse) first++
+
     const inside = []
-    for (const note of notes) {
+    for (let index = first; index < notes.length; index++) {
+      const note = notes[index]
       if (note.at + note.duration <= span.startPulse) continue
       if (note.at >= span.endPulse) break
       const at = Math.max(0, note.at - span.startPulse)
@@ -164,7 +173,7 @@ export function phrasesFromMidi(bytes, opts = {}) {
       continue
     }
 
-    const chord = span.text ? span : inferChord(inside)
+    const chord = resolveSpanChord(span) || inferChord(inside)
     if (!chord || chord.rootPc === null || chord.rootPc === undefined) {
       skipped.noChord++
       continue
@@ -193,6 +202,36 @@ export function phrasesFromMidi(bytes, opts = {}) {
       skipped,
     },
   }
+}
+
+/**
+ * A span that came with a label carries its own chord. Labels are Harte in every
+ * corpus I have looked at, which the chord parser reads already.
+ *
+ * The label is re-spelled in our own notation rather than passed through: Harte
+ * writes `sus4(b7)` and `maj7/3`, and a phrase is normalised to its chord's root
+ * anyway, so the inversion is noise. Names it the same way an inferred chord
+ * would be named, so the two sources read alike.
+ */
+export function resolveSpanChord(span) {
+  if (span.pcs && span.rootPc !== undefined && span.rootPc !== null) return span
+  if (!span.label) return null
+  const chord = parseChord(span.label)
+  if (!chord.ok || chord.silent || !chord.absPcs.length) return null
+  return {
+    rootPc: chord.rootPc,
+    text: pcName(chord.rootPc) + shapeSymbol(chord.pcs, span.label),
+    pcs: chord.absPcs,
+  }
+}
+
+/** The name we would give this set of degrees, or the label's own suffix. */
+function shapeSymbol(relativePcs, label) {
+  const wanted = [...new Set(relativePcs.map(mod12))].sort((a, b) => a - b).join(',')
+  for (const shape of SHAPES) {
+    if ([...new Set(shape.pcs.map(mod12))].sort((a, b) => a - b).join(',') === wanted) return shape.symbol
+  }
+  return String(label).replace(/^[A-Ga-g][#bs]*:?/, '').replace(/\/.*$/, '') || ''
 }
 
 function evenSpans(end, size) {

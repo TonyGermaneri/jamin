@@ -311,7 +311,31 @@
       await settle(400)
       await store.ensureLicks()
       await settle(600)
-      ok('the catalogue loaded', state.licks.length > 1500, `${state.licks.length} licks`)
+      ok('the catalogue loaded', state.licks.length > 1500, `${state.licks.length} entries`)
+      const partCount = state.licks.filter((l) => l.kind === 'part').length
+      const lineCount = state.licks.length - partCount
+      ok('two-handed parts are in there', partCount > 1500, `${partCount} parts`)
+      ok('alongside the single-line licks', lineCount > 1500, `${lineCount} licks`)
+      ok('every part really is two hands', state.licks.filter((l) => l.kind === 'part').every((l) => {
+        const pitches = l.notes.map((n) => n.note)
+        return l.voices >= 2 && Math.max(...pitches) - Math.min(...pitches) >= 14 &&
+          new Set(pitches.map((p) => p % 12)).size >= 3
+      }), true)
+      ok('parts carry velocity from the performance', state.licks.some((l) => l.kind === 'part' &&
+        new Set(l.notes.map((n) => n.velocity)).size > 1), true)
+      ok('and are stored rooted on C', state.licks.filter((l) => l.kind === 'part').every((l) => l.rootPc === 0), true)
+
+      // The texture filter separates them.
+      state.ui.licksForCurrentChord = false
+      state.ui.lickTexture = 'hands'
+      await settle(150)
+      ok('the texture filter shows only parts', store.visibleLicks('').every((l) => l.kind === 'part'), true)
+      state.ui.lickTexture = 'line'
+      await settle(150)
+      ok('and only licks the other way', store.visibleLicks('').every((l) => l.kind !== 'part'), true)
+      state.ui.lickTexture = 'any'
+      state.ui.licksForCurrentChord = true
+      await settle(150)
       const buildReport = state.lickReport
       ok('it was built in the page', !!buildReport && !buildReport.error, buildReport && buildReport.error)
       ok('from the shipped vocabulary', buildReport.source === 'Impro-Visor', buildReport.source)
@@ -382,8 +406,12 @@
         text: '(cell (notes c4 e8 g8) (name test) (chords C7))\n(lick (notes d4) (sequence C7 F7 |) (name skipped))',
       })
       await settle(200)
-      is('rebuilt from a vocabulary of our own', state.licks.length, 1)
-      is('and it parsed', state.licks[0].name, 'test')
+      // Rebuilding the vocabulary replaces the licks and leaves the parts alone:
+      // two sources, two lives.
+      const rebuiltLicks = state.licks.filter((l) => l.kind !== 'part')
+      is('rebuilt from a vocabulary of our own', rebuiltLicks.length, 1)
+      is('and it parsed', rebuiltLicks[0].name, 'test')
+      is('the parts are untouched', state.licks.filter((l) => l.kind === 'part').length, partCount)
       is('the multi-chord entry was left out', state.lickReport.skipped.multiChord, 1)
       is('the source is named', state.lickReport.source, 'your vocabulary')
 

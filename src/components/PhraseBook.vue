@@ -146,7 +146,7 @@ function roll(phrase, width = 260, height = 54) {
       <v-tabs v-model="state.ui.phrasesTab">
         <v-tab value="captured">Just played</v-tab>
         <v-tab value="library">Library ({{ state.phrases.length }})</v-tab>
-        <v-tab value="licks">Licks</v-tab>
+        <v-tab value="licks">Catalogue</v-tab>
         <v-tab value="about">How it works</v-tab>
       </v-tabs>
 
@@ -291,16 +291,19 @@ function roll(phrase, width = 260, height = 54) {
 
           <v-window-item value="licks">
             <div class="text-caption text-medium-emphasis mb-1">
-              Licks, cells and idioms from
+              Two-handed parts cut from
+              <a href="https://github.com/music-x-lab/POP909-Dataset" target="_blank" rel="noreferrer">POP909</a>
+              (MIT), and single-line licks, cells and idioms from
               <a href="https://github.com/Impro-Visor/Impro-Visor" target="_blank" rel="noreferrer">Impro-Visor</a>
-              (GPL-2.0-or-later). Each was written over one chord; keeping one copies it into
+              (GPL-2.0-or-later). Each was played over one chord; keeping one copies it into
               your library, where it behaves like anything you played yourself.
             </div>
             <div class="text-caption text-medium-emphasis mb-3">
               The catalogue is built here in the page from the vocabulary file itself, so you can
               point it at your own.
               <span v-if="report && !report.error">
-                Last build: <strong>{{ report.total }}</strong> from {{ report.source }},
+                <strong>{{ report.parts }}</strong> two-handed parts from POP909, and
+                <strong>{{ report.total }}</strong> licks from {{ report.source }},
                 {{ report.skipped.multiChord }} skipped for spanning more than one chord<span
                   v-if="report.skipped.noHarmony"
                 >, {{ report.skipped.noHarmony }} written over no chord at all</span>,
@@ -330,10 +333,21 @@ function roll(phrase, width = 260, height = 54) {
             </v-alert>
 
             <v-row dense class="mb-1">
-              <v-col cols="12" md="7">
+              <v-col cols="12" md="5">
                 <v-text-field v-model="lickSearch" label="Search" prepend-inner-icon="mdi-magnify" clearable />
               </v-col>
-              <v-col cols="12" md="5" class="d-flex align-center">
+              <v-col cols="12" md="3">
+                <v-select
+                  v-model="state.ui.lickTexture"
+                  :items="[
+                    { title: 'Anything', value: 'any' },
+                    { title: 'Two hands', value: 'hands' },
+                    { title: 'Single line', value: 'line' },
+                  ]"
+                  label="Texture"
+                />
+              </v-col>
+              <v-col cols="12" md="4" class="d-flex align-center">
                 <v-switch
                   v-model="state.ui.licksForCurrentChord"
                   :disabled="!chord"
@@ -412,10 +426,11 @@ function roll(phrase, width = 260, height = 54) {
                 text, so those bindings survive copy, paste and reload.
               </p>
               <p class="mb-3">
-                The Licks tab is a catalogue of 1,900 phrases from Impro-Visor, each written
-                over a single chord. They are matched to the chord you are on by shape rather
-                than by root — a lick written over C7 belongs over any dominant seventh,
-                because it gets re-pointed on the way in.
+                The Catalogue tab holds two sorts of thing, both played over a single chord:
+                two-handed keyboard parts cut from POP909 — a bass, a voicing and a rhythm —
+                and single-line licks from Impro-Visor. Both are matched to the chord you are
+                on by shape rather than by root, so something played over C7 is offered for
+                any dominant seventh and re-pointed on the way in.
               </p>
             </div>
           </v-window-item>

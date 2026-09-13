@@ -39,6 +39,7 @@ import { detectKey, preferFlatKey } from './core/key.js'
 import { mod12 } from './core/voiceLeading.js'
 import { loadLicks, lickReport, licksForChord, searchLicks, defaultVocabularyUrl } from './core/licks.js'
 import { phrasesFromMidi } from './core/midiPhrases.js'
+import { loadParts } from './core/parts.js'
 import { loadChordDictionary, nameForSet } from './core/chordDictionary.js'
 import { describeChord } from './core/chordParser.js'
 
@@ -79,6 +80,7 @@ export const state = reactive({
     settingsTab: 'midi',
     phrasesTab: 'captured',
     licksForCurrentChord: true,
+    lickTexture: 'any',
     progressionsTab: 'library',
     armed: false,
     toast: null,
@@ -557,8 +559,11 @@ export async function ensureLicks(options = {}) {
 
   state.licksLoading = true
   try {
-    state.licks = await loadLicks(options)
-    state.lickReport = lickReport()
+    // One catalogue, two sources: Impro-Visor's single lines and POP909's
+    // two-handed parts. They share a phrase model, so they share a list.
+    const [licks, parts] = await Promise.all([loadLicks(options), loadParts()])
+    state.licks = [...parts, ...licks]
+    state.lickReport = { ...lickReport(), parts: parts.length }
   } finally {
     state.licksLoading = false
   }
@@ -577,7 +582,9 @@ export function targetChord() {
 export function visibleLicks(query) {
   const all = state.licks
   const chord = targetChord()
-  const pool = state.ui.licksForCurrentChord && chord ? licksForChord(all, chord) : all
+  let pool = state.ui.licksForCurrentChord && chord ? licksForChord(all, chord) : all
+  if (state.ui.lickTexture === 'hands') pool = pool.filter((item) => item.kind === 'part')
+  else if (state.ui.lickTexture === 'line') pool = pool.filter((item) => item.kind !== 'part')
   return searchLicks(pool, query)
 }
 
@@ -587,17 +594,22 @@ export function visibleLicks(query) {
  */
 export function adoptLick(lick, bind = false) {
   const phrase = {
-    name: uniqueName(state.phrases, `${lick.sourceChord}-${lick.name}`),
+    // The catalogue's own names often start with the chord already.
+    name: uniqueName(
+      state.phrases,
+      lick.name.startsWith(lick.sourceChord) ? lick.name : `${lick.sourceChord}-${lick.name}`
+    ),
     notes: lick.notes.map((note) => ({ ...note })),
     lengthPulses: lick.lengthPulses,
     sourcePcs: lick.sourcePcs.slice(),
     sourceChord: lick.sourceChord,
+    kind: lick.kind,
     // Carried explicitly: the catalogue is already rooted on C, and leaving this
     // to a default would make that a coincidence rather than a fact.
     rootPc: lick.rootPc ?? 0,
     originalRoot: lick.originalRoot,
     bars: lick.lengthPulses / 96,
-    origin: 'Impro-Visor',
+    origin: lick.kind === 'part' ? `POP909 #${lick.song}` : 'Impro-Visor',
     createdAt: Date.now(),
   }
   state.phrases = [phrase, ...state.phrases]

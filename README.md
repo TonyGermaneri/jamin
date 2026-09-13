@@ -178,6 +178,7 @@ src/core/voicing.js       interval stack -> actual MIDI notes
 src/core/progressions.js  the progression library, and transposition
 src/core/vocParser.js     reads Impro-Visor vocabulary files in the browser
 src/core/licks.js         the lick catalogue, built at run time
+src/core/parts.js         the two-handed parts catalogue
 src/core/midiFile.js      a small Standard MIDI File reader
 src/core/midiPhrases.js   cuts a performance into one-chord phrases
 src/core/key.js           key detection, Krumhansl-Schmuckler

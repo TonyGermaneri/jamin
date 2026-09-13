@@ -154,7 +154,7 @@ function closeNote(open, key, notes, tick) {
   notes.push({ ...started, duration: Math.max(1, tick - started.tick) })
 }
 
-/** Seconds per tick changes with tempo; this walks the map to convert. */
+/** Seconds per tick changes with tempo; these walk the map to convert. */
 export function tickToSeconds(tick, ppq, tempos) {
   const map = tempos.length ? tempos : [{ tick: 0, usPerQuarter: 500000 }]
   let seconds = 0
@@ -168,4 +168,24 @@ export function tickToSeconds(tick, ppq, tempos) {
     us = change.usPerQuarter
   }
   return seconds + ((tick - last) / ppq) * (us / 1e6)
+}
+
+/**
+ * The other direction, for annotations written in seconds -- which is how every
+ * corpus I have seen labels its chords.
+ */
+export function secondsToTick(seconds, ppq, tempos) {
+  const map = tempos.length ? tempos : [{ tick: 0, usPerQuarter: 500000 }]
+  let elapsed = 0
+  let lastTick = 0
+  let us = map[0].tick === 0 ? map[0].usPerQuarter : 500000
+
+  for (const change of map) {
+    const span = ((change.tick - lastTick) / ppq) * (us / 1e6)
+    if (elapsed + span >= seconds) break
+    elapsed += span
+    lastTick = change.tick
+    us = change.usPerQuarter
+  }
+  return lastTick + ((seconds - elapsed) * 1e6 * ppq) / us
 }
