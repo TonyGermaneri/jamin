@@ -35,7 +35,7 @@ if(APPLE AND TARGET jamin-boot AND TARGET JaminInstrument_AU)
     # one that stacks the book columns and one that puts them side by side. The
     # assertions are the same either way -- the books fit, and the pagination is
     # on screen rather than below the fold.
-    foreach(_size 820x520 1180x760)
+    foreach(_size 720x480 820x520 1180x760)
         add_test(NAME jamin-host-${_size}
                  COMMAND jamin-boot
                          "$<TARGET_BUNDLE_CONTENT_DIR:JaminInstrument_AU>/Resources/web"

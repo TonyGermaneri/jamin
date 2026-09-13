@@ -244,7 +244,10 @@ body,
 
   .jamin-book .jamin-book-scroll {
     flex: 0 1 auto;
-    max-height: 38dvh;
+    /* Sized so the pagination underneath it stays within the first screenful
+       at the smallest editor the plugin allows (720x480) -- the filters above
+       it take their share first, and the list is what gives way. */
+    max-height: 22dvh;
     min-height: 0;
   }
 }

@@ -17,6 +17,7 @@ import {
   importProgressionJson,
   exportProgressionJson,
   progressionPage,
+  progressionFacetList,
   importChordonomiconFile,
   forgetBulkProgressions,
   refreshBulkCount,
@@ -63,6 +64,28 @@ const keyOptions = computed(() => [
 
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PER_PAGE)))
 
+/*
+ * Genre and decade are Chordonomicon's own columns -- every imported row
+ * carries both -- so they are filters rather than something only visible in a
+ * name. They appear once a collection has been imported and not before, since
+ * the built-in progressions have neither.
+ */
+const genre = ref('')
+const decade = ref('')
+const facets = ref({ genres: [], decades: [] })
+
+const genreItems = computed(() => [
+  { title: 'Any genre', value: '' },
+  ...facets.value.genres.map((one) => ({ title: `${one.value} (${one.count.toLocaleString()})`, value: one.value })),
+])
+const decadeItems = computed(() => [
+  { title: 'Any decade', value: '' },
+  ...facets.value.decades
+    .slice()
+    .sort((a, b) => Number(a.value) - Number(b.value))
+    .map((one) => ({ title: `${one.value}s (${one.count.toLocaleString()})`, value: one.value })),
+])
+
 /**
  * Imported rows carry a bar count from the import, counted cheaply. The
  * hand-written ones do not, so work it out -- a dozen short charts a page is
@@ -77,7 +100,8 @@ const preview = computed(() => (selected.value ? renderProgression(selected.valu
 async function load() {
   loading.value = true
   try {
-    const result = await progressionPage((page.value - 1) * PER_PAGE, PER_PAGE, search.value)
+    const result = await progressionPage((page.value - 1) * PER_PAGE, PER_PAGE, search.value,
+                                         { genre: genre.value, decade: decade.value })
     rows.value = result.rows
     total.value = result.total
     partial.value = result.partial
@@ -89,9 +113,17 @@ async function load() {
   }
 }
 
-watch(() => [state.ui.progressions, page.value, search.value, state.progressions.length, state.bulk.count],
+watch(() => [state.ui.progressions, page.value, search.value, genre.value, decade.value,
+             state.progressions.length, state.bulk.count],
   ([open]) => { if (open) load() }, { immediate: true })
-watch(search, () => { page.value = 1 })
+watch([search, genre, decade], () => { page.value = 1 })
+
+// The facets are a scan, so they are read once the dialog opens and once the
+// count changes, rather than on every keystroke.
+watch(() => [state.ui.progressions, state.bulk.count], async ([open]) => {
+  if (!open) return
+  facets.value = await progressionFacetList()
+}, { immediate: true })
 
 /*
  * The same walking as the catalogue, with one difference: selecting a
@@ -195,7 +227,17 @@ function runExport() {
           <v-window-item value="library">
             <v-row class="jamin-book-row">
               <v-col cols="12" md="6" class="jamin-book-col">
-                <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable class="mb-2 flex-grow-0" />
+                <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable
+                              density="compact" hide-details class="mb-2 flex-grow-0" />
+
+                <v-row v-if="facets.genres.length || facets.decades.length" dense class="mb-2 flex-grow-0">
+                  <v-col cols="7">
+                    <v-select v-model="genre" :items="genreItems" label="Genre" density="compact" hide-details />
+                  </v-col>
+                  <v-col cols="5">
+                    <v-select v-model="decade" :items="decadeItems" label="Decade" density="compact" hide-details />
+                  </v-col>
+                </v-row>
 
                 <v-list
                   v-if="rows.length"

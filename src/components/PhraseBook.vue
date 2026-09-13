@@ -50,21 +50,53 @@ const isAccent = (entry) => !!entry && state.accentPhrase === (entry.id || entry
 const accent = computed(() => matches.value.find((entry) => entry.id === state.accentPhrase) ||
   catalogue().find((entry) => entry.id === state.accentPhrase) || null)
 const category = ref('any')
+const kind = ref('any')
+const source = ref('any')
+const length = ref('any')
 
-/** Every category the catalogue actually carries, commonest first. */
-const categories = computed(() => {
+/**
+ * Facets, built from the catalogue rather than written down.
+ *
+ * Every one of these is a field the collections actually carry: Impro-Visor
+ * labels each entry and files it as a lick, a cell, an idiom or a quote;
+ * POP909 says which song a part came from; a captured phrase knows it was
+ * captured. There is no genre here and no year, because the phrase sources do
+ * not have either -- POP909 ships beats, chords and keys and nothing else.
+ * Genre and decade do exist in Chordonomicon, and are filters in the
+ * progression library where they are real.
+ */
+function facet(pick, label) {
   const counts = new Map()
   for (const entry of catalogue()) {
-    const name = entry.category
-    if (name) counts.set(name, (counts.get(name) || 0) + 1)
+    const value = pick(entry)
+    if (value) counts.set(value, (counts.get(value) || 0) + 1)
   }
   return [
-    { title: 'Any category', value: 'any' },
+    { title: label, value: 'any' },
     ...[...counts.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
       .map(([name, count]) => ({ title: `${name} (${count})`, value: name })),
   ]
-})
+}
+
+/** What kind of thing it is, in the vocabulary's own words. */
+const kinds = computed(() => facet((entry) => entry.kind, 'Any kind'))
+
+/** Where it came from. The origin is per-entry -- "POP909 #219" -- so the
+    collection is the part before the number. */
+const sourceOf = (entry) => String(entry.origin || 'captured here').split(' #')[0]
+const sources = computed(() => facet(sourceOf, 'Any source'))
+
+const categories = computed(() => facet((entry) => entry.category, 'Any category'))
+
+/** Length, in beats, as bands rather than a number nobody knows to type. */
+const LENGTHS = [
+  { title: 'Any length', value: 'any', fits: () => true },
+  { title: 'Up to 2 beats', value: 'tiny', fits: (b) => b <= 2 },
+  { title: '2 to 4 beats', value: 'short', fits: (b) => b > 2 && b <= 4 },
+  { title: '4 to 8 beats', value: 'medium', fits: (b) => b > 4 && b <= 8 },
+  { title: 'Over 8 beats', value: 'long', fits: (b) => b > 8 },
+]
 
 const PER_PAGE = 12
 const page = ref(1)
@@ -72,14 +104,34 @@ const selected = ref(null)
 
 const matches = computed(() => {
   if (!state.licks.length && !state.phrases.length) return []
-  const found = visibleLicks(search.value)
-  return category.value === 'any' ? found : found.filter((entry) => entry.category === category.value)
+  const band = LENGTHS.find((one) => one.value === length.value) || LENGTHS[0]
+
+  return visibleLicks(search.value).filter((entry) => {
+    if (category.value !== 'any' && entry.category !== category.value) return false
+    if (kind.value !== 'any' && entry.kind !== kind.value) return false
+    if (source.value !== 'any' && sourceOf(entry) !== source.value) return false
+    return band.fits(entry.lengthPulses / 24)
+  })
 })
+
+/** Whether anything is narrowing the list, so the UI can offer to stop. */
+const filtered = computed(() =>
+  Boolean(search.value) || category.value !== 'any' || kind.value !== 'any' ||
+  source.value !== 'any' || length.value !== 'any' || state.ui.lickTexture !== 'any')
+
+function clearFilters() {
+  search.value = ''
+  category.value = 'any'
+  kind.value = 'any'
+  source.value = 'any'
+  length.value = 'any'
+  state.ui.lickTexture = 'any'
+}
 const total = computed(() => catalogue().length)
 const pageCount = computed(() => Math.max(1, Math.ceil(matches.value.length / PER_PAGE)))
 const list = computed(() => matches.value.slice((page.value - 1) * PER_PAGE, page.value * PER_PAGE))
 
-watch([search, category, () => state.ui.lickTexture], () => { page.value = 1 })
+watch([search, category, kind, source, length, () => state.ui.lickTexture], () => { page.value = 1 })
 watch(list, (rows) => {
   if (!rows.some((row) => selected.value && row.id === selected.value.id)) selected.value = rows[0] || null
 }, { immediate: true })
@@ -244,10 +296,12 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
               <v-col cols="12" md="6" class="jamin-book-col">
                 <v-row dense class="mb-1 flex-grow-0">
                   <v-col cols="12">
-                    <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable />
+                    <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable
+                                  density="compact" hide-details />
                   </v-col>
                   <v-col cols="7">
-                    <v-select v-model="category" :items="categories" label="Category" />
+                    <v-select v-model="category" :items="categories" label="Category"
+                              density="compact" hide-details />
                   </v-col>
                   <v-col cols="5">
                     <v-select
@@ -258,7 +312,18 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
                         { title: 'Single line', value: 'line' },
                       ]"
                       label="Texture"
+                      density="compact"
+                      hide-details
                     />
+                  </v-col>
+                  <v-col cols="4">
+                    <v-select v-model="source" :items="sources" label="Source" density="compact" hide-details />
+                  </v-col>
+                  <v-col cols="4">
+                    <v-select v-model="kind" :items="kinds" label="Kind" density="compact" hide-details />
+                  </v-col>
+                  <v-col cols="4">
+                    <v-select v-model="length" :items="LENGTHS" label="Length" density="compact" hide-details />
                   </v-col>
                 </v-row>
 
@@ -266,7 +331,10 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
                   Loading the catalogue…
                 </div>
                 <div v-else-if="!list.length" class="text-caption text-medium-emphasis py-8 text-center">
-                  Nothing matches “{{ search }}”.
+                  Nothing matches.
+                  <div v-if="filtered" class="mt-2">
+                    <v-btn size="x-small" variant="text" @click="clearFilters">Clear the filters</v-btn>
+                  </div>
                 </div>
 
                 <v-list
@@ -302,7 +370,8 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
 
                 <v-pagination v-model="page" :length="pageCount" :total-visible="6" density="comfortable" class="mt-2" />
                 <div class="text-caption text-medium-emphasis text-center">
-                  {{ matches.length.toLocaleString() }} of {{ total.toLocaleString() }} ·
+                  {{ matches.length.toLocaleString() }} of {{ total.toLocaleString() }}
+                  <template v-if="filtered">· <a href="#" @click.prevent="clearFilters">clear filters</a></template> ·
                   click the list, then arrow or scroll to hear your way through it ·
                   right-click one to make it the accent
                 </div>

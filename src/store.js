@@ -55,7 +55,7 @@ import { phrasesFromMidi } from './core/midiPhrases.js'
 import { loadParts } from './core/parts.js'
 import { CHORDONOMICON } from './core/importers.js'
 import { chordonomiconToChart } from './core/importers.js'
-import { countProgressions, pageProgressions, searchProgressions, clearProgressions } from './core/progressionStore.js'
+import { countProgressions, pageProgressions, searchProgressions, progressionFacets, clearProgressions } from './core/progressionStore.js'
 import { importChordonomiconCsv, CHORDONOMICON_CSV } from './core/csvImport.js'
 import { loadChordDictionary, nameForSet } from './core/chordDictionary.js'
 import { describeChord } from './core/chordParser.js'
@@ -1145,10 +1145,19 @@ function smallList(query) {
  * One page of the library, drawn from the small list first and the big store
  * after it. Only the page is ever in memory.
  */
-export async function progressionPage(offset, limit, query = '') {
-  const small = smallList(query)
+export async function progressionPage(offset, limit, query = '', filters = {}) {
+  const small = smallList(query).filter((item) => {
+    // The hand-written progressions carry neither, so asking for a genre or a
+    // decade is asking for imported rows and they drop out -- which is right:
+    // they genuinely are not from the 1970s.
+    if (filters.genre && String(item.genre || '') !== filters.genre) return false
+    if (filters.decade && String(item.decade || '') !== filters.decade) return false
+    return true
+  })
 
-  if (!query) {
+  const narrowed = Boolean(filters.genre || filters.decade)
+
+  if (!query && !narrowed) {
     const rows = small.slice(offset, offset + limit)
     const shortfall = limit - rows.length
     if (shortfall > 0 && state.bulk.count) {
@@ -1159,13 +1168,25 @@ export async function progressionPage(offset, limit, query = '') {
     return { rows, total: small.length + state.bulk.count, partial: false }
   }
 
-  // Searching the big store is a scan, so it is bounded and says so.
-  const found = state.bulk.count ? await searchProgressions(query, 300) : { rows: [], complete: true }
+  // Searching or narrowing the big store is a scan, so it is bounded and says so.
+  const found = state.bulk.count
+    ? await searchProgressions(query, 300, 60000, filters)
+    : { rows: [], complete: true }
   const combined = [...small, ...found.rows.map(rowToProgression)]
   return {
     rows: combined.slice(offset, offset + limit),
     total: combined.length,
     partial: !found.complete,
+  }
+}
+
+/** Genre and decade, as the imported collection actually has them. */
+export async function progressionFacetList() {
+  if (!state.bulk.count) return { genres: [], decades: [] }
+  try {
+    return await progressionFacets()
+  } catch {
+    return { genres: [], decades: [] }
   }
 }
 

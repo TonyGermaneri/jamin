@@ -92,9 +92,11 @@ export async function pageProgressions(offset, limit) {
  * keystroke, so this stops at `limit` matches and says whether it reached the
  * end. Better a fast answer that admits it is partial.
  */
-export async function searchProgressions(query, limit = 200, scanLimit = 60000) {
+export async function searchProgressions(query, limit = 200, scanLimit = 60000, filters = {}) {
   const needle = String(query || '').trim().toLowerCase()
-  if (!needle) return { rows: [], scanned: 0, complete: true }
+  const genre = String(filters.genre || '').trim().toLowerCase()
+  const decade = String(filters.decade || '').trim()
+  if (!needle && !genre && !decade) return { rows: [], scanned: 0, complete: true }
 
   const db = await open()
   const store = db.transaction(STORE, 'readonly').objectStore(STORE)
@@ -115,11 +117,16 @@ export async function searchProgressions(query, limit = 200, scanLimit = 60000) 
       // Rows are stored in the dialect they arrived in, so the chords are
       // searched as written -- `chords`, not the converted `text`, which is only
       // produced for a row somebody actually looks at.
-      if (
-        (row.name || '').toLowerCase().includes(needle) ||
-        (row.genre || '').toLowerCase().includes(needle) ||
-        (row.chords || '').toLowerCase().includes(needle)
-      ) {
+      const text = !needle
+        || (row.name || '').toLowerCase().includes(needle)
+        || (row.genre || '').toLowerCase().includes(needle)
+        || (row.chords || '').toLowerCase().includes(needle)
+      // Genre and decade are exact rather than substring: they are chosen from
+      // a list of what is actually in the data, not typed.
+      const byGenre = !genre || String(row.genre || '').toLowerCase() === genre
+      const byDecade = !decade || String(row.decade || '') === decade
+
+      if (text && byGenre && byDecade) {
         rows.push(row)
       }
       cursor.continue()
@@ -127,4 +134,45 @@ export async function searchProgressions(query, limit = 200, scanLimit = 60000) 
   })
 
   return { rows, scanned, complete: rows.length < limit && scanned < scanLimit }
+}
+
+
+/**
+ * Which genres and decades the imported collection actually contains.
+ *
+ * Chordonomicon carries both per row, so they are real facets rather than
+ * invented ones -- but there are hundreds of thousands of rows and no index on
+ * either field, so this reads a sample rather than all of them. Genre and
+ * decade each have a couple of dozen values at most, so a sample of this size
+ * finds every one of them many times over; it is a sample for the sake of the
+ * scan, not because the answer is uncertain.
+ */
+export async function progressionFacets(sample = 20000) {
+  const db = await open()
+  const store = db.transaction(STORE, 'readonly').objectStore(STORE)
+  const genres = new Map()
+  const decades = new Map()
+  let scanned = 0
+
+  await new Promise((resolve, reject) => {
+    const request = store.openCursor()
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => {
+      const cursor = request.result
+      if (!cursor || scanned >= sample) return resolve()
+      scanned++
+      const row = cursor.value
+      const genre = String(row.genre || '').trim()
+      const decade = String(row.decade || '').trim()
+      if (genre) genres.set(genre, (genres.get(genre) || 0) + 1)
+      if (decade) decades.set(decade, (decades.get(decade) || 0) + 1)
+      cursor.continue()
+    }
+  })
+
+  const rank = (counts) => [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([value, count]) => ({ value, count }))
+
+  return { genres: rank(genres), decades: rank(decades), scanned }
 }
