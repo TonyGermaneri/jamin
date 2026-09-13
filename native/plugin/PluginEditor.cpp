@@ -142,6 +142,28 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                            lastSongGeneration = generation;   // do not echo our own edit back
                            complete (juce::var ((juce::int64) generation));
                        })
+                   .withNativeFunction ("jaminOpenUrl",
+                       [] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // WKWebView in a plugin has no download handling at all --
+                           // JUCE wires up the file-open panel but nothing for
+                           // WKDownload -- so a link that saves a file does nothing
+                           // here, silently. Handing the URL to the system browser is
+                           // the only honest version of that button.
+                           if (args.isEmpty())
+                               return complete (juce::var (false));
+
+                           const juce::URL url (args[0].toString());
+                           const auto scheme = url.getScheme().toLowerCase();
+
+                           // Only the two schemes a link in a page should ever want.
+                           // The page is ours, but a resource provider that will launch
+                           // anything is a resource provider that will launch anything.
+                           if (scheme != "http" && scheme != "https")
+                               return complete (juce::var (false));
+
+                           complete (juce::var (url.launchInDefaultBrowser()));
+                       })
                    .withNativeFunction ("jaminSaveState",
                        [this] (const juce::Array<juce::var>& args, auto complete)
                        {

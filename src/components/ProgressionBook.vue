@@ -27,6 +27,7 @@ import {
 import { summarizeProgression } from '../core/progressions.js'
 import { parseScore } from '../core/score.js'
 import { pcName } from '../core/chordParser.js'
+import { openOutside } from '../core/host.js'
 
 const PER_PAGE = 12
 
@@ -133,6 +134,17 @@ function saveCurrent(text, label) {
     newName.value = ''
     state.ui.progressionsTab = 'library'
   }
+}
+
+/**
+ * Inside the plugin a link cannot save a file, and fails silently doing it, so
+ * the URL goes to the system browser. In a tab the anchor does its own job and
+ * this does nothing.
+ */
+async function downloadCsv(event) {
+  if (!state.host.active) return
+  event.preventDefault()
+  if (!(await openOutside(CHORDONOMICON_CSV))) toast('Could not open your browser')
 }
 
 async function openCsv(event) {
@@ -302,9 +314,17 @@ function runExport() {
                 ordinary storage. So: download it, then hand the file back here. It is read as a stream
                 and kept in the browser's database, so the whole set fits and none of it sits in memory.
               </div>
+              <div v-if="state.host.active" class="mb-2">
+                A plugin window cannot download a file — so the button below opens the link in your
+                browser instead. Download it there, then come back and choose it here. Reading a file
+                you pick <em>does</em> work, and the database is shared by every instance, so this is
+                once per machine rather than once per track.
+              </div>
               <div class="d-flex align-center flex-wrap" style="gap: 8px">
-                <v-btn size="small" :href="CHORDONOMICON_CSV" target="_blank" rel="noreferrer" prepend-icon="mdi-download">
-                  Download the CSV
+                <v-btn size="small" :href="state.host.active ? undefined : CHORDONOMICON_CSV"
+                       :target="state.host.active ? undefined : '_blank'" rel="noreferrer"
+                       prepend-icon="mdi-download" @click="downloadCsv">
+                  {{ state.host.active ? 'Download it in your browser' : 'Download the CSV' }}
                 </v-btn>
                 <v-btn size="small" :loading="state.bulk.importing" prepend-icon="mdi-upload" @click="csvFile && csvFile.click()">
                   Upload it here

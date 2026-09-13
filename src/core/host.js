@@ -117,6 +117,27 @@ export function callHost(name, ...params) {
 }
 
 /**
+ * Open a link outside the web view.
+ *
+ * A plugin's web view cannot download a file. JUCE wires up the file-open panel,
+ * so choosing a file to read works, but there is no download handling at all --
+ * a link that saves something does nothing, and does it without an error. So
+ * anything that would have downloaded is handed to the system browser instead,
+ * which can.
+ *
+ * Returns true if it was handled, false if this is an ordinary tab and the link
+ * should be left to behave like a link.
+ */
+export async function openOutside(url) {
+  if (!hosted()) return false
+  try {
+    return Boolean(await callHost('jaminOpenUrl', String(url)))
+  } catch {
+    return false
+  }
+}
+
+/**
  * The host's transport, in the shape the player already understands.
  *
  * In a browser the clock arrives as a stream of 0xF8 bytes and MidiEngine counts
@@ -140,6 +161,10 @@ export class HostClock {
     this.denominator = 4
     this.hasPlayhead = false
 
+    // How many reports have arrived. Zero while playing is the whole diagnosis
+    // when somebody says the plugin does not know the DAW is running.
+    this.messages = 0
+
     // The same two hooks MidiEngine offers, so the store wires either one the
     // same way.
     this.onTick = null
@@ -160,6 +185,7 @@ export class HostClock {
    */
   update(message) {
     if (!message) return
+    this.messages++
 
     if (typeof message.bpm === 'number' && message.bpm > 0) this.bpm = message.bpm
     if (typeof message.numerator === 'number') this.numerator = message.numerator
@@ -201,5 +227,6 @@ export class HostClock {
     this._lastPulse = null
     this.running = false
     this.pulse = 0
+    this.messages = 0
   }
 }

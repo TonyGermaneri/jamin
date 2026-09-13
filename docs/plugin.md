@@ -171,14 +171,23 @@ track, one sound, one articulation, one instance, and nothing routed by hand.
 
 **Ableton Live does not host `aumi` at all.** Not this plugin; the category. Live's plugin
 browser has no place to put an AU MIDI processor, so a correct, signed, `auval`-clean plugin is
-simply invisible there — and Live is not alone. This was found the way these things are found,
-by installing it and not seeing it.
+simply invisible there. This was found the way these things are found, by installing it and not
+seeing it.
 
 So the same sources are built again as an **instrument** (`aumu`, plus VST3), which is a shape
 every host understands. It makes silence on its own track, and the track that wants the notes
-sets its MIDI input to it. That costs two steps of routing per track, which is why it is the
-second declaration rather than the only one — but it is the one that works everywhere, so it
-carries the primary plugin code.
+sets its MIDI input to it.
+
+**And in Live that still is not enough, because the AU standard has no MIDI output.** Ableton
+say so themselves: *"The Audio Unit (AU) plug-in standard does not support a direct MIDI out. To
+route MIDI from a plug-in, you should use the VST version."* An AU instrument appears in Live
+and loads in Live and can do nothing useful in Live, which is a worse failure than being
+invisible, because it looks like it is working. **VST3 is the format for Live** — note output
+since Live 10, every CC since Live 11, for plugins built against VST SDK 3.6.12 or later.
+
+Three formats, then, and each earns its place: VST3 because Live needs it, `aumi` because
+Logic's MIDI FX slot is the arrangement with no routing in it, and the AU instrument because
+Logic and Reaper will take it and it costs nothing to emit.
 
 Only the bus layout differs between them: an instrument must declare an output even though it
 never writes to it, because the hosts that will not host a MIDI effect are the same ones that

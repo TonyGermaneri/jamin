@@ -122,24 +122,48 @@ failure and is not one.
 ### Two shapes, and which one you want
 
 What jamin is, is a MIDI effect: it makes no sound, it emits notes, and it
-belongs above the instrument it is playing. **Ableton Live does not host AU
-MIDI processors** — not this one, the whole `aumi` category — so it is built
-as an instrument as well.
+belongs above the instrument it is playing. But **the AU standard has no MIDI
+output**, and that is not a JUCE limitation or a jamin one — it is Ableton's own
+statement about the format:
 
-| | Type | Where it appears |
+> The Audio Unit (AU) plug-in standard does not support a direct MIDI out. […]
+> To route MIDI from a plug-in, you should use the VST version.
+
+So the format decides the host, and there is no arguing with it:
+
+| Host | Use | Why |
 | --- | --- | --- |
-| **Jamin** | `aumu`, VST3 | Everywhere. Live, Bitwig, Cubase, Reaper. |
-| **Jamin MIDI FX** | `aumi` | Logic's **MIDI FX** slot, with nothing to route. |
+| **Ableton Live** | **VST3** | The only format in Live that can send MIDI to another track. Live has accepted note output from VST3 since Live 10, and every CC since Live 11. |
+| **Logic** | **Jamin MIDI FX** (AU) | Logic's MIDI FX slot is the one place this needs no routing at all. |
+| Bitwig, Cubase, Reaper | VST3 or the AU instrument | Both work; VST3 is the one that is tested. |
+
+The AU instrument is still built and still validates, and it is still the right
+thing in Logic and Reaper — but **in Live it cannot do the one job it exists for**,
+so do not reach for it there.
+
+**In Live:** put **Jamin (VST3)** on a MIDI track; that track now makes silence.
+On the track holding the sound you want, set **MIDI From** to the Jamin track,
+pick **Jamin** in the chooser just below it, and set **Monitor** to **In**.
+Repeat per track: one chart, one instance per track, a different phrase on each.
+
+**In Logic:** *Jamin MIDI FX* in the MIDI FX slot above your instrument. Done.
 
 Both are published by **WaveContour**, under the manufacturer code `WvCt`, so a
 host lists them beside Waveshape rather than as a stranger's work.
 
-**In Logic:** *Jamin MIDI FX* in the MIDI FX slot above your instrument. Done.
+### What a plugin window cannot do
 
-**In Live:** put *Jamin* on a MIDI track — that track now makes silence. On the
-track holding the sound you want, set **MIDI From** to the Jamin track, pick
-**Jamin** in the chooser below it, and set **Monitor** to **In**. Repeat per
-track: one chart, one instance per track, a different phrase on each.
+A web view inside a plugin is not a browser tab, and two things it cannot do are
+worth knowing before they waste your time.
+
+**It cannot download a file.** There is no download handling in the web view at
+all, so a link that saves something does nothing and does it silently. Anything
+that would have downloaded opens in your real browser instead.
+
+**It can read a file you choose.** The file picker works, so the Chordonomicon
+import is: press *Download it in your browser*, download it there, come back and
+choose it. The database is shared by every instance in the process, so that is
+once per machine rather than once per track.
 
 [The plan and what it rests on](docs/plugin.md) · [the native build](native/README.md)
 

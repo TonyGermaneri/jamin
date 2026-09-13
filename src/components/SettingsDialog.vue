@@ -89,10 +89,34 @@ async function retryMidi() {
         <v-window v-model="state.ui.settingsTab">
           <!-- MIDI ------------------------------------------------------- -->
           <v-window-item value="midi">
-            <v-alert v-if="state.host.active" type="success" variant="tonal" density="compact" class="mb-4">
-              Running as a plugin. The host supplies the transport and takes the notes, so there
-              is nothing here to bind — this tab is the browser build's.
-            </v-alert>
+            <template v-if="state.host.active">
+              <v-alert type="success" variant="tonal" density="compact" class="mb-3">
+                Running as a plugin. The host supplies the transport and takes the notes, so there
+                is nothing here to bind — this tab is the browser build's.
+              </v-alert>
+
+              <!-- What the host is actually saying. Every question that starts
+                   "it doesn't seem to see the transport" is answered here. -->
+              <v-alert
+                :type="state.host.messages === 0 ? 'warning' : 'info'"
+                variant="tonal" density="compact" class="mb-4"
+              >
+                <div class="text-caption font-weight-medium mb-1">What the host is saying</div>
+                <table class="text-caption jamin-hostinfo">
+                  <tr><td>reports received</td><td>{{ state.host.messages.toLocaleString() }}</td></tr>
+                  <tr><td>playhead</td><td>{{ state.host.hasPlayhead ? 'yes' : 'no' }}</td></tr>
+                  <tr><td>transport</td><td>{{ state.status.running ? 'rolling' : 'stopped' }}</td></tr>
+                  <tr><td>position</td><td>{{ state.host.ppq }} ♩ — bar {{ state.status.bar }}.{{ state.status.beat }}</td></tr>
+                  <tr><td>tempo</td><td>{{ state.status.bpm }} bpm</td></tr>
+                  <tr><td>shared chart</td><td>{{ state.host.shared ? 'connected' : 'this process only' }}</td></tr>
+                  <tr><td>instance</td><td class="text-truncate" style="max-width: 15rem">{{ state.host.instanceId || '—' }}</td></tr>
+                </table>
+                <div v-if="state.host.messages === 0" class="text-caption mt-2">
+                  Nothing has arrived from the host yet. Reports are only sent while this window is
+                  open and only when something changes, so press play and watch this count.
+                </div>
+              </v-alert>
+            </template>
 
             <v-alert
               v-if="!state.host.active && state.midi.state !== 'ready'"
@@ -430,3 +454,13 @@ async function retryMidi() {
     </v-card>
   </v-dialog>
 </template>
+
+<style scoped>
+/* The host readout is a two-column table of facts; the labels stay quiet and
+   the values line up, so a glance is enough to see which one is wrong. */
+.jamin-hostinfo td:first-child {
+  opacity: 0.7;
+  padding-right: 1.25rem;
+  white-space: nowrap;
+}
+</style>

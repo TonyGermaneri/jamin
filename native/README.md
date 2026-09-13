@@ -79,28 +79,49 @@ browser that will not request them.
 ## Two shapes, one plugin
 
 What jamin actually is, is a **MIDI effect**: it makes no sound, it emits notes, and it wants to
-sit above the instrument it is playing. Logic has a slot for exactly that.
+sit above the instrument it is playing. Logic has a slot for exactly that, and nothing needs
+routing.
 
-**Ableton Live does not host AU MIDI processors** — not this one, any of them. `aumi` is a
-category Live has no slot for, so an otherwise perfect plugin is invisible in it, and so are
-several other hosts'. So the same sources are also built as an **instrument**, which every host
-understands: it makes silence on its own track and the track that wants the notes takes them
-from it.
+Two separate facts about Ableton Live decide the rest, and they were found in that order:
 
-| Target | Formats | Type | Where it shows up |
+**Live does not host AU MIDI processors.** `aumi` is a category Live has no slot for, so an
+otherwise perfect plugin is invisible in it. That is what the instrument build was added for.
+
+**And the AU standard has no MIDI output either**, which the instrument build did not fix.
+Ableton's own words: *"The Audio Unit (AU) plug-in standard does not support a direct MIDI out.
+To route MIDI from a plug-in, you should use the VST version."* So in Live the format is not a
+preference — **VST3 is the only one that can do the job at all.** Live has taken note output
+from VST3 since Live 10 and every CC since Live 11, for plugins built against VST SDK 3.6.12 or
+later, which JUCE 8 is.
+
+| Target | Formats | Type | Where it belongs |
 | --- | --- | --- | --- |
-| `JaminInstrument` | AU, VST3, Standalone | `aumu` | Everywhere. Live, Bitwig, Cubase, Reaper, and Logic's instrument slot. |
+| `JaminInstrument` | **VST3**, AU, Standalone | `aumu` | **Live: the VST3, and only the VST3.** Bitwig, Cubase, Reaper: either. |
 | `JaminMidiFx` | AU | `aumi` | Logic's **MIDI FX** slot, where nothing has to be routed by hand. |
 
 Only the bus layout differs — an instrument must declare an output even though it never writes
 to it — so there is one implementation and two declarations of it.
 
-**In Ableton Live:** put **Jamin** on a MIDI track. That track now makes silence. On the track
-holding the sound you want, set **MIDI From** to the Jamin track and then pick **Jamin** in the
-chooser below it, and set **Monitor** to **In**. Repeat per track: that is the arrangement the
-whole idea is for — one chart, one instance per track, a different phrase on each.
+**In Live:** put **Jamin (VST3)** on a MIDI track. That track now makes silence. On the track
+holding the sound you want, set **MIDI From** to the Jamin track, pick **Jamin** in the chooser
+below it, and set **Monitor** to **In**. Repeat per track: that is the arrangement the whole idea
+is for — one chart, one instance per track, a different phrase on each.
 
 **In Logic:** use **Jamin MIDI FX** in the MIDI FX slot above the instrument. No routing.
+
+## What a plugin window cannot do
+
+A `WKWebView` inside a plugin is not a browser tab. Two differences matter, and both were
+measured rather than assumed:
+
+**No downloads.** JUCE wires up `runOpenPanelForFileButtonWithResultListener` but nothing for
+`WKDownload`, so a link that saves a file does nothing at all, silently. `jaminOpenUrl` hands the
+URL to the system browser instead — restricted to `http` and `https`, because a native function
+that will launch anything is a native function that will launch anything.
+
+**Choosing a file works.** The open panel is wired, so the Chordonomicon import works as it does
+in a tab once the download has happened somewhere that can download. The website data store is
+shared across instances in a process, so importing it is once per machine, not once per track.
 
 ---
 

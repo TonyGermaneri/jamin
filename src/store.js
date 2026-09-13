@@ -77,7 +77,18 @@ export const state = reactive({
   midi: { state: 'idle', error: null, inputs: [], outputs: [] },
   // Set once at startup and never again: whether this page is the plugin's
   // editor rather than a browser tab, and who it is if so.
-  host: { active: false, instanceId: null, shared: false },
+  host: {
+    active: false,
+    instanceId: null,
+    shared: false,
+    // Sampled from the clock so the settings dialog can show what the host is
+    // actually saying. "It does not seem to get any transport" is answerable
+    // from these five numbers and from nothing else.
+    messages: 0,
+    hasPlayhead: false,
+    ppq: 0,
+    pulse: 0,
+  },
   status: {
     running: false,
     internal: false,
@@ -406,6 +417,12 @@ function syncStatus() {
   status.internal = engine.internalEnabled
   status.bpm = Math.round(source.bpm * 10) / 10
   const pulsesPerBar = state.score.pulsesPerBar || 96
+  if (state.host.active) {
+    state.host.messages = hostClock.messages
+    state.host.hasPlayhead = hostClock.hasPlayhead
+    state.host.ppq = Math.round(hostClock.ppq * 1000) / 1000
+    state.host.pulse = hostClock.pulse
+  }
   status.bar = Math.floor(live.position / pulsesPerBar) + 1
   status.beat = Math.floor((live.position % pulsesPerBar) / 24) + 1
   state.ui.armed = player.capture.armed
