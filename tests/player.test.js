@@ -246,12 +246,14 @@ for (let i = 0; i < 4; i++) {
 }
 check('every chord gets the same degrees', degrees, ['0,4,7,10', '0,4,7,10', '0,4,7,10', '0,4,7,10'])
 
-// It never leaps a register between chords.
+// It never leaps a register between chords. A fifth is the most it can move:
+// that is what a root going up a fourth looks like once the phrase is placed
+// near the octave asked for, rather than being allowed to drift upward.
 let worst = 0
 for (let i = 1; i < 4; i++) {
   worst = Math.max(worst, Math.abs(sounded[i * 4] - sounded[(i - 1) * 4]))
 }
-check('and never jumps more than a tritone between chords', worst <= 6, true)
+check('and never jumps more than a fifth between chords', worst <= 7, true)
 
 
 // --- by default one phrase covers the whole song, with no dots in the chart ---
@@ -387,5 +389,40 @@ player.tick(1)
 check('the drone sounds under a phrase as well',
   engine.log.filter(l => l[0] === 'on').map(l => l[1]).includes(48), true)
 
+
+
+// --- the octave setting has to actually move the phrase ---
+// It used to be consulted only when there was no previous phrase to follow, so
+// after the first chord it did nothing and the phrase drifted where it liked.
+function meanOverSong(octave) {
+  const e = new FakeEngine()
+  const s2 = makeSettings()
+  s2.accompany.octave = octave
+  const pl = new Player(e, s2)
+  pl.getPhrase = () => pattern
+  pl.setScore(parseScore('| C7 | F7 | Bb7 | Eb7 |', { beatsPerBar: 4, songPhrase: 'pattern' }))
+  for (let t = 1; t <= 383; t++) pl.tick(t)
+  const notes = e.log.filter((l) => l[0] === 'on').map((l) => l[1])
+  return notes.reduce((a, b) => a + b, 0) / notes.length
+}
+const atTwo = meanOverSong(2)
+const atFour = meanOverSong(4)
+const atSix = meanOverSong(6)
+// About two octaves a step. Not exactly, because at the bottom setting the
+// range floor clips one placement and pulls the average up -- which is the range
+// doing its job, not the octave failing to.
+check('about two octaves a step', [atFour - atTwo, atSix - atFour].every((gap) => gap >= 18 && gap <= 24), true)
+check('and it holds for the whole song, not just the first chord', atSix > atFour && atFour > atTwo, true)
+
+// --- the drone goes where the bass goes, not where the phrases go ---
+engine = new FakeEngine(); settings = makeSettings(); player = new Player(engine, settings)
+settings.accompany.bass = true
+settings.midi.bassChannel = 3
+settings.midi.accompChannel = 9
+player.setScore(parseScore('| Cm7 |', { beatsPerBar: 4 }))
+player.tick(1)
+const droneEvents = engine.log.filter((l) => l[0] === 'on' && l[1] === 48)
+check('the drone sounded', droneEvents.length, 1)
+check('on the bass channel, not the accompaniment one', droneEvents[0][2], 3)
 
 console.log(failed === 0 ? 'player: all checks passed' : `player: ${failed} FAILED`)

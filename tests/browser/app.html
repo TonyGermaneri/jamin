@@ -667,6 +667,52 @@
       ok('the aside shows the one selected', catAside && /played over/i.test(catAside.innerText),
         catAside && catAside.innerText.slice(0, 60).replace(/\n/g, ' '))
       // innerText is the rendered text, and Vuetify uppercases buttons in CSS.
+      /* ---------- walking the catalogue ---------- */
+      const catList = document.querySelector('.v-overlay--active .v-list')
+      catList.focus()
+      const arrow = async (key, times = 1) => {
+        for (let i = 0; i < times; i++) {
+          catList.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+          await settle(20)
+        }
+        await settle(250)
+      }
+
+      state.ui.lickTexture = 'any'
+      await settle(200)
+      await arrow('ArrowDown', 3)
+      is('arrowing selects, and selecting plays', typeof store.state.songPhrase, 'string')
+      const afterThree = store.state.songPhrase
+
+      // Walk off the end of the page and the page follows.
+      const activePage = () => {
+        const on = document.querySelector('.v-overlay--active .v-pagination__item--is-active')
+        return on ? Number(on.innerText.trim()) : 0
+      }
+      is('it starts on the first page', activePage(), 1)
+      await arrow('ArrowDown', 14)
+      ok('walking past the last row turns the page', activePage() > 1, `now on page ${activePage()}`)
+      const reached = store.visibleLicks('').findIndex((l) => l.id === store.state.songPhrase)
+      ok('and the selection really is further down the list', reached >= 12, `index ${reached}`)
+      ok('and it is still playing whatever is selected', store.state.songPhrase !== afterThree,
+        store.state.songPhrase)
+
+      // The wheel does the same thing.
+      const beforeWheel = store.state.songPhrase
+      for (let i = 0; i < 6; i++) {
+        catList.dispatchEvent(new WheelEvent('wheel', { deltaY: 40, bubbles: true, cancelable: true }))
+        await settle(20)
+      }
+      await settle(300)
+      ok('the wheel walks it too', store.state.songPhrase !== beforeWheel, store.state.songPhrase)
+
+      // Back to the top.
+      await arrow('ArrowUp', 30)
+      await settle(300)
+      ok('and it walks back', !!store.state.songPhrase)
+      store.bindPhrase(null)
+      await settle(200)
+
       ok('with one Use button and no keeping step',
         /\b(use|playing)\b/i.test(catAside.innerText) && !/keep/i.test(catAside.innerText),
         catAside.innerText.slice(-80).replace(/\n/g, ' '))

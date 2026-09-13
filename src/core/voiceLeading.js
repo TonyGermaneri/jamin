@@ -149,22 +149,31 @@ export function remapPhraseNotes(notes, sourcePcs, targetPcs, opts = {}) {
  * `anchor`, which is normally the phrase as it sounded over the previous chord.
  * That is what keeps a repeating figure from jumping registers mid-progression.
  */
-export function anchorOctave(notes, anchor, range = [0, 127]) {
+export function anchorOctave(notes, anchor, range = [0, 127], home = null) {
   if (!notes.length) return []
 
-  // The phrase moves as a block. A two-handed part spans three octaves or more,
-  // and folding individual notes into range would drop the left hand on top of
-  // the right; better to shift the whole thing and accept the closest fit.
-  const target = anchor && anchor.length ? average(anchor) : average(notes)
+  // Two attractors, deliberately unequal. `home` is the octave asked for, and it
+  // decides; `anchor` is where the phrase sat over the chord before, and it only
+  // smooths. Weighting them the other way round makes the octave setting appear
+  // not to work at all, because after the first chord there is always an anchor.
+  const homeMean = home && home.length ? average(home) : null
+  const anchorMean = anchor && anchor.length ? average(anchor) : null
+  const fallback = homeMean === null && anchorMean === null ? average(notes) : null
+
+  const mean = average(notes)
+  const low = Math.min(...notes)
+  const high = Math.max(...notes)
+
   let best = null
   let bestScore = Infinity
 
-  for (let offset = -36; offset <= 36; offset += 12) {
-    const low = Math.min(...notes) + offset
-    const high = Math.max(...notes) + offset
-    const overflow = Math.max(0, range[0] - low) + Math.max(0, high - range[1])
-    const drift = Math.abs(average(notes) + offset - target)
-    // Staying inside the range matters far more than sitting near the anchor.
+  for (let offset = -48; offset <= 48; offset += 12) {
+    const overflow = Math.max(0, range[0] - (low + offset)) + Math.max(0, high + offset - range[1])
+    let drift = 0
+    if (homeMean !== null) drift += Math.abs(mean + offset - homeMean)
+    if (anchorMean !== null) drift += Math.abs(mean + offset - anchorMean) * (homeMean === null ? 1 : 0.35)
+    if (fallback !== null) drift += Math.abs(mean + offset - fallback)
+    // Staying inside the range matters far more than either.
     const score = overflow * 10 + drift
     if (score < bestScore) {
       bestScore = score
@@ -222,10 +231,10 @@ export function snapToChord(notes, targetPcs) {
  * @param {number[]} notes
  * @param {{rootPc: number, pcs: number[]}} source chord it was played over
  * @param {{rootPc: number, pcs: number[]}} target chord to put it over
- * @param {{anchor?: number[], range?: number[], snapNonChordTones?: boolean}} opts
+ * @param {{anchor?: number[], home?: number[], range?: number[], snapNonChordTones?: boolean}} opts
  */
 export function realizePhrase(notes, source, target, opts = {}) {
-  const { anchor = null, range = [0, 127], snapNonChordTones = false } = opts
+  const { anchor = null, home = null, range = [0, 127], snapNonChordTones = false } = opts
   if (!notes.length) return []
   if (!target || target.rootPc === null || target.rootPc === undefined || !target.pcs.length) {
     return notes.slice()
@@ -243,7 +252,7 @@ export function realizePhrase(notes, source, target, opts = {}) {
 
   if (snapNonChordTones) mapped = snapToChord(mapped, wanted)
 
-  return anchorOctave(mapped, anchor && anchor.length ? anchor : notes, range)
+  return anchorOctave(mapped, anchor, range, home)
 }
 
 /** Pull a note into range by octaves rather than squashing it to the boundary. */

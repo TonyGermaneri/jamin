@@ -196,7 +196,10 @@ export class Player {
     if (!accompany.bass || chord.rootPc === null || chord.rootPc === undefined) return
 
     const midi = this.settings.midi
-    const outputId = midi.accompOutputId || midi.chordOutputId
+    // The bass port and channel, not the accompaniment one. This is the bass,
+    // and sending it where the phrases go puts it on a channel that may well not
+    // be listened to -- which is exactly how it came to look broken.
+    const outputId = midi.bassOutputId || midi.chordOutputId
     const octaves = Math.max(0, accompany.bassOctaves ?? 1)
     // A slash chord says what belongs in the bass, so play that.
     const pitch = chord.bassPc ?? chord.rootPc
@@ -207,7 +210,7 @@ export class Player {
 
     for (const note of wanted) {
       if (note < 0 || note > 127) continue
-      if (this.engine.noteOn(outputId, midi.accompChannel, note, midi.velocity)) this.droneNotes.push(note)
+      if (this.engine.noteOn(outputId, midi.bassChannel, note, midi.velocity)) this.droneNotes.push(note)
     }
   }
 
@@ -236,7 +239,8 @@ export class Player {
     const accompOut = midi.accompOutputId || midi.chordOutputId
     for (const note of this.phraseSounding) this.engine.noteOff(accompOut, midi.accompChannel, note)
     this.phraseSounding.clear()
-    for (const note of this.droneNotes) this.engine.noteOff(accompOut, midi.accompChannel, note)
+    const bassOut = midi.bassOutputId || midi.chordOutputId
+    for (const note of this.droneNotes) this.engine.noteOff(bassOut, midi.bassChannel, note)
     this.droneNotes = []
     this.phraseQueue = []
     this.phraseCursor = 0
@@ -333,7 +337,8 @@ export function buildPhraseQueue(phrase, chord, event, settings, anchor = null) 
     { rootPc: phrase.rootPc ?? 0, pcs: phrase.sourcePcs },
     { rootPc: chord.rootPc, pcs: chord.absPcs },
     {
-      anchor: accompany.keepRegister && anchor && anchor.length ? anchor : home,
+      home,
+      anchor: accompany.keepRegister ? anchor : null,
       snapNonChordTones: accompany.snapNonChordTones,
       range: [accompany.rangeLow ?? chords.rangeLow, accompany.rangeHigh ?? chords.rangeHigh],
     }

@@ -92,6 +92,37 @@ watch(() => [state.ui.progressions, page.value, search.value, state.progressions
   ([open]) => { if (open) load() }, { immediate: true })
 watch(search, () => { page.value = 1 })
 
+/*
+ * The same walking as the catalogue, with one difference: selecting a
+ * progression never inserts it. Auditioning a phrase is harmless; replacing the
+ * whole chart because the wheel moved is not.
+ */
+function step(delta) {
+  if (!rows.value.length) return
+  const at = Math.max(0, rows.value.findIndex((row) => selected.value && row.name === selected.value.name))
+  const next = at + delta
+
+  if (next < 0) {
+    if (page.value > 1) { page.value -= 1; selected.value = null }
+    return
+  }
+  if (next >= rows.value.length) {
+    if (page.value < pageCount.value) { page.value += 1; selected.value = null }
+    return
+  }
+  selected.value = rows.value[next]
+}
+
+let wheelAcc = 0
+function onWheel(event) {
+  event.preventDefault()
+  wheelAcc += event.deltaY
+  while (Math.abs(wheelAcc) >= 30) {
+    step(wheelAcc > 0 ? 1 : -1)
+    wheelAcc -= Math.sign(wheelAcc) * 30
+  }
+}
+
 function insert() {
   if (!selected.value) return
   insertProgression(selected.value, { mode: mode.value, targetPc: targetPc.value, spelling: spelling.value })
@@ -154,7 +185,16 @@ function runExport() {
               <v-col cols="12" md="6">
                 <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable class="mb-2" />
 
-                <v-list v-if="rows.length" density="compact" class="py-0">
+                <v-list
+                  v-if="rows.length"
+                  density="compact"
+                  class="py-0"
+                  tabindex="0"
+                  style="outline: none"
+                  @keydown.down.prevent="step(1)"
+                  @keydown.up.prevent="step(-1)"
+                  @wheel="onWheel"
+                >
                   <v-list-item
                     v-for="row in rows"
                     :key="row.id || row.name"
@@ -178,6 +218,9 @@ function runExport() {
                   density="comfortable"
                   class="mt-2"
                 />
+                <div class="text-caption text-medium-emphasis text-center">
+                  Click the list, then arrow or scroll. Nothing is inserted until you say so.
+                </div>
                 <div v-if="partial" class="text-caption text-medium-emphasis text-center">
                   Showing the first matches found; searching every one of
                   {{ state.bulk.count.toLocaleString() }} would take a while.

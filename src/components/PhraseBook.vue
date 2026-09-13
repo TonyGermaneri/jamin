@@ -60,6 +60,47 @@ watch(list, (rows) => {
 
 const beatsOf = (entry) => Math.round((entry.lengthPulses / 24) * 10) / 10
 
+/*
+ * Arrow keys and the wheel walk the whole catalogue, not just the page: the
+ * index is into the full list of matches, and the page follows it. Selecting is
+ * auditioning -- the phrase goes straight into the song -- so a spin of the
+ * wheel is a way of hearing through ten thousand of them.
+ */
+let useTimer = null
+
+function step(delta) {
+  const all = matches.value
+  if (!all.length) return
+  const at = Math.max(0, all.findIndex((entry) => selected.value && entry.id === selected.value.id))
+  const next = Math.min(all.length - 1, Math.max(0, at + delta))
+  if (next === at && selected.value) return
+
+  selected.value = all[next]
+  page.value = Math.floor(next / PER_PAGE) + 1
+
+  // Using a phrase reparses the chart and writes to storage, so stepping fast
+  // waits for the spinning to stop rather than doing that fifty times a second.
+  clearTimeout(useTimer)
+  useTimer = setTimeout(() => usePhrase(selected.value), 90)
+}
+
+let wheelAcc = 0
+function onWheel(event) {
+  event.preventDefault()
+  wheelAcc += event.deltaY
+  // One row per notch, whether that arrives as one big delta or many small ones.
+  while (Math.abs(wheelAcc) >= 30) {
+    step(wheelAcc > 0 ? 1 : -1)
+    wheelAcc -= Math.sign(wheelAcc) * 30
+  }
+}
+
+function pick(entry) {
+  selected.value = entry
+  clearTimeout(useTimer)
+  usePhrase(entry)
+}
+
 const SPEEDS = [
   { title: '1/16×', value: 0.0625 },
   { title: '1/8×', value: 0.125 },
@@ -199,13 +240,26 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
                   Nothing matches “{{ search }}”.
                 </div>
 
-                <v-list v-else density="compact" class="py-0">
+                <v-list
+                  v-else
+                  density="compact"
+                  class="py-0"
+                  tabindex="0"
+                  style="outline: none"
+                  @keydown.down.prevent="step(1)"
+                  @keydown.up.prevent="step(-1)"
+                  @keydown.page-down.prevent="step(PER_PAGE)"
+                  @keydown.page-up.prevent="step(-PER_PAGE)"
+                  @keydown.home.prevent="step(-matches.length)"
+                  @keydown.end.prevent="step(matches.length)"
+                  @wheel="onWheel"
+                >
                   <v-list-item
                     v-for="entry in list"
                     :key="entry.id"
                     :active="selected && selected.id === entry.id"
                     class="px-2"
-                    @click="selected = entry"
+                    @click="pick(entry)"
                   >
                     <v-list-item-title class="text-body-2 text-truncate">{{ entry.name }}</v-list-item-title>
                     <template #append>
@@ -217,7 +271,8 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
 
                 <v-pagination v-model="page" :length="pageCount" :total-visible="6" density="comfortable" class="mt-2" />
                 <div class="text-caption text-medium-emphasis text-center">
-                  {{ matches.length.toLocaleString() }} of {{ total.toLocaleString() }}
+                  {{ matches.length.toLocaleString() }} of {{ total.toLocaleString() }} ·
+                  click the list, then arrow or scroll to hear your way through it
                 </div>
               </v-col>
 
