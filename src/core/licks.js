@@ -22,6 +22,7 @@
 
 import { parseChord } from './chordParser.js'
 import { parseVocabulary } from './vocParser.js'
+import { normalizePhrase } from './phrases.js'
 
 let defaultUrl = null
 
@@ -125,17 +126,19 @@ export function lickReport() {
 export function entryToPhrase(entry, index) {
   const chord = parseChord(entry.c)
   if (!chord.ok || !chord.absPcs.length) return null
-  return {
+  // Stored in one key, played in any: the catalogue is not key dependent.
+  return normalizePhrase({
     id: `iv${index}`,
     name: entry.n,
     kind: entry.k,
     sourceChord: entry.c,
     sourcePcs: chord.absPcs,
+    rootPc: chord.rootPc,
     quality: chord.pcs.join(','),
     lengthPulses: entry.d,
     notes: entry.v.map(([at, note, duration]) => ({ at, note, velocity: 90, duration })),
     builtin: true,
-  }
+  })
 }
 
 /**

@@ -343,13 +343,20 @@ function roll(phrase, width = 260, height = 54) {
                 with the chord it was played over.
               </p>
               <p class="mb-3">
-                When the chart moves to a different chord, the phrase is re-pointed rather
-                than transposed. Each pitch class of the original chord is matched to the
-                cheapest corresponding pitch class of the new one — common tones stay put,
-                everything else takes the shortest step available. Notes that were not
-                chord tones travel with whichever chord tone they were leaning on, so
-                approach notes stay approach notes. The result is octave-corrected back to
-                the register you played in.
+                Phrases are not key dependent. One is stored rooted on C — as degrees
+                measured from the chord it was played over, rather than the notes you
+                happened to play. Capture something over F minor 7 and it is filed as
+                root, ♭3, 5, ♭7.
+              </p>
+              <p class="mb-3">
+                Putting it over a chord happens in that order, and the order matters. The
+                root goes first, so the degrees stay intact. Only if the new chord is a
+                different <em>shape</em> does minimal-movement voice leading get involved,
+                and by then both chords share a root, so the root stays the root — over a
+                major 7 the ♭3 becomes a 3, over a diminished the 5 becomes a ♭5. Notes
+                that were never chord tones travel with whichever chord tone they were
+                leaning on. Last, the octave is chosen to sit nearest to where the phrase
+                was over the previous chord, so a repeating figure walks rather than leaps.
               </p>
               <p class="mb-3">
                 A phrase applies from the chord it is bound to until the next chord wearing

@@ -144,6 +144,70 @@ export function remapPhraseNotes(notes, sourcePcs, targetPcs, opts = {}) {
   return out.map((note) => clampOctave(note, range[0], range[1]))
 }
 
+/**
+ * Choose the octave a phrase sits in: whichever placement moves least from
+ * `anchor`, which is normally the phrase as it sounded over the previous chord.
+ * That is what keeps a repeating figure from jumping registers mid-progression.
+ */
+export function anchorOctave(notes, anchor, range = [0, 127]) {
+  if (!notes.length) return []
+  if (!anchor || !anchor.length) return notes.map((note) => clampOctave(note, range[0], range[1]))
+
+  const target = average(anchor)
+  let best = notes
+  let bestDistance = Infinity
+  for (const offset of [-24, -12, 0, 12, 24]) {
+    const candidate = notes.map((note) => note + offset)
+    if (candidate.some((note) => note < range[0] || note > range[1])) continue
+    const distance = Math.abs(average(candidate) - target)
+    if (distance < bestDistance) {
+      bestDistance = distance
+      best = candidate
+    }
+  }
+  return best.map((note) => clampOctave(note, range[0], range[1]))
+}
+
+const sameSet = (a, b) => a.length === b.length && a.every((value, i) => value === b[i])
+
+/**
+ * Put a phrase over a chord.
+ *
+ * Root first, shape second. The phrase is transposed so its root lands on the
+ * new chord's root, which is what keeps its degrees intact -- a lick that
+ * outlined root, b3, 5, b7 still outlines root, b3, 5, b7. Only if the new chord
+ * is a different *shape* does the minimal-movement map get involved, and by then
+ * both chords share a root, so the root stays the root.
+ *
+ * Doing it the other way round -- minimal movement first -- silently rotates the
+ * degrees: over Fm7 to Dm7 the cheapest mapping keeps F where it is, turning the
+ * lick's root into the new chord's third.
+ *
+ * @param {number[]} notes
+ * @param {{rootPc: number, pcs: number[]}} source chord it was played over
+ * @param {{rootPc: number, pcs: number[]}} target chord to put it over
+ * @param {{anchor?: number[], range?: number[], snapNonChordTones?: boolean}} opts
+ */
+export function realizePhrase(notes, source, target, opts = {}) {
+  const { anchor = null, range = [0, 127], snapNonChordTones = false } = opts
+  if (!notes.length) return []
+  if (!target || target.rootPc === null || target.rootPc === undefined || !target.pcs.length) {
+    return notes.slice()
+  }
+
+  const shift = signedDelta(source.rootPc, target.rootPc)
+  const moved = notes.map((note) => note + shift)
+  const movedPcs = [...new Set(source.pcs.map((pc) => mod12(pc + shift)))].sort((a, b) => a - b)
+  const wanted = [...new Set(target.pcs.map(mod12))].sort((a, b) => a - b)
+
+  // Same shape: transposition alone is exact, and every degree survives.
+  const mapped = sameSet(movedPcs, wanted)
+    ? moved
+    : remapPhraseNotes(moved, movedPcs, wanted, { keepRegister: false, snapNonChordTones, range })
+
+  return anchorOctave(mapped, anchor && anchor.length ? anchor : notes, range)
+}
+
 /** Pull a note into range by octaves rather than squashing it to the boundary. */
 export function clampOctave(note, low, high) {
   let n = note

@@ -326,6 +326,29 @@
       is('the bound phrase resolves', store.player.getPhrase(state.phrases[0].name) !== null, true)
       ok('it carries the chord it was written over', state.phrases[0].sourceChord === forG7[0].sourceChord,
         state.phrases[0].sourceChord)
+      is('and is stored rooted on C, not in its original key', state.phrases[0].rootPc, 0)
+
+      // The whole point: the same stored phrase over four different roots gives
+      // the same degrees every time.
+      const deg = (n, root) => ((n % 12) - root + 12) % 12
+      const played = []
+      const fake = {
+        noteOn: (o, c, note) => { played.push(note); return true },
+        noteOff: () => true,
+      }
+      const { Player } = await import('../../src/core/player.js')
+      const { parseScore } = await import('../../src/core/score.js')
+      const probe = new Player(fake, JSON.parse(JSON.stringify(state.settings)))
+      probe.settings.midi.chordOutputId = 'x'
+      probe.settings.chords.bassNote = false
+      probe.getPhrase = () => state.phrases[0]
+      probe.setScore(parseScore('.C7{x} F7 A7 Eb7', { beatsPerBar: 4 }))
+      for (let p = 1; p <= 383; p++) probe.tick(p)
+      const perChord = [0, 5, 9, 3].map((root, i) => {
+        const slice = played.slice(i * (played.length / 4), (i + 1) * (played.length / 4))
+        return [...new Set(slice.map((n) => deg(n, root)))].sort((a, b) => a - b).join(',')
+      })
+      ok('the same degrees over every root', new Set(perChord).size === 1, perChord.join(' | '))
       // And the cursor still decides after an edit -- the playing index would be stale.
       store.setText('Dm7 G7 Cmaj7')
       await settle(250)

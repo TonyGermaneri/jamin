@@ -136,13 +136,33 @@ Pick your keyboard as the accompaniment input, arm the red button, and play for
 exactly one chord while the DAW runs. The phrase lands in the phrase book
 (the book icon) with the chord it was played over.
 
-Bind it to a chord and it follows the chart. When the harmony changes, the
-phrase is **re-pointed, not transposed**: each pitch class of the original chord
-is matched to the cheapest corresponding pitch class of the new one, so common
-tones stay put and everything else takes the shortest step available. Notes that
-weren't chord tones move with whichever chord tone they were leaning on, so
-approach notes stay approach notes. The result is octave-corrected back into the
-register you actually played in.
+Bind it to a chord and it follows the chart.
+
+### Phrases are not key dependent
+
+A phrase is stored **rooted on C** -- that is, as degrees measured from the chord
+it was played over, not as the notes you happened to play. Capture something over
+Fm7 and it is filed as root, ♭3, 5, ♭7; play it back over Dm7 and you get D, F,
+A, C. The key it was born in is remembered but never used at playback. Phrases
+saved before this are migrated on load.
+
+Getting it over a chord happens in that order, and the order matters:
+
+1. **Root first.** Transpose so the phrase's root lands on the new chord's root.
+   That is what keeps the degrees intact.
+2. **Shape second.** Only if the new chord is a *different shape* does the
+   minimal-movement map get involved -- and by then both chords share a root, so
+   the root stays the root. Over Dmaj7 the ♭3 becomes a 3 and the ♭7 a 7; over
+   Ddim7 the 5 becomes a ♭5. Notes that were never chord tones move with whichever
+   chord tone they were leaning on, so approach notes stay approach notes.
+3. **Register last.** The octave is chosen to sit closest to where the phrase was
+   in the previous chord, so a figure repeating through a progression walks
+   rather than leaps.
+
+Doing step 2 before step 1 -- which is what "minimal movement" means if you
+forget about the root -- silently rotates the degrees. From Fm7 to Dm7 the
+cheapest mapping leaves F where it is, and a lick that outlined the root comes
+out outlining the third. There is a test for exactly that.
 
 A phrase applies from the chord it is bound to until the next chord wearing a
 dot. Bindings live in the chart text — the dot you see above a chord is literally

@@ -12,7 +12,7 @@
 
 import { eventAtPulse, sameChord, wrapPulse } from './score.js'
 import { realizeChord } from './voicing.js'
-import { remapPhraseNotes } from './voiceLeading.js'
+import { realizePhrase } from './voiceLeading.js'
 
 export class Player {
   constructor(engine, settings) {
@@ -34,6 +34,9 @@ export class Player {
     this.phraseQueue = []
     this.phraseCursor = 0
     this.phraseSounding = new Set()
+    // The phrase as it sounded over the last chord, so the next chord places it
+    // in the register nearest to where it just was.
+    this.lastPhraseNotes = null
 
     this.capture = { armed: false, mode: 'once', notes: [], open: new Map(), startedEvent: -1 }
 
@@ -109,6 +112,7 @@ export class Player {
     this.current = null
     this.currentIndex = -1
     this.lastPosition = 0
+    this.lastPhraseNotes = null
   }
 
   /* ---------------- chord + phrase events ---------------- */
@@ -169,7 +173,14 @@ export class Player {
       if (sent) this.chordBass = voicing.bass
     }
 
-    this.phraseQueue = phrase ? buildPhraseQueue(phrase, chord, event, this.settings) : []
+    if (phrase) {
+      const built = buildPhraseQueue(phrase, chord, event, this.settings, this.lastPhraseNotes)
+      this.phraseQueue = built.queue
+      this.lastPhraseNotes = built.notes
+    } else {
+      this.phraseQueue = []
+      this.lastPhraseNotes = null
+    }
     this.phraseCursor = 0
 
     if (this.onEventChange) {
@@ -283,18 +294,18 @@ export class Player {
  * Lay a phrase over one chord event: re-point every note at the new harmony,
  * then fit it to the length of the slot.
  */
-export function buildPhraseQueue(phrase, chord, event, settings) {
+export function buildPhraseQueue(phrase, chord, event, settings, anchor = null) {
   const accompany = settings.accompany
   const chords = settings.chords
   const slot = event.endPulse - event.startPulse
   const source = phrase.lengthPulses || slot
 
-  const mapped = remapPhraseNotes(
+  const mapped = realizePhrase(
     phrase.notes.map((n) => n.note),
-    phrase.sourcePcs,
-    chord.absPcs,
+    { rootPc: phrase.rootPc ?? 0, pcs: phrase.sourcePcs },
+    { rootPc: chord.rootPc, pcs: chord.absPcs },
     {
-      keepRegister: accompany.keepRegister,
+      anchor: accompany.keepRegister ? anchor : null,
       snapNonChordTones: accompany.snapNonChordTones,
       range: [chords.rangeLow, chords.rangeHigh],
     }
@@ -323,5 +334,5 @@ export function buildPhraseQueue(phrase, chord, event, settings) {
   // Note-offs sort before note-ons at the same instant so a repeated note
   // re-articulates instead of being cut short by its own predecessor.
   queue.sort((a, b) => a.at - b.at || Number(a.on) - Number(b.on))
-  return queue
+  return { queue, notes: mapped }
 }

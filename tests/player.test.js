@@ -104,13 +104,13 @@ check('second chord is the phrase over F', played.slice(3).map(n => n % 12).sort
 // --- fit modes ---
 const event = { startPulse: 0, endPulse: 192, bars: 2, chord: parseChord('C') }
 settings.accompany.fit = 'stretch'
-let queue = buildPhraseQueue(phrase, event.chord, event, settings)
+let queue = buildPhraseQueue(phrase, event.chord, event, settings).queue
 check('stretched to 2 bars', queue.filter(q => q.on).map(q => q.at), [0, 48, 96])
 settings.accompany.fit = 'repeat'
-queue = buildPhraseQueue(phrase, event.chord, event, settings)
+queue = buildPhraseQueue(phrase, event.chord, event, settings).queue
 check('repeated twice', queue.filter(q => q.on).map(q => q.at), [0, 24, 48, 96, 120, 144])
 settings.accompany.fit = 'truncate'
-queue = buildPhraseQueue(phrase, event.chord, event, settings)
+queue = buildPhraseQueue(phrase, event.chord, event, settings).queue
 check('truncated', queue.filter(q => q.on).map(q => q.at), [0, 24, 48])
 
 // --- stop releases everything ---
@@ -176,6 +176,43 @@ check('no-chord releases and sounds nothing', engine.log, [['off', 60, 0], ['off
 engine.log = []
 for (let p = 192; p <= 200; p++) player.tick(p)
 check('the chord after it plays normally', engine.log.filter(l => l[0] === 'on').map(l => l[1]), [65, 69, 72])
+
+
+// --- a phrase keeps its degrees across a progression, and stays put ---
+engine = new FakeEngine(); settings = makeSettings(); player = new Player(engine, settings)
+const arp = {
+  name: 'arp',
+  lengthPulses: 96,
+  rootPc: 0,
+  sourcePcs: [0, 4, 7, 10],
+  sourceChord: 'C7',
+  notes: [
+    { at: 0, note: 60, velocity: 100, duration: 12 },
+    { at: 24, note: 64, velocity: 100, duration: 12 },
+    { at: 48, note: 67, velocity: 100, duration: 12 },
+    { at: 72, note: 70, velocity: 100, duration: 12 },
+  ],
+}
+player.getPhrase = (n) => (n === 'arp' ? arp : null)
+player.setScore(parseScore('.C7{arp} F7 Bb7 Eb7', { beatsPerBar: 4 }))
+for (let p = 1; p <= 383; p++) player.tick(p)
+
+const sounded = engine.log.filter(l => l[0] === 'on').map(l => l[1])
+check('four chords of phrase', sounded.length, 16)
+const roots = [0, 5, 10, 3]
+const degrees = []
+for (let i = 0; i < 4; i++) {
+  const four = sounded.slice(i * 4, i * 4 + 4)
+  degrees.push(four.map(n => ((n % 12) - roots[i] + 12) % 12).join(','))
+}
+check('every chord gets the same degrees', degrees, ['0,4,7,10', '0,4,7,10', '0,4,7,10', '0,4,7,10'])
+
+// It never leaps a register between chords.
+let worst = 0
+for (let i = 1; i < 4; i++) {
+  worst = Math.max(worst, Math.abs(sounded[i * 4] - sounded[(i - 1) * 4]))
+}
+check('and never jumps more than a tritone between chords', worst <= 6, true)
 
 
 console.log(failed === 0 ? 'player: all checks passed' : `player: ${failed} FAILED`)

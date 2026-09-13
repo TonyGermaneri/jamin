@@ -13,7 +13,14 @@ import { MidiEngine } from './core/midi.js'
 import { Player } from './core/player.js'
 import { parseScore } from './core/score.js'
 import { loadSettings, saveSettings, defaultSettings, TEXT_KEY, SAMPLE_CHART } from './core/settings.js'
-import { loadPhrases, savePhrases, uniqueName, bindPhraseInText, unbindPhraseInText } from './core/phrases.js'
+import {
+  loadPhrases,
+  savePhrases,
+  uniqueName,
+  bindPhraseInText,
+  unbindPhraseInText,
+  normalizePhrase,
+} from './core/phrases.js'
 import {
   BUILTIN_PROGRESSIONS,
   loadProgressions,
@@ -349,10 +356,11 @@ export function disarmCapture() {
 
 export function keepCapture(name) {
   if (!state.pendingCapture) return null
-  const phrase = {
+  // Stored rooted on C, so what you played over one chord works over any.
+  const phrase = normalizePhrase({
     ...state.pendingCapture,
     name: uniqueName(state.phrases, name || `${state.pendingCapture.sourceChord}-lick`),
-  }
+  })
   delete phrase.capturedAt
   phrase.createdAt = Date.now()
   state.phrases = [phrase, ...state.phrases]
@@ -487,6 +495,10 @@ export function adoptLick(lick, bind = false) {
     lengthPulses: lick.lengthPulses,
     sourcePcs: lick.sourcePcs.slice(),
     sourceChord: lick.sourceChord,
+    // Carried explicitly: the catalogue is already rooted on C, and leaving this
+    // to a default would make that a coincidence rather than a fact.
+    rootPc: lick.rootPc ?? 0,
+    originalRoot: lick.originalRoot,
     bars: lick.lengthPulses / 96,
     origin: 'Impro-Visor',
     createdAt: Date.now(),
