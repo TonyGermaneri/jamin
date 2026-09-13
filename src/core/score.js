@@ -5,7 +5,7 @@
  *   - whitespace separates bars:            `C  F  G`      -> three 1-bar chords
  *   - the same chord twice is one long one: `C  C  F`      -> 2 bars of C, 1 of F
  *   - commas subdivide a bar:               `F,F- C`       -> 1/2 F, 1/2 Fm, 1 C
- *   - `|` is decoration, ignored by the clock
+ *   - `|` and `[section labels]` are decoration, ignored by the clock
  *   - `%` repeats the previous bar
  *   - a leading `.` marks a phrase change:  `.C7{walkup}`
  *
@@ -46,6 +46,13 @@ export function parseScore(text, opts = {}) {
     for (const group of splitGroups(lineText, lineStart)) {
       if (/^\|+$/.test(group.text)) {
         tokens.push(makeToken(group, lineIndex, 'barline'))
+        line.tokens.push(tokens.length - 1)
+        continue
+      }
+
+      // [Verse], [A], [chorus 2] -- a label for the reader, invisible to the clock.
+      if (/^\[[^\]]*\]$/.test(group.text)) {
+        tokens.push(makeToken(group, lineIndex, 'label'))
         line.tokens.push(tokens.length - 1)
         continue
       }
@@ -145,10 +152,15 @@ export function parseScore(text, opts = {}) {
   }
 }
 
-/** Whitespace-delimited runs, with absolute character offsets. */
+/**
+ * Whitespace-delimited runs, with absolute character offsets.
+ *
+ * A bracketed label is taken whole first, so `[verse 1]` stays one token
+ * instead of becoming two unreadable chords.
+ */
 function splitGroups(lineText, offset) {
   const out = []
-  const re = /\S+/g
+  const re = /\[[^\]]*\]|\S+/g
   let m
   while ((m = re.exec(lineText))) out.push({ text: m[0], start: offset + m.index, end: offset + m.index + m[0].length })
   return out

@@ -43,9 +43,9 @@
       engine.onTransport = (kind) => player.transport(kind)
 
       /* ---------- everything stays on the virtual bus ---------- */
-      // Pick a bus that nothing else is talking on -- an IAC bus carrying a live
-      // clock would merge with the one this test sends, which is correct
-      // behaviour but makes for a useless assertion.
+      // Pick a bus with no clock on it. Note traffic from something else sharing
+      // the bus is fine -- captures are filtered to our own channel -- but a live
+      // clock would merge with the one this test sends and corrupt the count.
       const busPairs = engine.outputs
         .filter((out) => /IAC/i.test(out.name))
         .map((out) => ({ out, in: engine.inputs.find((i) => i.name === out.name) }))
@@ -53,24 +53,28 @@
 
       const traffic = new Map()
       for (const pair of busPairs) {
-        traffic.set(pair.in.id, 0)
-        engine.access.inputs
-          .get(pair.in.id)
-          .addEventListener('midimessage', () => traffic.set(pair.in.id, traffic.get(pair.in.id) + 1))
+        traffic.set(pair.in.id, { clock: 0, other: 0 })
+        engine.access.inputs.get(pair.in.id).addEventListener('midimessage', (event) => {
+          const tally = traffic.get(pair.in.id)
+          if (event.data[0] >= 0xf2) tally.clock++
+          else tally.other++
+        })
       }
       await settle(1000)
-      const quiet = busPairs.find((pair) => traffic.get(pair.in.id) === 0)
-      const busy = busPairs.find((pair) => traffic.get(pair.in.id) > 0)
+      const describe = (pair) => {
+        const t = traffic.get(pair.in.id)
+        return `${pair.out.name}: ${t.clock} clock, ${t.other} other`
+      }
+      const quiet = busPairs.find((pair) => traffic.get(pair.in.id).clock === 0)
+      const busy = busPairs.find((pair) => traffic.get(pair.in.id).clock > 0)
 
       const busOut = quiet && quiet.out
       const busIn = quiet && quiet.in
-      ok('a quiet loopback bus is available', !!busOut && !!busIn,
-        busPairs.map((p) => `${p.out.name}:${traffic.get(p.in.id)} msgs`).join(', '))
+      ok('a loopback bus with no clock on it', !!busOut && !!busIn, busPairs.map(describe).join(' | '))
       if (!busOut || !busIn) {
-        window.__results = { results, warnings: ['no loopback bus; skipped'] }
+        window.__results = { results, warnings: ['every loopback bus is carrying clock; scripted half skipped'] }
         window.__done = true
-        throw new Error('no loopback bus')
-      }
+      } else {
 
       const output = engine.output(busOut.id)
       const input = engine.access.inputs.get(busIn.id)
@@ -146,6 +150,8 @@
       ok('stop reported', engine.running === false)
       const trailing = heard.filter((h) => h[0] === 'on').length - heard.filter((h) => h[0] === 'off').length
       ok('every note sounded was released', trailing === 0, `${trailing} left hanging`)
+
+      } // end of the scripted half
 
       /* ---------- lock onto a clock we did not generate ---------- */
       // This is the real case: a running DAW, clock already in flight, no Start

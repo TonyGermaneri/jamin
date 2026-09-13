@@ -306,6 +306,25 @@
       await settle(120)
       is('deleted', store.state.progressions.length, before)
 
+      // A Hugging Face datasets-server response, in Chordonomicon's dialect.
+      const hf = store.importProgressionJson(JSON.stringify({
+        rows: [{ row_idx: 0, row: { id: 7, chords: '<verse_1> C Amin Fs7 Bmin <chorus_1> A/Cs Gsus4 Csus4', main_genre: 'rock', decade: 1970 } }],
+      }))
+      await settle(200)
+      ok('imported a Hugging Face envelope', hf.ok, hf.error || '')
+      is('converted the dialect', store.state.progressions[0].text,
+        '[verse 1] C Amin F#7 Bmin\n[chorus 1] A/C# Gsus4 Csus4')
+      is('named from metadata', store.state.progressions[0].name, 'rock 1970s #7')
+      store.insertProgression(store.state.progressions[0], { mode: 'replace' })
+      await settle(250)
+      ok('every imported chord is readable', state.score.tokens.every((t) => t.type !== 'error'),
+        state.score.tokens.filter((t) => t.type === 'error').map((t) => t.text).join(' '))
+      is('labels do not consume bars', state.score.events.length, 7)
+      is('labels are their own token type', state.score.tokens.filter((t) => t.type === 'label').map((t) => t.text),
+        ['[verse 1]', '[chorus 1]'])
+      store.deleteProgression(store.state.progressions[0].name)
+      await settle(150)
+
       // Import a foreign shape, then export ours.
       const imported = store.importProgressionJson('[{"title":"From the wild","chords":["D-7","G7","C"],"genre":"jazz"}]')
       await settle(150)

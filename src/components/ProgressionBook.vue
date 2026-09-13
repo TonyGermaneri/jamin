@@ -30,6 +30,17 @@ const renaming = ref(null)
 const renameTo = ref('')
 const newName = ref('')
 const importText = ref('')
+
+// A ready-made slice of Chordonomicon. The data stays theirs; we only convert.
+const CHORDONOMICON_URL =
+  'https://datasets-server.huggingface.co/rows?dataset=ailsntua%2FChordonomicon&config=default&split=train&offset=0&length=100'
+
+function copyUrl() {
+  navigator.clipboard?.writeText(CHORDONOMICON_URL).then(
+    () => toast('URL copied — open it, then paste the response below'),
+    () => toast('Select the URL and copy it')
+  )
+}
 const exportText = ref('')
 
 const ROOTS = Array.from({ length: 12 }, (_, pc) => pc)
@@ -232,8 +243,21 @@ function runExport() {
             <div class="text-caption text-medium-emphasis mb-2">
               Paste a collection as JSON. Our own export works, and so do most shapes found in the
               wild: a bare array, <code>{ progressions: [...] }</code>, entries using
-              <code>title</code>/<code>chords</code> instead of <code>name</code>/<code>text</code>.
+              <code>title</code>/<code>chords</code> instead of <code>name</code>/<code>text</code>,
+              and Hugging Face's <code>{ rows: [...] }</code> envelope.
             </div>
+
+            <v-alert density="compact" variant="tonal" class="mb-3 text-caption">
+              <div class="mb-2">
+                <strong>Chordonomicon</strong> — 680,000 progressions with genre and section tags.
+                It is CC-BY-NC-4.0, so jamin ships the converter, not the data: fetch a slice
+                yourself and paste the response.
+              </div>
+              <div class="d-flex align-center" style="gap: 8px">
+                <code class="text-truncate" style="flex: 1; font-size: 11px">{{ CHORDONOMICON_URL }}</code>
+                <v-btn size="x-small" variant="text" @click="copyUrl">Copy</v-btn>
+              </div>
+            </v-alert>
             <v-textarea
               v-model="importText"
               label="Paste JSON here"

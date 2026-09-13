@@ -42,6 +42,7 @@ Everything is separated by spaces, the way you'd write it on a napkin.
 | `C C F` | one chord lasting two bars, then F — not two attacks |
 | `F,F- C` | half a bar of F, half of F minor, then a bar of C |
 | `\| C F \|` | bar lines are decoration and are ignored |
+| `[Verse 1] C F` | labels are decoration too, and may contain spaces |
 | `C % F` | `%` repeats the previous bar |
 
 **Quality.** `A- Am Ami Amin Aminor` are all the same chord, and so are
@@ -84,8 +85,20 @@ chart.
 
 Import and export are JSON. The importer is deliberately forgiving about shape --
 our own export, a bare array, `{progressions: [...]}`, entries using
-`title`/`chords` instead of `name`/`text` -- so a collection found elsewhere
-usually just goes in.
+`title`/`chords` instead of `name`/`text`, and Hugging Face's `{rows: [...]}`
+envelope -- so a collection found elsewhere usually just goes in.
+
+**Chordonomicon** (680,000 progressions, with genre and section tags) converts on
+the way in. Its dialect differs from ours in exactly three ways, each confirmed
+against the data rather than assumed: sharps are written `s` (`Fs7` is F#7);
+except when that `s` begins `sus` (`Fsus4` is F sus4, and nothing in the corpus
+contains `ss`, so F#sus4 never arises); and `no3d` means "no 3rd". Section tags
+become `[verse 1]` labels on their own lines. Every chord symbol observed in the
+corpus is covered by the parser, bar one that is corrupt at source -- that one
+stays visibly unreadable in the chart rather than being quietly invented.
+
+The data is CC-BY-NC-4.0, so jamin ships the converter and not the collection.
+The import tab has the URL for a ready-made slice.
 
 ## Mr. Accompany Me
 
@@ -151,6 +164,35 @@ The chord readout names what it thinks you typed using
 roughly 2000 pitch-class sets generated from Pascal's triangle and named by hand.
 The parser itself is rule-based; the dictionary is for naming and for searching
 (Settings → Notation). Regenerate `src/data/chordSets.json` with `npm run chords`.
+
+## Licence
+
+GPL-3.0-or-later. See `LICENSE`.
+
+Version 3 specifically, rather than 2: Impro-Visor's lick vocabulary is
+"GPL v2 or later", so v3 is open to us, and our `@mdi/font` dependency is
+Apache-2.0 — which is compatible with GPLv3 but not with GPLv2. Vue and Vuetify
+are MIT, which is fine either way.
+
+### On bundling other people's collections
+
+Licence before download, every time.
+
+- **Impro-Visor** (`vocab/My.voc`, ~530KB of licks, cells and idioms) is
+  GPL-2.0-or-later, so it can be bundled here with attribution. It is the
+  closest thing to a sibling project: its vocabulary auto-transposes to the
+  chord of the moment, which is what Mr. Accompany Me does.
+- **Chordonomicon** is **CC-BY-NC-4.0** on Hugging Face — non-commercial, which
+  is an added restriction the GPL does not permit, so it *cannot* be bundled or
+  redistributed here. (The GitHub repo's Apache-2.0 covers the code, not the
+  data.) jamin therefore ships the *converter*, not the data: download it
+  yourself and paste it into the importer. Your own use stays within CC-BY-NC.
+- Several jazz corpora that fit the notation almost perfectly state **no licence
+  at all** and are transcriptions of copyrighted songs. Import-only, never
+  bundled.
+
+The built-in progressions are generic idioms written by hand for this project,
+and carry no third-party claim.
 
 ## Tests
 

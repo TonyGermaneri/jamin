@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Web MIDI chord chart that reads shorthand fakebook notation and plays it in sync with your DAW.",
+  "license": "GPL-3.0-or-later",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

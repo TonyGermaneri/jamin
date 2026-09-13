@@ -13,6 +13,12 @@
 
 import { parseScore } from './score.js'
 import { pcName } from './chordParser.js'
+import {
+  chordonomiconToChart,
+  looksLikeChordonomicon,
+  unwrapDatasetsServer,
+  describeChordonomiconRow,
+} from './importers.js'
 
 export const PROGRESSION_KEY = 'jamin.progressions.v1'
 export const EXPORT_FORMAT = 'jamin.progressions'
@@ -187,33 +193,35 @@ export function parseProgressionImport(input) {
     }
   }
 
-  const rows = Array.isArray(data)
-    ? data
-    : Array.isArray(data && data.progressions)
-      ? data.progressions
-      : Array.isArray(data && data.items)
-        ? data.items
-        : null
+  const rows =
+    unwrapDatasetsServer(data) ||
+    (Array.isArray(data)
+      ? data
+      : Array.isArray(data && data.progressions)
+        ? data.progressions
+        : Array.isArray(data && data.items)
+          ? data.items
+          : null)
 
   if (!rows) return { ok: false, error: 'No list of progressions found', progressions: [] }
 
   const progressions = []
   const skipped = []
-  for (const row of rows) {
-    if (!row || typeof row !== 'object') continue
+  rows.forEach((row, index) => {
+    if (!row || typeof row !== 'object') return
     const text = readText(row)
-    const name = cleanName(row.name || row.title || row.label || '')
+    const name = cleanName(row.name || row.title || row.label || '') || cleanName(describeChordonomiconRow(row, index))
     if (!text) {
       skipped.push(name || '(unnamed)')
-      continue
+      return
     }
     progressions.push({
       name: name || 'Untitled',
       text,
-      tags: Array.isArray(row.tags) ? row.tags.map(String) : row.genre ? [String(row.genre)] : [],
+      tags: readTags(row),
       source: row.source || row.artist || row.attribution || '',
     })
-  }
+  })
 
   return { ok: progressions.length > 0, progressions, skipped, error: progressions.length ? null : 'Nothing usable in there' }
 }
@@ -222,12 +230,32 @@ function readText(row) {
   if (typeof row.text === 'string' && row.text.trim()) return row.text.trim()
   if (typeof row.chart === 'string' && row.chart.trim()) return row.chart.trim()
   if (typeof row.progression === 'string' && row.progression.trim()) return row.progression.trim()
+
   for (const key of ['chords', 'sequence', 'bars']) {
-    if (Array.isArray(row[key]) && row[key].length) {
-      return row[key].map((entry) => (typeof entry === 'string' ? entry : entry && entry.chord)).filter(Boolean).join(' ')
+    const value = row[key]
+    if (Array.isArray(value) && value.length) {
+      return value.map((entry) => (typeof entry === 'string' ? entry : entry && entry.chord)).filter(Boolean).join(' ')
+    }
+    // A whole song in one string. Only run the Chordonomicon dialect through
+    // its converter when it actually looks like Chordonomicon -- its `s`-means-
+    // sharp rule would mangle ordinary chord names.
+    if (typeof value === 'string' && value.trim()) {
+      return looksLikeChordonomicon(value) ? chordonomiconToChart(value) : value.trim()
     }
   }
   return ''
+}
+
+function readTags(row) {
+  if (Array.isArray(row.tags)) return row.tags.map(String)
+  const out = []
+  for (const key of ['genre', 'main_genre', 'rock_genre']) {
+    if (row[key]) out.push(String(row[key]))
+  }
+  if (Array.isArray(row.genres)) out.push(...row.genres.map(String))
+  else if (row.genres) out.push(String(row.genres))
+  if (row.decade) out.push(`${row.decade}s`)
+  return [...new Set(out.filter(Boolean))].slice(0, 5)
 }
 
 /* ------------------------------------------------------------------ *

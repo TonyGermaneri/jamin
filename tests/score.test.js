@@ -73,4 +73,15 @@ s = parseScore('C Hzz G', { beatsPerBar: 4 })
 check('error token type', s.tokens[1].type, 'error')
 check('still 3 events', s.events.length, 3)
 
+
+// labels are decoration, and survive containing spaces
+s = parseScore('[Verse 1] C F [A] G', { beatsPerBar: 4 })
+check('labels do not consume bars', s.events.length, 3)
+check('label token type', s.tokens[0].type, 'label')
+check('a label keeps its spaces', s.tokens[0].text, '[Verse 1]')
+check('short labels work too', s.tokens.filter(t => t.type === 'label').map(t => t.text), ['[Verse 1]', '[A]'])
+check('label offsets are right', [s.tokens[0].start, s.tokens[0].end], [0, 9])
+check('chords after a label still parse', s.tokens[1].chord.ok, true)
+check('an unclosed bracket is just an unreadable chord', parseScore('[oops C').tokens[0].type, 'error')
+
 console.log(failed === 0 ? 'score: all checks passed' : `score: ${failed} FAILED`)
