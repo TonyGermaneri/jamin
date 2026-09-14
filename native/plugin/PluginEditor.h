@@ -31,6 +31,8 @@ private:
     juce::WebBrowserComponent browser;
 
     uint64_t lastSongGeneration { 0 };
+    uint64_t lastRoster { 0 };
+    uint64_t lastPhraseRequest { 0 };
   int lastCompiledEvents { -1 };
     double lastPpqSent { -1.0 };
     bool lastPlayingSent { false };

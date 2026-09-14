@@ -135,6 +135,31 @@ async function retryMidi() {
               </InfoTip>
             </div>
 
+            <v-select
+              v-if="state.host.active"
+              v-model="state.settings.instances.quantize"
+              :items="[
+                { title: 'On the next bar', value: 'bar' },
+                { title: 'On the next beat', value: 'beat' },
+                { title: 'Instantly', value: 'instant' },
+              ]"
+              label="Mute and solo take effect"
+              density="compact"
+              hide-details
+              class="mb-2"
+            />
+            <div v-if="state.host.active" class="text-caption text-medium-emphasis mb-4">
+              Muting a track in the phrase book stops its notes, not its audio.
+              <InfoTip>
+                A DAW mutes audio, after the notes have been played. This decides whether the notes
+                happen at all, which is a different musical act and one the mixer cannot perform.
+                It lands on a bar line by default, so a part stops where a musician would stop it
+                rather than wherever the mouse was. Solo silences every other instance in this
+                project without touching their own mute switches, so letting it go puts the session
+                back exactly as it was.
+              </InfoTip>
+            </div>
+
             <v-alert
               v-if="state.net.state === 'refused'"
               type="error" variant="tonal" density="compact" class="mb-4"

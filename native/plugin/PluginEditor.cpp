@@ -1,6 +1,7 @@
 #include "PluginEditor.h"
 #include "PluginPaths.h"
 
+#include <jamin/Roster.h>
 #include <jamin/SongBus.h>
 
 namespace
@@ -140,6 +141,51 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                        {
                            complete (juce::JSON::parse (plugin.network.docJson()));
                        })
+                   .withNativeFunction ("jaminRoster",
+                       [this] (const juce::Array<juce::var>&, auto complete)
+                       {
+                           // Every instance of jamin in this host, and which of
+                           // them may be heard. @see jamin::Roster
+                           auto* object = new juce::DynamicObject();
+                           object->setProperty ("me", plugin.instanceId);
+                           object->setProperty ("instances",
+                                                juce::JSON::parse (jamin::Roster::instance().json()));
+                           complete (juce::var (object));
+                       })
+                   .withNativeFunction ("jaminDescribe",
+                       [this] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // What this instance is playing, so the other windows
+                           // can label its tab with something truthful. The name
+                           // is the DAW's and is not overwritten here.
+                           if (plugin.seat != nullptr && ! args.isEmpty())
+                               jamin::Roster::instance().describe (plugin.seat,
+                                                                   plugin.seat->name,
+                                                                   args[0].toString().toStdString());
+                           complete (juce::var (true));
+                       })
+                   .withNativeFunction ("jaminSetInstance",
+                       [this] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // Mute or solo any instance in this host, from any
+                           // instance's window -- which is the point of the
+                           // whole thing: no hunting through the session for the
+                           // track you want to silence.
+                           if (args.size() >= 3)
+                           {
+                               const auto id = args[0].toString();
+                               const auto what = args[1].toString();
+
+                               if (what == "muted")
+                                   plugin.setInstanceMuted (id, static_cast<bool> (args[2]));
+                               else if (what == "soloed")
+                                   plugin.setInstanceSoloed (id, static_cast<bool> (args[2]));
+                               else if (what == "phrase")
+                                   jamin::Roster::instance().requestPhrase (id.toStdString(),
+                                                                            args[2].toString().toStdString());
+                           }
+                           complete (juce::var (jamin::Roster::instance().json()));
+                       })
                    .withNativeFunction ("jaminOpenUrl",
                        [] (const juce::Array<juce::var>& args, auto complete)
                        {
@@ -256,6 +302,42 @@ void JaminEditor::timerCallback()
         object->setProperty ("generation", (juce::int64) song.generation);
         browser.emitEventIfBrowserIsVisible ("jaminSong", juce::var (object));
     }
+
+    // Somebody muted a track, soloed one, renamed one, or changed what one is
+    // playing. One atomic load unless it did.
+    if (const auto revision = jamin::Roster::instance().revision(); revision != lastRoster)
+    {
+        lastRoster = revision;
+        auto* object = new juce::DynamicObject();
+        object->setProperty ("me", plugin.instanceId);
+        object->setProperty ("instances", juce::JSON::parse (jamin::Roster::instance().json()));
+        browser.emitEventIfBrowserIsVisible ("jaminRoster", juce::var (object));
+    }
+
+    // Another window has asked this instance to play something. Only this
+    // instance can act on it: the catalogue the name is looked up in lives in
+    // this page and nowhere else.
+    {
+        std::string wanted;
+        if (jamin::Roster::instance().takePhraseRequest (plugin.seat, wanted, lastPhraseRequest))
+        {
+            auto* object = new juce::DynamicObject();
+            object->setProperty ("phrase", juce::String (wanted));
+            browser.emitEventIfBrowserIsVisible ("jaminSetPhrase", juce::var (object));
+        }
+    }
+
+    // A DAW nudged the articulation. Which one comes next is a question about a
+    // catalogue that lives in the browser, so the answer is the page's.
+    if (const auto step = plugin.phraseStep.exchange (0, std::memory_order_relaxed); step != 0)
+    {
+        auto* object = new juce::DynamicObject();
+        object->setProperty ("step", step);
+        browser.emitEventIfBrowserIsVisible ("jaminPhraseStep", juce::var (object));
+    }
+
+    if (const auto rolls = plugin.phraseRandom.exchange (0, std::memory_order_relaxed); rolls != 0)
+        browser.emitEventIfBrowserIsVisible ("jaminPhraseRandom", juce::var (true));
 
     // Say what the last compile produced, once per change. The page shows it in
     // the host readout: "0 events" with a chart on screen is a different problem

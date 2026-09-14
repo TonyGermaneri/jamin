@@ -4,6 +4,7 @@
 
 #include <jamin/Node.h>
 #include <jamin/Sequence.h>
+#include <jamin/Roster.h>
 #include <jamin/SongBus.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -65,6 +66,44 @@ public:
 
     void getStateInformation (juce::MemoryBlock&) override;
     void setStateInformation (const void*, int) override;
+
+    /** The DAW's own name for this track, when the host offers one. It is what
+        the tabs are labelled with, so a person can tell which is which. */
+    void updateTrackProperties (const TrackProperties& properties) override;
+
+    // ------------------------------------------------------------------ the roster
+
+    /**
+        This instance's place among the others in this host. @see jamin::Roster
+
+        The audio thread reads `audible` off it and nothing else; everything a
+        person changes happens on the message thread.
+    */
+    jamin::Roster::Handle seat;
+
+    /** Where a quantised change would land, given where the playhead is now.
+        Negative when the answer is "now". */
+    double nextBoundaryPpq() const;
+
+    /** Mute or solo any instance in this host, quantised as the settings say. */
+    void setInstanceMuted (const juce::String& id, bool muted);
+    void setInstanceSoloed (const juce::String& id, bool soloed);
+
+    /** bar | beat | instant. Parsed out of the saved state with everything else. */
+    juce::String quantizeMode { "bar" };
+
+    /** The parameters a DAW can automate. One instance's own, which is exactly
+        right: each track automates the track it is on. */
+    juce::AudioParameterBool* muteParam { nullptr };
+    juce::AudioParameterBool* soloParam { nullptr };
+    juce::AudioParameterBool* nextPhraseParam { nullptr };
+    juce::AudioParameterBool* prevPhraseParam { nullptr };
+    juce::AudioParameterBool* randomPhraseParam { nullptr };
+
+    /** Raised when a step parameter is nudged, for the editor to act on -- the
+        catalogue is a browser thing and the parameter is not. */
+    std::atomic<int> phraseStep { 0 };
+    std::atomic<int> phraseRandom { 0 };
 
     // ------------------------------------------------------------------ the bridge
 
@@ -197,6 +236,17 @@ private:
     bool pedalHeld[16] {};
     bool wasPlaying { false };
     double lastPpq { 0.0 };
+
+    /// What the audio thread last decided about being heard, so the moment it
+    /// stops being heard it can release what it was holding.
+    bool wasAudible { true };
+
+    /// Set by the parameters, read by the timer: a parameter may be moved from
+    /// any thread, and the roster's lock belongs to the message thread.
+    std::atomic<bool> muteWanted { false };
+    std::atomic<bool> soloWanted { false };
+    bool lastMuteParam { false }, lastSoloParam { false };
+    bool lastNext { false }, lastPrev { false }, lastRandom { false };
 
     JUCE_DECLARE_WEAK_REFERENCEABLE (JaminProcessor)
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (JaminProcessor)

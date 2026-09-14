@@ -86,6 +86,10 @@ export const state = reactive({
   // Several machines holding the same chart. Empty until this page turns out
   // to have been served by a node. @see src/core/net.js
   net: { joined: false, state: 'offline', peers: [], site: null, address: null },
+  // Every instance of jamin in this host: which track each is on, what it is
+  // playing, and whether it may be heard. @see jamin::Roster
+  roster: { me: null, instances: [] },
+
   host: {
     active: false,
     instanceId: null,
@@ -124,6 +128,8 @@ export const state = reactive({
     settingsTab: 'midi',
     phrasesTab: 'catalogue',
     lickTexture: 'any',
+    /// Which instance the phrase book is pointed at. Null is this one.
+    targetInstance: null,
     progressionsTab: 'library',
     armed: false,
     accentArmed: false,
@@ -308,6 +314,24 @@ async function adoptHost() {
   onHost('jaminSong', (song) => {
     if (song && typeof song.json === 'string') adoptShared(song.json)
   })
+
+  // Somebody joined, left, was muted, soloed or renamed.
+  onHost('jaminRoster', (roster) => adoptRoster(roster))
+
+  // Another window asked this instance to play something. Only this instance
+  // can act on it: the catalogue the name is looked up in is here.
+  onHost('jaminSetPhrase', (request) => {
+    if (request && typeof request.phrase === 'string') {
+      setSongPhrase(request.phrase || null)
+    }
+  })
+
+  // A DAW nudged the articulation, or rolled the dice. Both are the same act as
+  // clicking in the phrase book, so they go through the same door.
+  onHost('jaminPhraseStep', (nudge) => stepSongPhrase((nudge && nudge.step) | 0))
+  onHost('jaminPhraseRandom', () => randomSongPhrase())
+
+  adoptRoster(await callHost('jaminRoster').catch(() => null))
 
   const info = await callHost('jaminReady').catch(() => null)
   if (!info) return
@@ -533,6 +557,117 @@ function adoptShared(json) {
   } finally {
     applyingShared = false
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * The other instances of jamin in this host
+ *
+ * One window, every track. A DAW hides a plugin's window behind whichever
+ * track is selected, so controlling eight instances means clicking through
+ * eight tracks -- and by the time you get there the moment has gone. The tabs
+ * put all of them in one place.
+ *
+ * Muting here is not the DAW's mute. A DAW mutes audio, after the notes have
+ * been played; this decides whether the notes happen at all, and lands on a bar
+ * line. @see jamin::Roster
+ * ------------------------------------------------------------------ */
+
+function adoptRoster(roster) {
+  if (!roster || !Array.isArray(roster.instances)) return
+  state.roster.me = roster.me || state.roster.me
+  state.roster.instances = roster.instances
+}
+
+/** This instance, as the roster has it. */
+export function myInstance() {
+  return state.roster.instances.find((i) => i.id === state.roster.me) || null
+}
+
+/** Mute a track's *notes*, on the next bar line unless the settings say sooner. */
+export function setInstanceMuted(id, muted) {
+  callHost('jaminSetInstance', id, 'muted', Boolean(muted)).then(adoptRosterJson).catch(() => {})
+}
+
+export function setInstanceSoloed(id, soloed) {
+  callHost('jaminSetInstance', id, 'soloed', Boolean(soloed)).then(adoptRosterJson).catch(() => {})
+}
+
+/** Ask an instance to play an articulation. Ours we can simply set. */
+export function setInstancePhrase(id, phraseName) {
+  if (!id || id === state.roster.me) {
+    setSongPhrase(phraseName || null)
+    return
+  }
+  callHost('jaminSetInstance', id, 'phrase', phraseName || '').then(adoptRosterJson).catch(() => {})
+}
+
+function adoptRosterJson(json) {
+  if (typeof json !== 'string') return
+  try {
+    adoptRoster({ me: state.roster.me, instances: JSON.parse(json) })
+  } catch {
+    /* the next event carries it anyway */
+  }
+}
+
+/** Tell the host what this instance is playing, so its tab says something true. */
+function describeInstance() {
+  if (hosted()) callHost('jaminDescribe', state.songPhrase || '').catch(() => {})
+}
+
+/* ------------------------------------------------------------------ *
+ * Picking an articulation without pointing at it
+ *
+ * There are several thousand phrases, so a knob that scrolls through them is
+ * the only control surface gesture that makes sense -- and a die is the only
+ * one that makes sense when you do not know what you want.
+ * ------------------------------------------------------------------ */
+
+/**
+ * What stepping and the dice move across: the phrase book's filtered list.
+ *
+ * Not the whole catalogue. Ten thousand phrases under a knob is not a control,
+ * it is a scroll bar with no end -- whereas the 362 pads, or the 89 in F#, is a
+ * set you can hold in your head and turn through. The filters are what make the
+ * knob mean something, so the knob follows them.
+ *
+ * Kept outside the reactive state on purpose: it is the phrase book's own array,
+ * thousands of entries long, and making it reactive would make every keystroke
+ * in the search box walk all of it.
+ */
+let phrasePool = null
+
+/** The phrase book says what it is showing. @see components/PhraseBook.vue */
+export function setPhrasePool(list) {
+  phrasePool = Array.isArray(list) && list.length ? list : null
+}
+
+/** The filtered list, or everything if the book has not narrowed it. */
+function steppable() {
+  return phrasePool && phrasePool.length ? phrasePool : catalogue()
+}
+
+/** The next articulation, or the previous one. Wraps, and stays inside the
+    filters. */
+export function stepSongPhrase(by) {
+  const list = steppable()
+  if (!list.length || !by) return
+
+  // Not found is -1, which with a step of +1 lands on 0 -- so nudging up from
+  // a phrase the filters have since excluded starts at the top of the list
+  // rather than doing nothing.
+  const at = list.findIndex((entry) => (entry.id || entry.name) === state.songPhrase)
+  const next = list[(((at + by) % list.length) + list.length) % list.length]
+  if (next) setSongPhrase(next.id || next.name)
+}
+
+/** One at random, from the same filtered list. */
+export function randomSongPhrase(pool = null) {
+  const list = pool && pool.length ? pool : steppable()
+  if (!list.length) return null
+  const pick = list[Math.floor(Math.random() * list.length)]
+  if (pick) setSongPhrase(pick.id || pick.name)
+  return pick
 }
 
 /** Tell the others about an edit made here. */
@@ -842,6 +977,8 @@ export function setSongPhrase(phraseName) {
     /* ignore */
   }
   reparse()
+  // So the other windows' tabs say what this instance is playing.
+  describeInstance()
   toast(phraseName ? `${phraseName} → whole song` : 'Phrase cleared')
 }
 
@@ -1145,7 +1282,25 @@ function newPhraseId() {
 /** Put a phrase to work: the whole song, or this chord if that is turned on. */
 export function usePhrase(entry) {
   if (!entry) return
+
+  // Aimed at whichever instance's tab is open. Ours takes the ordinary path --
+  // it may be a per-chord binding rather than the whole song -- and anybody
+  // else's is a request, because only that instance can look the name up.
+  const target = state.ui.targetInstance
+  if (hosted() && target && target !== state.roster.me) {
+    setInstancePhrase(target, entry.id || entry.name)
+    toast(`${entry.name} → ${instanceLabel(target)}`)
+    return
+  }
+
   bindPhrase(entry.id || entry.name)
+}
+
+/** What to call an instance in a message: its track, or its place. */
+export function instanceLabel(id) {
+  const at = state.roster.instances.findIndex((i) => i.id === id)
+  if (at < 0) return 'that track'
+  return state.roster.instances[at].name || `track ${at + 1}`
 }
 
 /**

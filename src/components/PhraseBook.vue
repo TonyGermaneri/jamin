@@ -28,10 +28,15 @@ import {
   triggerAccent,
   favourite,
   toggleFavourite,
+  randomSongPhrase,
+  instanceLabel,
+  setInstancePhrase,
+  setPhrasePool,
 } from '../store.js'
 import { keyPitchClass, phraseCategory, phraseKey, summarize } from '../core/phrases.js'
 import { describeLick } from '../core/licks.js'
 import InfoTip from './InfoTip.vue'
+import InstanceTabs from './InstanceTabs.vue'
 
 const search = ref('')
 const name = ref('')
@@ -41,6 +46,15 @@ const vocabUrl = ref('')
 const vocabFile = ref(null)
 const midiFile = ref(null)
 const midiBars = ref(1)
+
+/** Which instance the book is pointed at; this one until told otherwise. */
+const aimedAt = computed({
+  get: () => state.ui.targetInstance || state.roster.me,
+  set: (id) => { state.ui.targetInstance = id },
+})
+
+/** True when the tab open is somebody else's track. */
+const elsewhere = computed(() => state.host.active && aimedAt.value && aimedAt.value !== state.roster.me)
 
 const accompany = computed(() => state.settings.accompany)
 const report = computed(() => state.lickReport)
@@ -190,6 +204,11 @@ const matches = computed(() => {
   })
 })
 
+// What a DAW's next/previous articulation control walks, and what the dice
+// picks from. The filters are the point: turning a knob through ten thousand
+// phrases is not a control, turning it through the 89 pads in F# is.
+watch(matches, (list) => setPhrasePool(list), { immediate: true })
+
 /** How many filters are narrowing the list -- shown on the folded panel, so a
     list that is mysteriously short explains itself without being opened. */
 const activeFilters = computed(() =>
@@ -198,6 +217,29 @@ const activeFilters = computed(() =>
    onlyFavourites.value].filter(Boolean).length)
 
 const filtered = computed(() => Boolean(search.value) || activeFilters.value > 0)
+
+/**
+ * A phrase at random, from the filtered list rather than the whole catalogue.
+ *
+ * The filters are what make this worth having: ten thousand phrases at random is
+ * a shrug, but one of the 362 pads in F# is a suggestion. It is also the reason
+ * the die sits next to the list and not in the settings.
+ */
+function rollPhrase() {
+  const pool = matches.value
+  if (!pool.length) return
+
+  const pick = pool[Math.floor(Math.random() * pool.length)]
+  if (!pick) return
+
+  selected.value = pick
+  if (elsewhere.value) {
+    setInstancePhrase(aimedAt.value, pick.id || pick.name)
+    toast(`${pick.name} → ${instanceLabel(aimedAt.value)}`)
+  } else {
+    randomSongPhrase([pick])
+  }
+}
 
 function clearFilters() {
   search.value = ''
@@ -381,8 +423,22 @@ const assigningTo = computed(() => {
         </v-chip>
         <v-spacer />
         <span v-if="playing" class="text-caption text-medium-emphasis mr-3">playing “{{ playing }}”</span>
+        <!-- One at random from whatever the filters are showing, which is what
+             makes it useful: narrow to "F# pad" and the die stays inside it. -->
+        <v-btn icon size="small" variant="text" class="mr-1"
+               :disabled="!matches.length"
+               aria-label="A random phrase from this list" @click="rollPhrase">
+          <v-icon size="19">mdi-dice-5-outline</v-icon>
+          <v-tooltip activator="parent" location="bottom">
+            A random phrase from the {{ matches.length.toLocaleString() }} the filters are showing
+          </v-tooltip>
+        </v-btn>
         <v-btn icon="mdi-close" size="small" variant="text" @click="state.ui.phrases = false" />
       </v-card-title>
+
+      <!-- Every jamin in this DAW. Pick one and everything below is aimed at
+           that track. @see components/InstanceTabs.vue -->
+      <InstanceTabs v-if="state.host.active" v-model="aimedAt" />
 
       <v-tabs v-model="state.ui.phrasesTab">
         <v-tab value="catalogue">Catalogue ({{ total }})</v-tab>

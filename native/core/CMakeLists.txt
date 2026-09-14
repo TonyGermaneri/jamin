@@ -12,6 +12,7 @@
 add_library(jamin_core STATIC
     src/Sequence.cpp
     src/Node.cpp
+    src/Roster.cpp
     src/SongBus.cpp
     src/Discovery.cpp
     src/Endpoint.cpp)

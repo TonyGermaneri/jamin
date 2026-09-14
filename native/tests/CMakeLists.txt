@@ -6,6 +6,7 @@ add_executable(jamin-tests
     DiscoveryTest.cpp
     EndpointTest.cpp
     NodeTest.cpp
+    RosterTest.cpp
     main.cpp)
 
 target_link_libraries(jamin-tests PRIVATE jamin_core)

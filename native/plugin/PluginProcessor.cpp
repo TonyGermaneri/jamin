@@ -4,6 +4,9 @@
 
 #include <juce_core/juce_core.h>
 
+#include <algorithm>
+#include <cmath>
+
 /**
     Compiling, off the message thread.
 
@@ -106,6 +109,19 @@ JaminProcessor::JaminProcessor()
       instanceId (juce::Uuid().toDashedString()),
       compiler (std::make_unique<CompileThread>())
 {
+    // A DAW automates the track it is on, so these belong to this instance and
+    // not to the roster. Booleans rather than a stepped value because what a
+    // control surface offers is a button, and because "the next articulation"
+    // is a nudge rather than a position -- there are thousands of phrases and
+    // no useful way to point at one with a knob.
+    addParameter (muteParam = new juce::AudioParameterBool ({ "mute", 1 }, "Mute", false));
+    addParameter (soloParam = new juce::AudioParameterBool ({ "solo", 1 }, "Solo", false));
+    addParameter (nextPhraseParam = new juce::AudioParameterBool ({ "next", 1 }, "Next articulation", false));
+    addParameter (prevPhraseParam = new juce::AudioParameterBool ({ "prev", 1 }, "Previous articulation", false));
+    addParameter (randomPhraseParam = new juce::AudioParameterBool ({ "random", 1 }, "Random articulation", false));
+
+    seat = jamin::Roster::instance().join (instanceId.toStdString());
+
     startTimerHz (20);
 }
 
@@ -119,6 +135,56 @@ JaminProcessor::~JaminProcessor()
     network.stop();
     compiler.reset();
     sequence.swap (nullptr);
+
+    // Last, and after the timer: the audio thread holds its own reference to the
+    // seat, so leaving the roster cannot pull it out from under a block that is
+    // still running.
+    jamin::Roster::instance().leave (seat);
+    seat.reset();
+}
+
+void JaminProcessor::updateTrackProperties (const TrackProperties& properties)
+{
+    if (seat == nullptr)
+        return;
+
+    const auto name = properties.name.value_or (juce::String());
+    jamin::Roster::instance().describe (seat, name.toStdString(), seat->phrase);
+}
+
+double JaminProcessor::nextBoundaryPpq() const
+{
+    if (quantizeMode == "instant")
+        return -1.0;
+
+    if (! view.hasPlayhead.load (std::memory_order_relaxed)
+        || ! view.playing.load (std::memory_order_relaxed))
+        return -1.0;     // nothing is moving; waiting for a bar line is waiting for ever
+
+    const double ppq = view.ppqPosition.load (std::memory_order_relaxed);
+
+    // A quarter note is the unit the playhead is in, so a bar is however many
+    // quarters the time signature says -- 6/8 is three quarters, not six.
+    const int numerator = std::max (1, view.timeSigNumerator.load (std::memory_order_relaxed));
+    const int denominator = std::max (1, view.timeSigDenominator.load (std::memory_order_relaxed));
+    const double step = quantizeMode == "beat" ? 4.0 / denominator
+                                               : numerator * 4.0 / denominator;
+
+    // Strictly after now: landing on the boundary the playhead is sitting on
+    // would be indistinguishable from "instantly", and a quarter of a beat of
+    // slack keeps a click a fraction early from waiting out a whole bar.
+    const double slack = step * 0.02;
+    return std::floor ((ppq + slack) / step + 1.0) * step;
+}
+
+void JaminProcessor::setInstanceMuted (const juce::String& id, bool muted)
+{
+    jamin::Roster::instance().setMuted (id.toStdString(), muted, nextBoundaryPpq());
+}
+
+void JaminProcessor::setInstanceSoloed (const juce::String& id, bool soloed)
+{
+    jamin::Roster::instance().setSoloed (id.toStdString(), soloed, nextBoundaryPpq());
 }
 
 void JaminProcessor::prepareToPlay (double sampleRate, int)
@@ -231,6 +297,36 @@ void JaminProcessor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBu
 
     wasPlaying = true;
     lastPpq = ppq;
+
+    // Muted, or somebody else is soloed.
+    //
+    // Two atomic loads and a comparison: no lock, no allocation, nothing that
+    // can block. The seat is held by shared_ptr, so it stays alive for this
+    // block even if the instance is leaving the roster on the message thread
+    // right now.
+    //
+    // The moment is a position rather than a time, so every instance in the host
+    // stops on the same beat -- and a solo that silences three tracks silences
+    // them together instead of over three blocks.
+    bool audible = true;
+    if (seat != nullptr)
+    {
+        const double at = seat->changeAtPpq.load (std::memory_order_acquire);
+        audible = (at < 0.0 || ppq >= at)
+                    ? seat->audibleAfter.load (std::memory_order_relaxed)
+                    : seat->audibleBefore.load (std::memory_order_relaxed);
+    }
+
+    if (! audible)
+    {
+        // Going quiet has to release what was already sounding, or the last
+        // chord hangs for as long as the mute lasts.
+        if (wasAudible)
+            allNotesOff (midi, 0);
+        wasAudible = false;
+        return;
+    }
+    wasAudible = true;
 
     // Borrowed for the rest of the block. Null means either no song or a swap in
     // flight, and there is nothing to do in either case.
@@ -368,6 +464,46 @@ void JaminProcessor::requestCompile (const juce::String& requestJson)
 
 void JaminProcessor::timerCallback()
 {
+    // A parameter can be moved from any thread the host likes, and the roster's
+    // lock belongs to the message thread -- so the parameters are *read* here
+    // rather than acted on where they are written. Edge-triggered: a button on a
+    // control surface sends 1 and then 0, and both are the same press.
+    if (seat != nullptr)
+    {
+        const bool mute = muteParam->get();
+        if (mute != lastMuteParam)
+        {
+            lastMuteParam = mute;
+            setInstanceMuted (instanceId, mute);
+        }
+
+        const bool solo = soloParam->get();
+        if (solo != lastSoloParam)
+        {
+            lastSoloParam = solo;
+            setInstanceSoloed (instanceId, solo);
+        }
+
+        // The step parameters are nudges, not positions. The editor does the
+        // stepping, because which articulation comes next is a question about a
+        // catalogue that lives in a browser.
+        const bool next = nextPhraseParam->get();
+        if (next && ! lastNext) phraseStep.fetch_add (1, std::memory_order_relaxed);
+        lastNext = next;
+
+        const bool prev = prevPhraseParam->get();
+        if (prev && ! lastPrev) phraseStep.fetch_sub (1, std::memory_order_relaxed);
+        lastPrev = prev;
+
+        const bool random = randomPhraseParam->get();
+        if (random && ! lastRandom) phraseRandom.fetch_add (1, std::memory_order_relaxed);
+        lastRandom = random;
+
+        // A pending mute whose bar line has gone past is simply the state now.
+        if (view.playing.load (std::memory_order_relaxed))
+            jamin::Roster::instance().settle (view.ppqPosition.load (std::memory_order_relaxed));
+    }
+
     juce::String error;
     int chords = 0;
     if (auto next = compiler->collect (error, chords))
@@ -414,6 +550,14 @@ void JaminProcessor::setStateInformation (const void* data, int size)
 void JaminProcessor::startNetworkingFromSavedState()
 {
     const auto settings = juce::JSON::parse (instanceState).getProperty ("settings", {});
+
+    // Read here because this is where the saved settings are already parsed, and
+    // because a mute has to know where to land before anybody presses one.
+    const auto instances = settings.getProperty ("instances", {});
+    const auto mode = instances.getProperty ("quantize", "").toString();
+    if (mode == "bar" || mode == "beat" || mode == "instant")
+        quantizeMode = mode;
+
     const auto shared = settings.getProperty ("network", {});   // not `network`: that is the member
 
     if (! (bool) shared.getProperty ("enabled", true))

@@ -348,3 +348,56 @@ body,
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.12);
 }
+
+/*
+ * The instance tabs: one per jamin in this DAW. @see components/InstanceTabs.vue
+ *
+ * Denser than Vuetify's default, because eight tracks have to fit across a
+ * plugin window that a DAW has already decided the width of -- and every control
+ * on a tab is one letter or one icon for the same reason.
+ */
+.jamin-instance-tabs {
+  min-height: 34px;
+  flex: none;
+}
+
+.jamin-instance-tabs .v-tab {
+  min-height: 34px;
+  min-width: 0;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.78rem;
+}
+
+.jamin-instance-tab {
+  gap: 2px;
+}
+
+/* A part that is not being heard says so by going quiet on screen too. */
+.jamin-instance-tab.is-quiet .jamin-instance-name {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
+.jamin-instance-switches {
+  display: inline-flex;
+  gap: 1px;
+}
+
+.jamin-instance-name {
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+/* This window's own instance, marked so it is obvious which track you are
+   sitting on when every tab looks alike. */
+.jamin-instance-here {
+  opacity: 0.55;
+}
+
+/* The die is pushed to the far end of the tab from mute and solo: a misfire
+   that rolls a new articulation when you meant to silence a track is not a
+   mistake worth designing in. */
+.jamin-instance-dice {
+  margin-left: 6px;
+}

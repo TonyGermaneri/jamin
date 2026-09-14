@@ -164,6 +164,34 @@ function insert() {
   insertProgression(selected.value, { mode: mode.value, targetPc: targetPc.value, spelling: spelling.value })
 }
 
+/**
+ * One progression at random, and applied.
+ *
+ * Drawn from everything the filters match rather than from the page on screen:
+ * the library runs to hundreds of thousands of rows and the visible twelve are
+ * an accident of where you happened to have scrolled to. So it picks a row
+ * number and fetches that one, which is one query rather than a download.
+ */
+async function rollProgression() {
+  if (!total.value) return
+  loading.value = true
+  try {
+    const at = Math.floor(Math.random() * total.value)
+    const result = await progressionPage(at, 1, search.value,
+                                         { genre: genre.value, decade: decade.value })
+    const pick = result.rows && result.rows[0]
+    if (!pick) return
+
+    selected.value = pick
+    // Shown as well as applied: a progression that appears in the chart with
+    // nothing selected leaves you unable to say what you just got.
+    page.value = Math.floor(at / PER_PAGE) + 1
+    insertProgression(pick, { mode: mode.value, targetPc: targetPc.value, spelling: spelling.value })
+  } finally {
+    loading.value = false
+  }
+}
+
 function saveCurrent(text, label) {
   if (saveProgression(newName.value || label, text)) {
     newName.value = ''
@@ -215,6 +243,14 @@ function runExport() {
         <span class="text-body-1">Progression library</span>
         <v-spacer />
         <span class="text-caption text-medium-emphasis mr-3">{{ total.toLocaleString() }} progressions</span>
+        <v-btn icon size="small" variant="text" class="mr-1"
+               :disabled="!total || loading"
+               aria-label="A random progression from this list" @click="rollProgression">
+          <v-icon size="19">mdi-dice-5-outline</v-icon>
+          <v-tooltip activator="parent" location="bottom">
+            One of the {{ total.toLocaleString() }} the filters are showing, picked and applied
+          </v-tooltip>
+        </v-btn>
         <v-btn icon="mdi-close" size="small" variant="text" @click="state.ui.progressions = false" />
       </v-card-title>
 
