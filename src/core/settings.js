@@ -19,12 +19,16 @@ export const STORAGE_KEY = 'jamin.settings.v1'
  *   5 -- snapping notes that are not in the chord onto the nearest one that is
  *        became the default, and became a setting you can see. Nobody can have
  *        chosen the old value, because there was nothing to choose it with.
+ *   7 -- `accompany.pedal` arrived. It defaults to off, and a saved settings
+ *        object without it reads as off anyway, so this bump is bookkeeping
+ *        rather than a migration -- but a version that does not move when the
+ *        shape does is a version nobody can trust.
  *   4 -- there were two bass settings doing much the same thing. The one in the
  *        phrase book won, since it holds a root under a phrase and under a plain
  *        chord alike; `chords.bassNote` and `accompany.keepBass` are gone, and
  *        anyone who had the chord one on gets the remaining one on.
  */
-export const SETTINGS_VERSION = 6
+export const SETTINGS_VERSION = 7
 export const TEXT_KEY = 'jamin.chart.v1'
 export const PHRASE_KEY = 'jamin.phrases.v1'
 export const SONG_PHRASE_KEY = 'jamin.songPhrase.v1'
@@ -103,6 +107,10 @@ export function defaultSettings() {
       octave: 4,
       // A held root under everything. Off unless asked for.
       bass: false,
+      // The sustain pedal, held for the length of each chord and lifted on the
+      // change. Off unless asked for, and `[p]` / `[np]` in the chart override
+      // it from wherever they appear. @see pedalMark in core/score.js
+      pedal: false,
       bassOctaves: 1,
       doubleBass: false,
       // Wider than the chord voicing range: a two-handed phrase spans more.

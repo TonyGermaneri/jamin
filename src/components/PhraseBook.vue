@@ -703,6 +703,22 @@ const assigningTo = computed(() => {
               </v-col>
 
               <v-col cols="12">
+                <v-divider class="mb-3" />
+                <v-switch v-model="accompany.pedal" label="Hold pedal for chord" />
+                <div class="text-caption text-medium-emphasis mb-2">
+                  Sustain (CC 64) goes down as each chord starts and lifts on the change, so a
+                  chord rings for its full length without smearing into the next one. It follows
+                  whatever is sounding — the chord channel, and the accompaniment channel when a
+                  phrase is playing.
+                  <br />
+                  Write <code>[p]</code> in the chart to hold it from that point on and
+                  <code>[np]</code> to lift it again — <code>[n.p]</code> and <code>[n.p.]</code>
+                  mean the same. A mark beats this switch from where it appears; this switch is
+                  what applies before the first one.
+                </div>
+              </v-col>
+
+              <v-col cols="12">
                 <v-divider class="my-3" />
                 <div class="text-body-2 mb-1">Accent</div>
                 <div class="text-caption text-medium-emphasis mb-2">

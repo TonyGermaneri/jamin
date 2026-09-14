@@ -125,6 +125,7 @@ void JaminProcessor::prepareToPlay (double sampleRate, int)
 {
     currentSampleRate = sampleRate > 0.0 ? sampleRate : 44100.0;
     std::memset (sounding, 0, sizeof (sounding));
+    std::memset (pedalHeld, 0, sizeof (pedalHeld));
     wasPlaying = false;
 
     // Room to collect a block's worth of events without the audio thread ever
@@ -138,12 +139,24 @@ void JaminProcessor::prepareToPlay (double sampleRate, int)
 void JaminProcessor::allNotesOff (juce::MidiBuffer& out, int sampleOffset)
 {
     for (int channel = 0; channel < 16; ++channel)
+    {
+        // The pedal first. A note-off under a held sustain pedal is not a note
+        // that stops -- the instrument goes on sounding it -- so releasing the
+        // notes without releasing the pedal leaves the last chord ringing over
+        // a stopped transport, with nothing left running to lift it.
+        if (pedalHeld[channel])
+        {
+            out.addEvent (juce::MidiMessage::controllerEvent (channel + 1, 64, 0), sampleOffset);
+            pedalHeld[channel] = false;
+        }
+
         for (int note = 0; note < 128; ++note)
             if (sounding[channel][note])
             {
                 out.addEvent (juce::MidiMessage::noteOff (channel + 1, note), sampleOffset);
                 sounding[channel][note] = false;
             }
+    }
 }
 
 void JaminProcessor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi)
@@ -241,18 +254,41 @@ void JaminProcessor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBu
     for (const auto& event : scratch)
     {
         const int channel = (event.status & 0x0f) + 1;
-        const bool isOn = (event.status & 0xf0) == 0x90 && event.data2 > 0;
 
-        if (isOn)
+        // Switch on the status rather than asking "is this a note-on?" and
+        // treating everything else as a note-off. That held while a sequence
+        // contained nothing but notes; the sustain pedal is a control change,
+        // and under the old reading it arrived as a note-off for note 64.
+        switch (event.status & 0xf0)
         {
-            midi.addEvent (juce::MidiMessage::noteOn (channel, event.data1, (juce::uint8) event.data2),
-                           event.sampleOffset);
-            sounding[channel - 1][event.data1] = true;
-        }
-        else
-        {
-            midi.addEvent (juce::MidiMessage::noteOff (channel, event.data1), event.sampleOffset);
-            sounding[channel - 1][event.data1] = false;
+            case 0x90:
+                if (event.data2 > 0)
+                {
+                    midi.addEvent (juce::MidiMessage::noteOn (channel, event.data1,
+                                                              (juce::uint8) event.data2),
+                                   event.sampleOffset);
+                    sounding[channel - 1][event.data1] = true;
+                    break;
+                }
+                [[fallthrough]];   // a note-on at velocity 0 is a note-off, and always was
+
+            case 0x80:
+                midi.addEvent (juce::MidiMessage::noteOff (channel, event.data1), event.sampleOffset);
+                sounding[channel - 1][event.data1] = false;
+                break;
+
+            case 0xb0:
+                midi.addEvent (juce::MidiMessage::controllerEvent (channel, event.data1,
+                                                                   (juce::uint8) event.data2),
+                               event.sampleOffset);
+                // Tracked so a stop can lift it. 64 is the threshold the MIDI
+                // spec gives for a switch controller: below it is off.
+                if (event.data1 == 64)
+                    pedalHeld[channel - 1] = event.data2 >= 64;
+                break;
+
+            default:
+                break;     // nothing else is compiled into a sequence yet
         }
     }
 }

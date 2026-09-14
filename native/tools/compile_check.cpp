@@ -58,7 +58,13 @@ int main (int argc, char** argv)
     }
 
     const juce::File bundle { juce::String (argv[1]) };
-    const juce::String chart = argc > 2 ? juce::String (argv[2]) : "| Cmaj7 | A-7 | D-7 | G7 |";
+    // The checks below that count bars and chords are about *this* chart. Pass
+    // your own and they are skipped rather than failed: the usage line invites
+    // one, and a tool that reports two failures for doing as it was asked is a
+    // tool people stop believing.
+    const juce::String defaultChart = "| Cmaj7 | A-7 | D-7 | G7 |";
+    const juce::String chart = argc > 2 ? juce::String (argv[2]) : defaultChart;
+    const bool ownChart = chart != defaultChart;
 
     jamin::Compiler compiler;
     if (! compiler.load (bundle))
@@ -99,9 +105,12 @@ int main (int argc, char** argv)
                  chart.toRawUTF8(), sequence->events.size(),
                  sequence->lengthPulses, compiler.lastChordCount);
 
-    check ("four bars of four is 384 pulses", sequence->lengthPulses == 384,
-           juce::String (sequence->lengthPulses));
-    check ("it found four chords", compiler.lastChordCount == 4);
+    if (! ownChart)
+    {
+        check ("four bars of four is 384 pulses", sequence->lengthPulses == 384,
+               juce::String (sequence->lengthPulses));
+        check ("it found four chords", compiler.lastChordCount == 4);
+    }
     check ("it produced notes", ! sequence->events.empty());
     check ("the generation came back", sequence->generation == 42);
 
@@ -116,8 +125,15 @@ int main (int argc, char** argv)
         if (e.data1 > 127 || e.data2 > 127 || e.pulse < 0)
             inRange = false;
 
+        // Notes only. A control change shares the shape of a note event and
+        // would otherwise be counted as a note-off -- for note 64, which is the
+        // sustain pedal's controller number and a real E4 besides.
+        const int kind = e.status & 0xf0;
+        if (kind != 0x90 && kind != 0x80)
+            continue;
+
         const int key = ((e.status & 0x0f) << 8) | e.data1;
-        held[key] += (e.status & 0xf0) == 0x90 ? 1 : -1;
+        held[key] += kind == 0x90 && e.data2 > 0 ? 1 : -1;
     }
     check ("events are sorted by pulse", sorted);
     check ("notes and velocities are in range", inRange);
@@ -127,6 +143,28 @@ int main (int argc, char** argv)
         if (count != 0)
             ++hanging;
     check ("nothing is left sounding at the end of a pass", hanging == 0, juce::String (hanging));
+
+    // The sustain pedal, through this engine rather than through the browser's.
+    // `[p]` is in the chart rather than the settings deliberately: it proves the
+    // notation is read by the same parser the plugin compiles with.
+    const auto pedalled = compiler.compile (
+        R"({"text":"[p] | C | F |","settings":)" + settingsJson() + "}");
+    check ("a pedalled chart compiles", pedalled != nullptr, compiler.lastError);
+    if (pedalled != nullptr)
+    {
+        int downs = 0, ups = 0, wrongController = 0;
+        for (const auto& e : pedalled->events)
+        {
+            if ((e.status & 0xf0) != 0xb0)
+                continue;
+            if (e.data1 != 64) { ++wrongController; continue; }
+            (e.data2 >= 64 ? downs : ups)++;
+        }
+        check ("the pedal reached the sequence", downs > 0, juce::String (downs));
+        check ("and is lifted as often as it is pressed", downs == ups,
+               juce::String (downs) + " down, " + juce::String (ups) + " up");
+        check ("nothing else sends a control change", wrongController == 0);
+    }
 
     // A chart with nothing in it is not an error; it is a chart with nothing in it.
     const auto empty = compiler.compile (R"({"text":"","settings":)" + settingsJson() + "}");

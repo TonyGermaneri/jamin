@@ -301,6 +301,20 @@ always did here.
 **Nothing at all.** `N`, `NC` or `N.C.` is a bar with no chord in it. It still
 takes up its time.
 
+**The sustain pedal.** `[p]` holds it from there on, `[np]` lifts it again —
+`[n.p]` and `[n.p.]` mean the same, because that is how a pianist writes it and
+the dots are a nuisance to type. It goes down as each chord starts and comes up
+on the change, so a chord rings for its length without smearing into the next,
+and it follows whatever is actually sounding: the chord channel, and the
+accompaniment channel too when a phrase is playing.
+
+A mark takes effect from where it appears and holds until another one changes
+it, so "pedal from the bridge" is written once, at the bridge. *Hold pedal for
+chord* in the phrase book is what applies before the first mark and to a chart
+with no marks at all; a mark always beats the switch. Put marks between bars
+rather than inside one — like a section label, a mark inside a bar takes effect
+from the start of that bar.
+
 ### The three places this notation could be ambiguous
 
 Each is decided, and each has a test pinning it down.

@@ -16,6 +16,9 @@ import { realizePhrase } from './voiceLeading.js'
 
 const mod = (n, m) => ((n % m) + m) % m
 
+/** CC 64. The sustain pedal, everywhere, since 1983. */
+const SUSTAIN = 64
+
 export class Player {
   constructor(engine, settings) {
     this.engine = engine
@@ -40,6 +43,11 @@ export class Player {
     // The phrase as it sounded over the last chord, so the next chord places it
     // in the register nearest to where it just was.
     this.lastPhraseNotes = null
+
+    // Where the sustain pedal is currently held down, as [outputId, channel]
+    // pairs. Remembered rather than recomputed, because the settings may have
+    // changed between pressing it and having to let it go.
+    this.pedalDown = []
 
     this.capture = { armed: false, mode: 'once', notes: [], open: new Map(), startedEvent: -1 }
 
@@ -190,6 +198,19 @@ export class Player {
 
     this.startDrone(chord)
 
+    if (this.pedalFor(event)) {
+      const targets = []
+      if (playBlock) targets.push([midi.chordOutputId, midi.chordChannel])
+      if (phrase) targets.push([midi.accompOutputId || midi.chordOutputId, midi.accompChannel])
+      // The two can be the same port and channel, and pressing it twice would
+      // mean letting it go twice.
+      const seen = new Set()
+      this.pressPedal(targets.filter(([out, channel]) => {
+        const key = `${out}:${channel}`
+        return seen.has(key) ? false : (seen.add(key), true)
+      }))
+    }
+
     if (this.onEventChange) {
       this.onEventChange(event, { notes: voicing.notes, phrase: phrase ? phrase.name : null })
     }
@@ -222,6 +243,52 @@ export class Player {
       if (note < 0 || note > 127) continue
       if (this.engine.noteOn(outputId, midi.bassChannel, note, midi.velocity)) this.droneNotes.push(note)
     }
+  }
+
+  /**
+   * Whether this chord wants the pedal.
+   *
+   * The chart wins where it says anything: `[p]` and `[np]` set it from the
+   * point they appear, and the switch is what applies to everything before the
+   * first mark and to a chart with no marks at all. @see pedalMark
+   */
+  pedalFor(event) {
+    const marked = event ? event.pedal : null
+    if (marked === true || marked === false) return marked
+    return !!this.settings.accompany.pedal
+  }
+
+  /**
+   * Hold the pedal for this chord, wherever this chord is sounding.
+   *
+   * Not simply the chord channel: in `replace` mode a bound phrase is the only
+   * thing playing and it goes to the accompaniment channel, so a pedal sent to
+   * the chords would be a switch that audibly did nothing. The bass drone is
+   * left out -- it is already held for the whole chord by not being
+   * re-articulated, and pedalling it would only tie it across the chord change.
+   */
+  pressPedal(targets) {
+    for (const [outputId, channel] of targets) {
+      if (this.engine.controlChange(outputId, channel, SUSTAIN, 127)) {
+        this.pedalDown.push([outputId, channel])
+      }
+    }
+  }
+
+  /**
+   * Let it go.
+   *
+   * Called from stopAll(), which every chord change and every transport stop
+   * goes through -- so the pedal is lifted before the next chord sounds and
+   * pressed again once it has, and there is one place that does it rather than
+   * three that have to agree. Sustaining across the change is the sound of a
+   * pedal nobody is listening to.
+   */
+  releasePedal() {
+    for (const [outputId, channel] of this.pedalDown) {
+      this.engine.controlChange(outputId, channel, SUSTAIN, 0)
+    }
+    this.pedalDown = []
   }
 
   /**
@@ -284,6 +351,11 @@ export class Player {
     const bassOut = midi.bassOutputId || midi.chordOutputId
     for (const note of this.droneNotes) this.engine.noteOff(bassOut, midi.bassChannel, note)
     this.droneNotes = []
+    // After the note-offs, which is the gesture a pianist makes: the keys come
+    // up and then the pedal does. Either order ends in silence -- a note-off
+    // under a held pedal is deferred, not ignored -- but this is the one that
+    // reads correctly in a piano roll, and leaving it out is what would ring.
+    this.releasePedal()
     this.phraseQueue = []
     this.phraseCursor = 0
     if (this.onNotes) this.onNotes([])

@@ -280,6 +280,14 @@ export class MidiEngine {
     return true
   }
 
+  /** A control change. Used for the sustain pedal; nothing else sends one yet. */
+  controlChange(outputId, channel, controller, value) {
+    const port = this.output(outputId)
+    if (!port) return false
+    port.send([0xb0 | (channel & 0x0f), clamp7(controller), clamp7(value)])
+    return true
+  }
+
   /** Release everything we personally turned on, then send All Notes Off. */
   panic() {
     for (const key of [...this._sounding.keys()]) {
@@ -291,6 +299,10 @@ export class MidiEngine {
     for (const port of this.access.outputs.values()) {
       for (let channel = 0; channel < 16; channel++) {
         try {
+          // Sustain first, and it is not optional. All Notes Off on a synth
+          // holding the pedal down turns the notes off and leaves them ringing,
+          // which is exactly the state a panic button exists to get out of.
+          port.send([0xb0 | channel, 64, 0])
           port.send([0xb0 | channel, 123, 0])
         } catch {
           /* a port can vanish mid-send; nothing useful to do about it */

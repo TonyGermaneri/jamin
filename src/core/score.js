@@ -57,6 +57,13 @@ export function parseScore(text, opts = {}) {
   let pulse = 0
   let repeatFrom = null
 
+  // null means nothing in the chart has said either way, so the switch in the
+  // settings decides. Kept as three states rather than seeded from the setting
+  // so that turning the switch on takes effect immediately, on a chart that was
+  // parsed before it was touched -- a parse that depended on a setting would
+  // have to be redone every time one changed.
+  let pedal = null
+
   // Bar lines change what a space means, so the whole chart reads one way or the
   // other rather than flipping halfway down.
   const useBarlines = opts.barlines !== undefined ? opts.barlines : src.includes('|')
@@ -67,7 +74,19 @@ export function parseScore(text, opts = {}) {
     lines.push(line)
 
     for (const group of splitBars(lineText, lineStart, useBarlines)) {
-      if (group.type === 'barline' || group.type === 'label') {
+      if (group.type === 'label') {
+        const mark = pedalMark(group.text)
+        const token = makeToken(group, lineIndex, mark ? 'pedal' : 'label')
+        if (mark) {
+          pedal = mark === 'down'
+          token.pedal = pedal
+        }
+        tokens.push(token)
+        line.tokens.push(tokens.length - 1)
+        continue
+      }
+
+      if (group.type === 'barline') {
         tokens.push(makeToken(group, lineIndex, group.type))
         line.tokens.push(tokens.length - 1)
         continue
@@ -143,6 +162,7 @@ export function parseScore(text, opts = {}) {
           subCount === 1 &&
           last.subCount === 1 &&
           !token.phraseChange &&
+          last.pedal === pedal &&
           sameChord(last.chord, token.chord)
 
         if (canMerge) {
@@ -162,6 +182,8 @@ export function parseScore(text, opts = {}) {
             phraseChange: token.phraseChange,
             phraseRef: token.phraseRef,
             phraseId: null,
+            // true, false, or null for "the chart did not say". @see pedalMark
+            pedal,
             valid: token.type === 'chord',
           }
           events.push(event)
@@ -200,6 +222,30 @@ export function parseScore(text, opts = {}) {
 
 /** `/`, `%` and `x` all mean "keep playing what was already playing". */
 const HOLD = /^(\/+|%+|x)$/i
+
+/**
+ * The pedal marks: `[p]` holds it from here on, `[np]` lifts it.
+ *
+ * Written the way a pianist writes them. "n.p." is the usual hand-written form
+ * and the dots are noise to type, so every spelling of it is accepted -- `[np]`,
+ * `[n.p]`, `[n.p.]` -- and `[p.]` for symmetry. A mark applies to every chord
+ * after it until another one changes it, so a chart says "pedal from the bridge"
+ * by writing it once at the bridge.
+ *
+ * They are brackets because that is already how this notation marks something
+ * that is not a chord, and they are read *before* section labels so `[p]` is a
+ * pedal rather than a section called p.
+ */
+const PEDAL_DOWN = /^\[\s*p\.?\s*\]$/i
+const PEDAL_UP = /^\[\s*n\.?\s*p\.?\s*\]$/i
+
+/** 'down', 'up', or null for a bracket that is an ordinary section label. */
+export function pedalMark(text) {
+  const mark = String(text || '').trim()
+  if (PEDAL_UP.test(mark)) return 'up'
+  if (PEDAL_DOWN.test(mark)) return 'down'
+  return null
+}
 
 /** `|:` and `:|`, and the compact `:chord` / `chord:16` forms. */
 const REPEAT_OPEN = /^\|:$/

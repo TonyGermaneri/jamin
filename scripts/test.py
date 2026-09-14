@@ -70,6 +70,10 @@ SUITES = [
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
         "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js", "src/core/player.js",
     ], "tests/player.test.js"),
+    ([
+        "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
+        "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js", "src/core/player.js",
+    ], "tests/pedal.test.js"),
 ]
 
 failed = 0

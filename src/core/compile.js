@@ -75,6 +75,19 @@ class Recorder {
     this.events.push([this.pulse, 0x80 | (clampChannel(channel) & 0x0f), note, 0])
     return true
   }
+
+  /** The sustain pedal reaches the plugin as an ordinary status byte, because
+      a sequence event is a status and two data bytes and always was. */
+  controlChange(_outputId, channel, controller, value) {
+    if (controller < 0 || controller > 127) return false
+    this.events.push([
+      this.pulse,
+      0xb0 | (clampChannel(channel) & 0x0f),
+      controller,
+      Math.min(127, Math.max(0, value | 0)),
+    ])
+    return true
+  }
 }
 
 // Channels are zero-based throughout jamin -- MidiEngine sends `0x90 | channel`

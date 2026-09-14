@@ -131,4 +131,28 @@ const broken = JSON.parse(compileJson('{not json'))
 check('bad json comes back as an empty sequence', broken.events.length, 0)
 ok('carrying its own explanation', typeof broken.error === 'string' && broken.error.length > 0)
 
+/* ---------------- the sustain pedal reaches the sequence ---------------- */
+// A sequence event is a status byte and two data bytes, so a control change
+// needs nothing new to carry it -- but it does need the plugin to stop reading
+// "not a note-on" as "note-off", which it used to.
+const pedalled = compileSong({ text: '| C | F |', settings: { ...settings,
+  accompany: { ...settings.accompany, pedal: true } } }).events
+const ccs = pedalled.filter(([, status]) => (status & 0xf0) === 0xb0)
+ok('the pedal is in the compiled sequence', ccs.length >= 3)
+check('as CC 64', [...new Set(ccs.map((e) => e[2]))], [64])
+check('down and up, nothing in between', [...new Set(ccs.map((e) => e[3]))].sort((a, b) => a - b), [0, 127])
+
+// The loop has to start clean: whatever was held at the end is released at the
+// front of the sequence, and that includes the pedal.
+check('the sequence opens by lifting it', ccs[0][3], 0)
+check('at pulse zero', ccs[0][0], 0)
+
+const plain = compileSong({ text: '| C | F |', settings }).events
+check('and none of it when the switch is off', plain.filter(([, s]) => (s & 0xf0) === 0xb0).length, 0)
+
+// The chart beats the switch, through the compiler as much as through the player.
+const marked = compileSong({ text: '[p] | C | F |', settings }).events
+ok('[p] compiles the pedal in with the switch off',
+   marked.some(([, status]) => (status & 0xf0) === 0xb0))
+
 console.log(failed === 0 ? 'compile: all checks passed' : `compile: ${failed} FAILED`)

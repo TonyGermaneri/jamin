@@ -180,6 +180,12 @@ private:
     // Which notes this instance started, so they can be stopped on a locate, a
     // stop, or a swap. Nothing else in the chain knows they are ours.
     bool sounding[16][128] {};
+
+    // And whether the sustain pedal is down on each channel. Without this, a
+    // stop under a held pedal sends note-offs to an instrument that is still
+    // sustaining them, and the chord rings until something else happens to
+    // lift it. @see allNotesOff
+    bool pedalHeld[16] {};
     bool wasPlaying { false };
     double lastPpq { 0.0 };
 
