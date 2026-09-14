@@ -249,7 +249,7 @@ import is: press *Download it in your browser*, download it there, come back and
 choose it. The database is shared by every instance in the process, so that is
 once per machine rather than once per track.
 
-[The plan and what it rests on](docs/plugin.md) · [the native build](native/README.md)
+[The plan and what it rests on](docs/plugin.md) · [the drums](docs/drums.md) · [the native build](native/README.md)
 
 ## Notation
 
@@ -300,6 +300,25 @@ always did here.
 
 **Nothing at all.** `N`, `NC` or `N.C.` is a bar with no chord in it. It still
 takes up its time.
+
+**Sections.** `[Intro]`, `[Verse 1]`, `[Chorus]` on their own mark the parts of
+the song. A section runs from its label to the next one, so it is a span rather
+than a caption — which is what lets a drum groove be bound to "the chorus"
+rather than to a bar number that moves the moment you edit anything above it.
+Two sections with the same name are two sections; a song has two choruses.
+
+**Drums.** `[d:name]` plays that groove from there on, `[d:nofill]` stops the
+fill into the next section, `[d:none]` takes the drums out. Grooves are usually
+bound to sections in the drum book rather than written into the chart — the
+chart says what the parts are, the book says what they sound like — and a
+`[d:...]` overrides the binding from where it appears, the way a pedal mark
+overrides the pedal switch.
+
+A fill goes in the bar before every section change. That is what a drum chart
+has meant since long before there were corpora to draw on, and it is the same
+rule Band-in-a-Box has used for thirty years: the fill belongs to the boundary,
+not to the section, because "the end of the verse" is really "the fill into the
+chorus".
 
 **The sustain pedal.** `[p]` holds it from there on, `[np]` lifts it again —
 `[n.p]` and `[n.p.]` mean the same, because that is how a pianist writes it and
