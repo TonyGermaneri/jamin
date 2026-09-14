@@ -1,0 +1,165 @@
+# jamin on a local network
+
+Several machines running jamin, all holding the same chart, any of them able to change it, and a
+browser anywhere on the network able to drive the lot. No accounts, no configuration, no server
+to start.
+
+---
+
+## What was verified before writing this
+
+Four claims decide the shape of this, and the first two are the ones that matter. All were
+measured on this machine (macOS 26.6, Mac Studio, 192.168.87.202) rather than assumed.
+
+**Multicast discovery works, and nothing asks permission.** A process joined `239.7.7.7:47717`,
+sent to the group and received its own packet back with the sender's LAN address attached — no
+prompt, no entitlement, no configuration.
+
+```
+joined 239.7.7.7:47717
+sent
+received "jamin/1 hello" from 192.168.87.202
+```
+
+**A browser can reach a machine by name.** `Mac-Studio-9.local` resolves and serves over HTTP.
+The resolution happens in the operating system, not in the page, which is what makes this usable
+from a browser at all.
+
+```
+$ curl -o /dev/null -w '%{http_code}' http://Mac-Studio-9.local:7788/
+200
+```
+
+**A browser cannot discover anything.** This is not a gap in effort; it is the shape of the
+platform. A page has no UDP, no multicast, no mDNS API, and cannot listen for connections. It
+also cannot scan: Chrome's Private Network Access rules exist specifically to stop a page probing
+the machines around it. Any design that expects the browser to find its peers is a design that
+cannot be built.
+
+**JUCE has the pieces for the native half and none for the browser half.** `DatagramSocket` does
+multicast — `joinMulticast`, `setMulticastLoopbackEnabled`, `setEnablePortReuse` — and
+`StreamingSocket` does TCP. There is no HTTP server and no WebSocket in JUCE, so that part is
+ours to write.
+
+---
+
+## Do we need more moving parts?
+
+**One, and it is not a new process.** A small server inside the plugin: a multicast socket to
+find the other machines, and an HTTP endpoint to talk to browsers. No broker, no cloud, no daemon
+to install, nothing to launch.
+
+It has to be there because of the third finding above. Discovery is done by the **nodes**, which
+are native and can; the browser is then *handed* the list rather than finding it. Which means the
+browser's experience is still automatic, as long as it gets to a node once:
+
+```
+        multicast 239.x : nodes find each other, automatically
+   ┌──────────┐   ┌──────────┐   ┌──────────┐
+   │ jamin in │◄─►│ jamin in │◄─►│ jamin,   │
+   │ Live     │   │ Logic    │   │ standalone│
+   └────┬─────┘   └──────────┘   └──────────┘
+        │ http + server-sent events
+        ▼
+   a browser, anywhere on the network — which is handed
+   the peer list by whichever node served it the page
+```
+
+Open `http://mac-studio-9.local:7777` once and bookmark it. That page is jamin, it is already
+connected, and it knows about every other machine because the node that served it does. Nothing
+was configured and nothing was discovered by the browser.
+
+**Server-sent events rather than WebSocket.** A WebSocket server is a handshake, a framing layer,
+masking rules and a ping/pong timer — several hundred lines of protocol to write and get wrong.
+`EventSource` downstream and an ordinary `POST` upstream need none of it: the downstream is a
+text stream that never closes, and the upstream is a request. Both are browser protocols of
+exactly the same vintage, and the page being served by the node it talks to means there is no
+CORS to negotiate either.
+
+---
+
+## Agreeing on the chart
+
+Sending the text does not work. Whoever wrote last erases whoever wrote first, and with a network
+round trip in between that is not an edge case — it is what happens whenever two people type in
+the same second.
+
+So what travels is the edits, and `src/core/crdt.js` is what makes them safe to apply in any
+order. It is a causal tree: every character carries an id unique for all time and the id of the
+character it was typed after, and the document is that tree walked depth-first. Two people
+inserting at the same point interleave the same way on every machine without anybody agreeing in
+advance who went first.
+
+There is **no leader and no server** in this. A node that has been off the network and comes back
+converges by exchanging edits, not by being told what the answer is.
+
+What is tested is the property rather than the feature: twenty-five randomised runs of four sites
+making concurrent edits with reordered, delayed, duplicated and batched delivery, plus one run of
+seven sites over four hundred rounds — every site ends up with the same text every time. Two real
+faults were caught that way and neither would have been found by testing an edit:
+
+- A delete arriving before the insert it removes was dropped, so the character came back. Deletes
+  are remembered until the character they name turns up.
+- An insert whose parent has not arrived is held rather than discarded, and released when it does.
+
+**Tombstones accumulate.** A deleted character stays, marked, because a later insert may still
+name it as a parent. A document edited all day grows even if its text does not. For a chord chart
+that is nothing; for anything else it would need pruning, and it is worth knowing rather than
+discovering.
+
+---
+
+## Shared, and not shared
+
+The split already exists and the network does not change it.
+
+| Shared across every machine | This machine only |
+| --- | --- |
+| the chart, and the phrase marks in it | which phrase this instance plays |
+| bars per line, the key | its MIDI channel, octave, bass |
+| the song phrase | its accent binding |
+| | its transport — each host has its own |
+
+Playback is deliberately **not** synchronised. Every instance takes its position from its own
+host's playhead, and trying to agree on time across a network would be a hard real-time problem
+solving something nobody asked for. What is shared is the document.
+
+---
+
+## No authentication, and what that means
+
+Asked for, and worth stating plainly rather than burying: **anyone who can reach the port can
+change the chart.** There is no password, no pairing, no confirmation. On a studio network that
+is the point — a phone, a laptop and three machines all editing the same chart with nothing to
+set up.
+
+It also means this does not belong on a network you do not control. The mitigations that cost
+nothing are worth taking anyway: bind to the local network rather than every interface, a
+multicast TTL of 1 so discovery cannot leave the subnet, and a plugin that does not open the port
+at all until networking is switched on.
+
+macOS will ask the **host** application — Live, Logic — for Local Network permission the first
+time, because permission belongs to the application and not to the plugin inside it. A command
+line tool inherits the terminal's and is never asked, which is why the probe above saw no prompt
+and a DAW will.
+
+---
+
+## Phases
+
+**Phase N0 — the document. *Done; see `src/core/crdt.js`.*** Edits that converge, with the
+property tested rather than asserted.
+
+**Phase N1 — discovery.** A multicast beacon carrying name, port and instance id; a peer table
+that ages entries out. Nothing depends on it yet, so it can be watched with `tcpdump` before
+anything trusts it.
+
+**Phase N2 — the endpoint.** HTTP in the plugin: the built page, `GET /events` as a stream, `POST
+/ops`, `GET /peers`. Same files the editor already serves, so there is one page.
+
+**Phase N3 — joining the two.** The page talks to its own node the same way whether it is inside
+the plugin or in a browser, because it is the same page; `src/core/host.js` grows a second
+transport rather than the application growing a second mode.
+
+**Phase N4 — what people need to see.** Who else is here, who is typing, and what happens when
+somebody drops off. A shared chart with no sense of who is sharing it is unnerving to use.

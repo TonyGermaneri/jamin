@@ -54,3 +54,12 @@ if(APPLE AND JAMIN_BUILD_PLUGIN)
         message(STATUS "  (no VST3 headers found; skipping jamin-vst3)")
     endif()
 endif()
+
+# jamin-multicast: does discovery work on this network, and does anything ask
+# permission first? It is the first thing to run when peers cannot see each
+# other, because it answers that question without jamin in the way.
+if(APPLE)
+    add_executable(jamin-multicast multicast_probe.c)
+    set_target_properties(jamin-multicast PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endif()

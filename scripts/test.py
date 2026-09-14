@@ -27,6 +27,7 @@ SUITES = [
     ], "tests/importers.test.js"),
     (["src/core/themes.js", "src/core/settings.js"], "tests/settings.test.js"),
     (["src/core/host.js"], "tests/host.test.js"),
+    (["src/core/crdt.js"], "tests/crdt.test.js"),
     ([
         "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",
         "src/core/voiceLeading.js", "src/core/phrases.js",
