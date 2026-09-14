@@ -406,6 +406,40 @@ void JaminProcessor::setStateInformation (const void* data, int size)
     // than waiting for a page to ask for it.
     if (instanceState.isNotEmpty() && instanceState != "{}")
         compiler->submit (instanceState);
+
+    // And for exactly the same reason, it joins the network straight away.
+    startNetworkingFromSavedState();
+}
+
+void JaminProcessor::startNetworkingFromSavedState()
+{
+    const auto settings = juce::JSON::parse (instanceState).getProperty ("settings", {});
+    const auto shared = settings.getProperty ("network", {});   // not `network`: that is the member
+
+    if (! (bool) shared.getProperty ("enabled", true))
+        return;
+
+    const auto secret = shared.getProperty ("secret", "").toString();
+    if (secret.isEmpty())
+        return;                       // not configured; nothing is shared
+
+    // setNetworking belongs to the message thread, and a host may restore state
+    // on any thread it likes. The weak reference is because this instance can be
+    // destroyed between the two -- loading a project that replaces a track does
+    // exactly that.
+    juce::WeakReference<JaminProcessor> safe (this);
+    juce::MessageManager::callAsync ([safe, secret]() mutable
+    {
+        if (safe == nullptr)
+            return;
+
+        // Said out loud, because "is this instance on the network at all" is the
+        // first question when two tracks disagree about the chart, and until now
+        // the answer depended on whether anybody had opened that window.
+        if (safe->setNetworking (true, secret))
+            juce::Logger::writeToLog ("jamin: joined the network on port "
+                                      + juce::String (safe->network.port()));
+    });
 }
 
 juce::AudioProcessorEditor* JaminProcessor::createEditor()

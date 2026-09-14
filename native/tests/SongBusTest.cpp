@@ -51,6 +51,24 @@ void songBusTests()
         checkEqual ("an oversized chart is refused", a.snapshot().json, before);
 
         check ("the segment came up", a.isShared());
+
+        // Two editors in one process -- two plugin instances on two tracks in
+        // one DAW. They share this one bus, and each keeps its own idea of what
+        // it last handed its page.
+        //
+        // This is the case the whole segment exists for, and it is the one that
+        // was broken: the editor asked poll(), which answers "has another
+        // *process* written", and a publish from this process has already moved
+        // the local copy -- so poll() said no, correctly, and every other
+        // instance in the same host stayed silent for ever.
+        uint64_t editorB = a.generation();
+        const auto published = a.publish ("{\"text\":\"Bb7 Eb\"}");
+        check ("poll says nothing arrived, because nothing did", ! a.poll());
+        check ("but the chart moved all the same", a.generation(), published);
+        check ("so the other editor in this process can see it",
+               a.generation() != editorB);
+        editorB = a.generation();
+        check ("and having caught up, has nothing more to do", a.generation(), editorB);
     }
 
     // The durable copy: a fresh process with an empty segment picks the chart

@@ -440,11 +440,25 @@ async function joinNetwork() {
 
   await session.start()
 
-  // An empty session takes whatever this page already had -- somebody has to
-  // go first, and the one that arrives with a chart is a better candidate than
-  // the one that arrives with nothing.
-  if (!session.text() && state.text) session.change(state.text)
-  else if (session.text()) session.onText(session.text())
+  if (session.text()) {
+    session.onText(session.text())
+  } else if (state.text) {
+    // An empty session takes whatever this page already had -- somebody has to
+    // go first, and the one that arrives with a chart is a better candidate
+    // than the one that arrives with nothing.
+    //
+    // Unless somebody else is already here. A node keeps only what it was told
+    // while it was running, so one that has just started has an empty log even
+    // when the others have a chart between them -- and going first on the
+    // strength of that means a track opened an hour into a session imposes
+    // whatever the DAW saved with it on everybody. Ask once more, then defer:
+    // an instance that stays empty is a nuisance, one that overwrites the song
+    // is not.
+    if (session.peers.length) await session.catchUp()
+
+    if (session.text()) session.onText(session.text())
+    else if (!session.peers.length) session.change(state.text)
+  }
 
   state.net.joined = true
 }

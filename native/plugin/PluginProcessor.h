@@ -135,6 +135,15 @@ public:
         rather than leaving the old one running. Never logged. */
     juce::String networkSecret;
 
+    /** Join the network using the word in this instance's saved state.
+
+        The node used to be started by the editor, which meant an instance whose
+        window nobody had opened was not on the network at all -- and in a DAW
+        that is most of them, most of the time. It heard nothing, and when its
+        window was finally opened it arrived with an empty log and a chart from
+        the saved project. @see setStateInformation */
+    void startNetworkingFromSavedState();
+
     /** Start or stop networking. Returns whether it is running afterwards; a
         blank word is a refusal rather than an invitation. */
     bool setNetworking (bool shouldRun, const juce::String& secret);
@@ -189,5 +198,6 @@ private:
     bool wasPlaying { false };
     double lastPpq { 0.0 };
 
+    JUCE_DECLARE_WEAK_REFERENCEABLE (JaminProcessor)
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (JaminProcessor)
 };

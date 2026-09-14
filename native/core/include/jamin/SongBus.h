@@ -57,8 +57,19 @@ public:
 
     /** Pick up anything published by another process. Returns true if the
         document changed. Call it from a timer; it is a single atomic load in the
-        common case. */
+        common case.
+
+        **Its answer is about other processes, not about the chart.** A publish
+        from this process has already moved the local copy, so poll() has nothing
+        left to report and says false -- correctly. Anything deciding whether to
+        redraw wants `generation()`, which is about the chart. Gating on poll()
+        instead means every instance in one host misses every edit made in that
+        same host, which is the case this was built for. */
     bool poll();
+
+    /** Which version of the chart this process holds. Cheap enough to compare on
+        a timer: no copy, unlike snapshot(). */
+    uint64_t generation() const;
 
     /** True if the cross-process segment is live. False means this process is on
         its own -- a sandbox refused the segment -- and instances inside it still

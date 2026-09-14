@@ -232,19 +232,29 @@ void JaminEditor::timerCallback()
 {
     auto& bus = jamin::SongBus::instance();
 
-    // Somebody else changed the chart. One atomic load in the common case.
-    if (bus.poll())
+    // Two questions, and they are not the same one.
+    //
+    // poll() asks "has another process written since I last looked" and is one
+    // atomic load in the common case. generation() asks "is the chart I hold
+    // different from the one I last handed my page", which is the question this
+    // is actually for.
+    //
+    // Gating the second on the first is what made several instances in one host
+    // -- the case the whole shared segment exists for -- never hear each other:
+    // a publish from this process has already moved the local copy, so poll()
+    // correctly says nothing new arrived, and every other editor in the same
+    // host stayed silent.
+    bus.poll();
+
+    if (bus.generation() != lastSongGeneration)
     {
         const auto song = bus.snapshot();
-        if (song.generation != lastSongGeneration)
-        {
-            lastSongGeneration = song.generation;
+        lastSongGeneration = song.generation;
 
-            auto* object = new juce::DynamicObject();
-            object->setProperty ("json", juce::String (song.json));
-            object->setProperty ("generation", (juce::int64) song.generation);
-            browser.emitEventIfBrowserIsVisible ("jaminSong", juce::var (object));
-        }
+        auto* object = new juce::DynamicObject();
+        object->setProperty ("json", juce::String (song.json));
+        object->setProperty ("generation", (juce::int64) song.generation);
+        browser.emitEventIfBrowserIsVisible ("jaminSong", juce::var (object));
     }
 
     // Say what the last compile produced, once per change. The page shows it in

@@ -247,6 +247,12 @@ uint64_t SongBus::publish (const std::string& json)
     return next;
 }
 
+uint64_t SongBus::generation() const
+{
+    std::lock_guard<std::mutex> guard (localLock());
+    return localGeneration;
+}
+
 SongBus::Snapshot SongBus::snapshot() const
 {
     std::lock_guard<std::mutex> guard (localLock());
