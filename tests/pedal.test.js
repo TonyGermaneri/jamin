@@ -126,4 +126,34 @@ check('the old notes are released before the lift', on.findIndex((m) => m.starts
   check('stopping lifts the pedal', sent, ['cc64 0'])
 })()
 
+/* ---------------- everything else that reads a chart ---------------------- */
+// A pedal mark is a token with no chord on it, which is what keeps the rest of
+// the program from tripping over it. Checked rather than assumed, because every
+// one of these walks the same token list for something different.
+
+// Transposing rewrites chord tokens in place. A mark has no chord, so there is
+// nothing in it to move -- and `[p]` must not come back as `[q]`.
+check('transposing leaves the marks alone',
+      transposeChart('[p] | C | [np] F |', 2), '[p] | D | [np] G |')
+check('and a chart that is only marks does not move', transposeChart('[p] [np]', 5), '[p] [np]')
+
+// Converting a bar-lined progression to the space-is-a-bar shorthand, which is
+// what dropping one into a chart without bar lines does.
+check('the shorthand keeps them', toShorthand('[p] | C | F |'), '[p] C F')
+
+// "Shift this progression to land on D" reads the first real chord.
+check('the first root looks past a mark', firstRoot('[p] | F | C |'), 5)
+check('and shifting is measured from it', shiftToRoot('[p] | F | C |', 0), 7)
+
+// Key detection and the playback loop both work off events rather than tokens,
+// and a mark never becomes an event -- which is what keeps it out of both.
+check('a mark is not an event', parseScore('[p]').events.length, 0)
+check('nor is it an error to be counted',
+      parseScore('[p] C').tokens.filter((t) => t.type === 'error').length, 0)
+
+// Copying as plain text strips the phrase marks -- the braces and the
+// articulation dot -- and nothing else. A pedal mark is part of the chart the
+// way a section label is, so it travels.
+check('plain-text copy carries them', stripPhraseMarks('[p] .C{walk} [np] F'), '[p] C [np] F')
+
 console.log(failed ? `pedal: ${failed} FAILED` : 'pedal: all checks passed')

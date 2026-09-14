@@ -73,6 +73,11 @@ SUITES = [
     ([
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
         "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js", "src/core/player.js",
+        # The rest of the program that walks the same token list: transposing,
+        # the shorthand rewrite, the progression library and the clipboard.
+        # Not key.js: it and voiceLeading.js each declare mod12, and these are
+        # concatenated rather than linked.
+        "src/core/phrases.js", "src/core/importers.js", "src/core/progressions.js",
     ], "tests/pedal.test.js"),
 ]
 
