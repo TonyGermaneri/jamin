@@ -89,6 +89,25 @@ async function retryMidi() {
         <v-window v-model="state.ui.settingsTab">
           <!-- MIDI ------------------------------------------------------- -->
           <v-window-item value="midi">
+            <v-switch
+              v-model="state.settings.network.enabled"
+              density="compact"
+              hide-details
+              color="success"
+              class="mb-2"
+              label="Share this chart with other machines on the network"
+            />
+            <div class="text-caption text-medium-emphasis mb-4">
+              Every machine running jamin here finds the others on its own, and they all hold the
+              same chart — type on any of them. Open
+              <code v-if="state.net.address">{{ state.net.address }}</code>
+              <code v-else>http://&lt;this machine&gt;.local:7777</code>
+              on a phone or a laptop and that is jamin too.
+              <strong>Anyone who can reach it can edit the chart; there is no password.</strong>
+              Turning this off closes the port. Changing it takes effect next time the plugin
+              loads.
+            </div>
+
             <v-alert
               v-if="state.net.state !== 'offline'"
               :type="state.net.peers.length ? 'success' : 'info'"

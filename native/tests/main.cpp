@@ -4,6 +4,7 @@ void sequenceTests();
 void songBusTests();
 void discoveryTests();
 void endpointTests();
+void nodeTests();
 
 int main()
 {
@@ -11,6 +12,7 @@ int main()
     songBusTests();
     discoveryTests();
     endpointTests();
+    nodeTests();
 
     std::printf (jaminFailures == 0 ? "native: all checks passed\n"
                                     : "native: %d FAILED\n", jaminFailures);

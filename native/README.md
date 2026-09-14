@@ -19,7 +19,7 @@ system, which the default run cannot do.
 JUCE is fetched by the build. CMake 3.22+, a C++20 compiler, and a `dist/` in the repository
 root (`npm run build`, or `cmake --build build --target web`) are the whole list.
 
-[The plan](../docs/plugin.md), through phase 2.
+[The plan](../docs/plugin.md), through phase 2, and [the network](../docs/network.md), finished.
 
 ---
 
@@ -47,9 +47,9 @@ uncompiled.
 
 | | |
 | --- | --- |
-| `core/` | No JUCE, no plugin API. `Sequence` and `SequencePlayer` — the audio-thread reader, allocation-free and lock-free — and `SongBus`, the chart every instance shares. |
+| `core/` | No JUCE, no plugin API. `Discovery`, `Endpoint` and `Node` are the network, testable without a DAW. `Sequence` and `SequencePlayer` — the audio-thread reader, allocation-free and lock-free — and `SongBus`, the chart every instance shares. |
 | `plugin/` | The plugin targets, built twice from one set of sources. `processBlock` reads the playhead and emits; the editor is a `WebBrowserComponent` and nothing else. |
-| `tools/` | `jamin-boot` — loads the real bundled page in a real `WKWebView` and fails if the application reports so much as a console error. With `--host` it stands in for the plugin, drives a playhead, and checks the chart followed. `jamin-compile` — the plugin's own compiler without a plugin. |
+| `tools/` | `jamin-node` — the plugin's networking with the plugin taken away, and what to run when the question is whether the network or the plugin is at fault. `jamin-boot` — loads the real bundled page in a real `WKWebView` and fails if the application reports so much as a console error. With `--host` it stands in for the plugin, drives a playhead, and checks the chart followed. `jamin-compile` — the plugin's own compiler without a plugin. |
 | `tests/` | The sequence reader against a loop point, and the bus between two instances. `jamin-auhost` opens the editor and throws it away, which `auval` never does. The page's own half of the bridge is `tests/host.test.js`, in the JavaScript suite. |
 | `cmake/` | Copying the built page into the bundle. |
 

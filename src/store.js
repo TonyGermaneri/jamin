@@ -11,7 +11,7 @@
 import { reactive, watch } from 'vue'
 import { MidiEngine } from './core/midi.js'
 import { hosted, hostData, callHost, onHost, HostClock } from './core/host.js'
-import { nodeAvailable, Session } from './core/net.js'
+import { nodeAvailable, Session, httpTransport, hostTransport } from './core/net.js'
 import { Player } from './core/player.js'
 import { parseScore } from './core/score.js'
 import {
@@ -85,7 +85,7 @@ export const state = reactive({
   // editor rather than a browser tab, and who it is if so.
   // Several machines holding the same chart. Empty until this page turns out
   // to have been served by a node. @see src/core/net.js
-  net: { joined: false, state: 'offline', peers: [], site: null },
+  net: { joined: false, state: 'offline', peers: [], site: null, address: null },
   host: {
     active: false,
     instanceId: null,
@@ -402,15 +402,25 @@ let applyingRemote = false
  * page that is not on a node carries on exactly as before.
  */
 async function joinNetwork() {
-  if (hosted()) return                       // the plugin's own networking is its own
-  if (typeof EventSource !== 'function') return
+  if (!hosted() && typeof EventSource !== 'function') return
+  if (!state.settings.network.enabled) return
   if (!(await nodeAvailable())) return
 
   const site = `${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`
   state.net.site = site
 
+  // Where somebody else would reach this machine. The plugin knows its own
+  // port; a browser is already looking at the answer.
+  if (hosted()) {
+    const where = await callHost('jaminNetwork').catch(() => null)
+    if (where && where.port) state.net.address = `http://${where.name}.local:${where.port}/`
+  } else {
+    state.net.address = window.location.origin + '/'
+  }
+
   session = new Session({
     site,
+    transport: hosted() ? hostTransport() : httpTransport(),
     onText: (text) => {
       if (text === state.text) return
       applyingRemote = true

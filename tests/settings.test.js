@@ -73,4 +73,19 @@ check('even with no accompany section at all',
   migrateSettings({ version: 4 }).accompany.snapNonChordTones, true)
 
 
+/* ---------------- networking ---------------- */
+check('networking is on out of the box', defaultSettings().network.enabled, true)
+check('the version moved with it', defaultSettings().version, SETTINGS_VERSION)
+
+// Somebody upgrading gets it on too, without losing what they had set.
+const older = { version: 5, accompany: { speed: 2 }, chords: { octave: 3 } }
+const moved = migrateSettings(older)
+check('an upgrade switches networking on', moved.network.enabled, true)
+check('and keeps what was there', [moved.accompany.speed, moved.chords.octave], [2, 3])
+check('and stamps the version', moved.version, SETTINGS_VERSION)
+
+// And somebody who had turned it off keeps it off.
+const refused = migrateSettings({ version: 5, network: { enabled: false } })
+check('a choice already made is not overridden', refused.network.enabled, false)
+
 console.log(failed === 0 ? 'settings: all checks passed' : `settings: ${failed} FAILED`)

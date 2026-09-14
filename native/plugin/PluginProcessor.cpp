@@ -2,6 +2,8 @@
 #include "PluginEditor.h"
 #include "PluginPaths.h"
 
+#include <juce_core/juce_core.h>
+
 /**
     Compiling, off the message thread.
 
@@ -113,6 +115,8 @@ JaminProcessor::~JaminProcessor()
     // the timer stops collecting, the compile thread stops producing, and only
     // then does anything the audio thread reads go away.
     stopTimer();
+    network.onRemoteOps = nullptr;
+    network.stop();
     compiler.reset();
     sequence.swap (nullptr);
 }
@@ -262,6 +266,51 @@ void JaminProcessor::setSequence (std::unique_ptr<jamin::Sequence> next)
     // could still be inside it.
     const auto previous = sequence.swap (std::move (next));
     juce::ignoreUnused (previous);
+}
+
+bool JaminProcessor::setNetworking (bool shouldRun)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    if (! shouldRun)
+    {
+        network.stop();
+        return false;
+    }
+
+    if (network.isRunning())
+        return true;
+
+    jamin::Node::Options options;
+    // The instance id is a UUID, which is unique but says nothing. The computer
+    // name is what a person recognises in a list.
+    options.id = instanceId.toStdString();
+    options.name = (juce::SystemStats::getComputerName() + " — " + JucePlugin_Name).toStdString();
+    options.files = jamin::webRoot().getFullPathName().toStdString();
+    options.onNetwork = true;
+
+    network.onRemoteOps = [this] (const std::string& envelope)
+    {
+        // Off the network's own thread and onto the message thread, where the
+        // editor lives and where a web view may be spoken to.
+        const juce::String copy (envelope);
+        juce::MessageManager::callAsync ([this, copy]
+        {
+            if (onNetworkOps)
+                onNetworkOps (copy);
+        });
+    };
+
+    if (! network.start (options))
+    {
+        juce::Logger::writeToLog ("jamin: networking would not start: " + network.lastError);
+        return false;
+    }
+
+    juce::Logger::writeToLog ("jamin: sharing this chart on http://"
+                              + juce::SystemStats::getComputerName() + ".local:"
+                              + juce::String (network.port()) + "/");
+    return true;
 }
 
 void JaminProcessor::requestCompile (const juce::String& requestJson)

@@ -21,6 +21,7 @@
  */
 
 import { applyOps, createDoc, docText, setDocText, snapshot } from './crdt.js'
+import { callHost, hosted, onHost } from './host.js'
 
 /** How long to wait before trying the stream again, and the ceiling on that. */
 const RETRY_MS = 800
@@ -34,12 +35,96 @@ const RETRY_MAX_MS = 8000
  * all. One request settles it and costs nothing.
  */
 export async function nodeAvailable(origin = '') {
+  if (hosted()) {
+    // The plugin is a node when its networking is switched on, and asking is
+    // also what switches it on for the first time.
+    try {
+      const state = await callHost('jaminNetwork', true)
+      return Boolean(state && state.running)
+    } catch {
+      return false
+    }
+  }
+
   try {
     const response = await fetch(`${origin}/peers`, { cache: 'no-store' })
     if (!response.ok) return false
     return Array.isArray(await response.json())
   } catch {
     return false
+  }
+}
+
+/**
+ * How a session reaches its node.
+ *
+ * Over HTTP when the page was served by one, and through the plugin's own
+ * bridge when it was not -- the editor's page comes from a `juce://` origin and
+ * cannot use `fetch` against a node at all. Same traffic, shorter route, and the
+ * session above does not know which it has.
+ */
+export function httpTransport(origin = '') {
+  return {
+    async doc() {
+      const response = await fetch(`${origin}/doc`, { cache: 'no-store' })
+      return response.ok ? response.json() : []
+    },
+    async peers() {
+      const response = await fetch(`${origin}/peers`, { cache: 'no-store' })
+      return response.ok ? response.json() : []
+    },
+    send(envelope) {
+      fetch(`${origin}/ops`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(envelope),
+        keepalive: true,
+      }).catch(() => {})
+    },
+    listen(onEnvelope, onOpen, onBroken) {
+      const stream = new EventSource(`${origin}/events`)
+      stream.onopen = onOpen
+      stream.onerror = onBroken
+      stream.addEventListener('ops', (event) => {
+        try {
+          onEnvelope(JSON.parse(event.data))
+        } catch {
+          // A frame we cannot read is a frame we ignore; the log has it too.
+        }
+      })
+      return () => stream.close()
+    },
+  }
+}
+
+/** The same thing, through the plugin, whose page cannot use HTTP. */
+export function hostTransport() {
+  return {
+    async doc() {
+      const log = await callHost('jaminNetDoc').catch(() => [])
+      return Array.isArray(log) ? log : []
+    },
+    async peers() {
+      const state = await callHost('jaminNetwork').catch(() => null)
+      return state && Array.isArray(state.peers) ? state.peers : []
+    },
+    send(envelope) {
+      callHost('jaminNetOps', JSON.stringify(envelope)).catch(() => {})
+    },
+    listen(onEnvelope, onOpen) {
+      const stop = onHost('jaminNetOps', (message) => {
+        if (!message || !message.envelope) return
+        try {
+          onEnvelope(JSON.parse(message.envelope))
+        } catch {
+          // As above.
+        }
+      })
+      // There is no connection to wait for: the bridge is there or the plugin
+      // is not.
+      if (onOpen) onOpen()
+      return stop
+    },
   }
 }
 
@@ -64,7 +149,7 @@ export class Session {
    */
   constructor(options) {
     this.site = options.site
-    this.origin = options.origin || ''
+    this.transport = options.transport || httpTransport(options.origin || '')
     this.onText = options.onText || (() => {})
     this.onPeers = options.onPeers || (() => {})
     this.onState = options.onState || (() => {})
@@ -104,7 +189,7 @@ export class Session {
     clearInterval(this.peerTimer)
     clearTimeout(this.retryTimer)
     if (this.stream) {
-      this.stream.close()
+      this.stream()
       this.stream = null
     }
     this.setState('offline')
@@ -118,9 +203,7 @@ export class Session {
 
   async catchUp() {
     try {
-      const response = await fetch(`${this.origin}/doc`, { cache: 'no-store' })
-      if (!response.ok) return
-      const envelopes = await response.json()
+      const envelopes = await this.transport.doc()
       let changed = false
       for (const envelope of envelopes) {
         if (envelope && Array.isArray(envelope.ops)) {
@@ -137,44 +220,34 @@ export class Session {
   listen() {
     if (this.stopped) return
 
-    this.stream = new EventSource(`${this.origin}/events`)
-
-    this.stream.onopen = () => {
-      this.retry = RETRY_MS
-      this.setState('joined')
-      // Anything said between the catch-up and the stream opening is still in
-      // the log, so ask again rather than reasoning about the gap.
-      this.catchUp()
-    }
-
-    this.stream.addEventListener('ops', (event) => {
-      let envelope = null
-      try {
-        envelope = JSON.parse(event.data)
-      } catch {
-        return
+    this.stream = this.transport.listen(
+      (envelope) => {
+        if (!envelope || envelope.from === this.site || !Array.isArray(envelope.ops)) return
+        if (applyOps(this.doc, envelope.ops)) this.onText(this.text())
+      },
+      () => {
+        this.retry = RETRY_MS
+        this.setState('joined')
+        // Anything said between the catch-up and the stream opening is still in
+        // the log, so ask again rather than reasoning about the gap.
+        this.catchUp()
+      },
+      () => {
+        if (this.stopped) return
+        this.setState('joining')
+        if (this.stream) this.stream()
+        this.stream = null
+        // Backing off, because a node that is down stays down for a while and a
+        // page reconnecting ten times a second helps nobody.
+        this.retryTimer = setTimeout(() => this.listen(), this.retry)
+        this.retry = Math.min(RETRY_MAX_MS, this.retry * 2)
       }
-      if (!envelope || envelope.from === this.site || !Array.isArray(envelope.ops)) return
-      if (applyOps(this.doc, envelope.ops)) this.onText(this.text())
-    })
-
-    this.stream.onerror = () => {
-      if (this.stopped) return
-      this.setState('joining')
-      if (this.stream) this.stream.close()
-      this.stream = null
-      // Backing off, because a node that is down stays down for a while and a
-      // page reconnecting ten times a second helps nobody.
-      this.retryTimer = setTimeout(() => this.listen(), this.retry)
-      this.retry = Math.min(RETRY_MAX_MS, this.retry * 2)
-    }
+    )
   }
 
   async refreshPeers() {
     try {
-      const response = await fetch(`${this.origin}/peers`, { cache: 'no-store' })
-      if (!response.ok) return
-      const peers = await response.json()
+      const peers = await this.transport.peers()
       if (!Array.isArray(peers)) return
       if (JSON.stringify(peers) !== JSON.stringify(this.peers)) {
         this.peers = peers
@@ -215,11 +288,6 @@ export class Session {
       ops,
     }
 
-    fetch(`${this.origin}/ops`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(envelope),
-      keepalive: true,
-    }).catch(() => {})
+    this.transport.send(envelope)
   }
 }

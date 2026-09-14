@@ -238,6 +238,28 @@ because that is what discovery knows, and any other number would be invented.
 
 ---
 
+## The plugin is a node
+
+Not a special case of one: `jamin::Node` is discovery and an endpoint wired together, and both
+`jamin-node` and the plugin use it unchanged. A plugin on a track announces itself, finds the
+others, serves the page and relays edits exactly as a standalone node does.
+
+Its own editor is the one thing that differs, and only in how it reaches its node. That page is
+served from a `juce://` origin and cannot `fetch` a node at all, so its edits go through the
+native bridge — `jaminNetOps` out, a `jaminNetOps` event back, `jaminNetDoc` to catch up. Same
+traffic, shorter route. `src/core/net.js` has two transports and one session, so the application
+never learns which it has.
+
+**On by default.** A feature that has to be switched on before it can find anything is a feature
+nobody discovers, and finding each other with nothing configured is the entire point. The switch
+is in settings, beside a plain statement that anyone who can reach the port can edit the chart.
+
+The first time a DAW loads it, **macOS will ask that DAW** for Local Network permission — the
+permission belongs to the application, not to the plugin inside it. Refusing it leaves jamin
+working exactly as before, alone.
+
+---
+
 ## Proving it
 
 `npm run test:network` is the one that matters. It starts real `jamin-node` processes, points a

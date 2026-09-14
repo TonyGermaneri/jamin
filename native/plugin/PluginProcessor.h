@@ -2,6 +2,7 @@
 
 #include "Compiler.h"
 
+#include <jamin/Node.h>
 #include <jamin/Sequence.h>
 #include <jamin/SongBus.h>
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -116,6 +117,26 @@ public:
     /** Distinct per instance, stable for its lifetime: what the page labels
         itself with, and what tells two windows apart. */
     const juce::String instanceId;
+
+    /**
+        This machine's share of a networked jamin.
+
+        The plugin is a node like any other: it announces itself, finds the
+        others and relays edits. Its own editor cannot reach it over HTTP -- that
+        page is served from a juce:// origin -- so edits go through the native
+        bridge instead, which is the same traffic by a shorter route.
+
+        Off until switched on, because opening a port is not something to do
+        because a feature happened to compile. @see docs/network.md
+    */
+    jamin::Node network;
+
+    /** Start or stop networking. Returns whether it is running afterwards. */
+    bool setNetworking (bool shouldRun);
+    bool isNetworking() const { return network.isRunning(); }
+
+    /** An edit that arrived from another machine, waiting for the editor. */
+    std::function<void (const juce::String&)> onNetworkOps;
 
     /**
         Incoming MIDI, kept for the editor's phrase capture and MIDI learn.

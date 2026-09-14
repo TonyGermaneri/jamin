@@ -107,6 +107,37 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                            lastSongGeneration = generation;   // do not echo our own edit back
                            complete (juce::var ((juce::int64) generation));
                        })
+                   .withNativeFunction ("jaminNetwork",
+                       [this] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // Switch it on or off, and say where it ended up: the
+                           // page shows the address so somebody can open it on
+                           // their phone without being told what it is.
+                           if (! args.isEmpty())
+                               plugin.setNetworking (static_cast<bool> (args[0]));
+
+                           auto* state = new juce::DynamicObject();
+                           state->setProperty ("running", plugin.isNetworking());
+                           state->setProperty ("port", plugin.network.port());
+                           state->setProperty ("name", juce::SystemStats::getComputerName());
+                           state->setProperty ("peers", juce::JSON::parse (plugin.network.peersJson()));
+                           complete (juce::var (state));
+                       })
+                   .withNativeFunction ("jaminNetOps",
+                       [this] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // An edit made here, on its way to every other
+                           // machine. The envelope is opaque: this end does not
+                           // know what an edit is and does not need to.
+                           if (! args.isEmpty())
+                               plugin.network.submit (args[0].toString().toStdString());
+                           complete (juce::var (true));
+                       })
+                   .withNativeFunction ("jaminNetDoc",
+                       [this] (const juce::Array<juce::var>&, auto complete)
+                       {
+                           complete (juce::JSON::parse (plugin.network.docJson()));
+                       })
                    .withNativeFunction ("jaminOpenUrl",
                        [] (const juce::Array<juce::var>& args, auto complete)
                        {
@@ -144,6 +175,14 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                            complete (juce::var (true));
                        }))
 {
+    // Edits from other machines, pushed at the page as they arrive.
+    plugin.onNetworkOps = [this] (const juce::String& envelope)
+    {
+        auto* carried = new juce::DynamicObject();
+        carried->setProperty ("envelope", envelope);
+        browser.emitEventIfBrowserIsVisible ("jaminNetOps", juce::var (carried));
+    };
+
     addAndMakeVisible (browser);
     browser.goToURL (juce::WebBrowserComponent::getResourceProviderRoot());
 
@@ -154,7 +193,11 @@ JaminEditor::JaminEditor (JaminProcessor& p)
     startTimerHz (30);
 }
 
-JaminEditor::~JaminEditor() { stopTimer(); }
+JaminEditor::~JaminEditor()
+{
+    stopTimer();
+    plugin.onNetworkOps = nullptr;
+}
 
 void JaminEditor::resized() { browser.setBounds (getLocalBounds()); }
 

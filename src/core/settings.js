@@ -24,7 +24,7 @@ export const STORAGE_KEY = 'jamin.settings.v1'
  *        chord alike; `chords.bassNote` and `accompany.keepBass` are gone, and
  *        anyone who had the chord one on gets the remaining one on.
  */
-export const SETTINGS_VERSION = 5
+export const SETTINGS_VERSION = 6
 export const TEXT_KEY = 'jamin.chart.v1'
 export const PHRASE_KEY = 'jamin.phrases.v1'
 export const SONG_PHRASE_KEY = 'jamin.songPhrase.v1'
@@ -114,6 +114,16 @@ export function defaultSettings() {
       // a different phrase to individual chords, marked with a dot.
       perChordPhrases: false,
     },
+    network: {
+      // Several machines holding one chart, found automatically.
+      //
+      // On by default, because a feature that has to be switched on before it
+      // can find anything is a feature nobody discovers -- and finding each
+      // other with nothing configured is the entire point. It opens a port and
+      // anyone who can reach it can edit the chart, which the settings say
+      // plainly rather than leaving to be found out.
+      enabled: true,
+    },
   }
 }
 
@@ -174,6 +184,13 @@ export function migrateSettings(stored) {
 
   if (version < 5) {
     next.accompany.snapNonChordTones = true
+  }
+
+  if (version < 6) {
+    // Networking arrived on. It is the whole point of it -- a machine that has
+    // to be switched on before it can be found is a machine somebody has to
+    // walk over to.
+    next.network = { enabled: true, ...(next.network || {}) }
   }
 
   next.version = SETTINGS_VERSION
