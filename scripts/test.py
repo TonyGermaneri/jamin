@@ -28,6 +28,9 @@ SUITES = [
     (["src/core/themes.js", "src/core/settings.js"], "tests/settings.test.js"),
     (["src/core/host.js"], "tests/host.test.js"),
     (["src/core/crdt.js"], "tests/crdt.test.js"),
+    # The shared segment: what may travel between instances in one host, and why
+    # it is operations rather than text.
+    (["src/core/crdt.js", "src/core/host.js", "src/core/net.js"], "tests/shared.test.js"),
     ([
         "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",
         "src/core/voiceLeading.js", "src/core/phrases.js",

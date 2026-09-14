@@ -135,6 +135,14 @@ Nothing needs to synchronise *playback* between instances, because the host has 
 All that has to travel between them is the text, and it can take several milliseconds to get
 there without anybody hearing anything at all.
 
+**What travels is the document as operations, not the text.** The two are not interchangeable.
+Operations are idempotent and order-independent, so the same edit arriving down both routes — the
+segment and the network — converges instead of racing. Text would have to be turned back into
+operations by diffing against whatever the receiving document happened to hold, and if the other
+route had not yet delivered the same edit, that diff invents fresh insertions for characters that
+already exist elsewhere. Both copies then survive, on every machine. @see tests/shared.test.js,
+which pins down both the convergence and the duplication it avoids.
+
 So the channel can be simple, and it is: `jamin::SongBus`, a named shared-memory segment with a
 seqlock over it and a file behind it — `shm_open` and Application Support on macOS,
 `CreateFileMapping` and Local AppData on Windows. The same bytes and the same seqlock either way;

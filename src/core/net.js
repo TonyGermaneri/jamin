@@ -115,6 +115,23 @@ export function httpTransport(secret, origin = '') {
   }
 }
 
+/**
+ * A session with nowhere to send.
+ *
+ * Several instances in one host share a chart through the shared segment, which
+ * needs no port, no password and nothing configured. That still wants a document
+ * to share -- so the session exists either way, and this is what it talks to
+ * when there is no network to talk to.
+ */
+export function localTransport() {
+  return {
+    async doc() { return [] },
+    async peers() { return [] },
+    send() {},
+    listen() { return () => {} },
+  }
+}
+
 /** The same thing, through the plugin, whose page cannot use HTTP. */
 export function hostTransport(secret) {
   return {
@@ -293,6 +310,32 @@ export class Session {
     if (!ops.length) return ops
     this.send(ops)
     return ops
+  }
+
+  /**
+   * Ops from somewhere other than the network -- the shared segment, which
+   * every instance in one host can read without a socket or a password.
+   *
+   * Applied and never re-sent. They are already operations: applying them is
+   * idempotent and order-independent, so the same ops arriving down both routes
+   * converge on one document instead of racing.
+   *
+   * This is the whole reason the segment carries ops rather than text. Text
+   * would have to be turned back into operations by diffing against whatever
+   * this document happened to hold -- and if the network had not yet delivered
+   * the same edit, that diff invents *new* insertions for characters that
+   * already exist elsewhere. Every machine then ends up with both copies.
+   */
+  ingest(ops) {
+    if (!Array.isArray(ops) || !ops.length) return false
+    if (!applyOps(this.doc, ops)) return false
+    this.onText(this.text())
+    return true
+  }
+
+  /** The whole document as operations, for the shared segment. */
+  everything() {
+    return snapshot(this.doc)
   }
 
   /** Hand somebody else the whole document, for a node with an empty log. */

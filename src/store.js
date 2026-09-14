@@ -11,7 +11,7 @@
 import { reactive, watch } from 'vue'
 import { MidiEngine } from './core/midi.js'
 import { hosted, hostData, callHost, onHost, HostClock } from './core/host.js'
-import { nodeAvailable, Session, httpTransport, hostTransport } from './core/net.js'
+import { nodeAvailable, Session, httpTransport, hostTransport, localTransport } from './core/net.js'
 import { Player } from './core/player.js'
 import { parseScore } from './core/score.js'
 import {
@@ -304,11 +304,19 @@ async function adoptHost() {
     state.host.compileError = report.error || null
   })
 
+  // Another instance in this host changed the chart. @see adoptShared
+  onHost('jaminSong', (song) => {
+    if (song && typeof song.json === 'string') adoptShared(song.json)
+  })
+
   const info = await callHost('jaminReady').catch(() => null)
   if (!info) return
 
   if (info.instanceId) state.host.instanceId = info.instanceId
   state.host.shared = Boolean(info.shared)
+  // Held for joinNetwork, which runs next and wants it before it asks the
+  // network anything. jaminReady is answered once, not twice.
+  hostedSong = typeof info.song === 'string' ? info.song : null
 
   // What this instance was last set to. It is saved with the DAW's project, so
   // reopening a session has to bring the chart back -- and the plugin has
@@ -394,6 +402,9 @@ let session = null
     back out as a local edit and round the loop again. */
 let applyingRemote = false
 
+/** What the segment held when this page started. @see adoptHost */
+let hostedSong = null
+
 /**
  * Join the other machines, if this page was served by one of them.
  *
@@ -402,26 +413,35 @@ let applyingRemote = false
  * page that is not on a node carries on exactly as before.
  */
 async function joinNetwork() {
-  if (!hosted() && typeof EventSource !== 'function') return
   const { enabled, secret } = state.settings.network
-  if (!enabled || !secret) return
-  if (!(await nodeAvailable(secret))) return
+
+  // Three ways this can go, and the shared segment is why there are three.
+  //
+  // A plugin always has a session, even with no password and no network at all:
+  // several instances in one host hold one chart through the segment, which
+  // needs no port and nothing configured, and that still wants a document to
+  // hold. A browser only has one when there is a node to talk to.
+  const networked = enabled && Boolean(secret)
+    && (hosted() || typeof EventSource === 'function')
+    && (await nodeAvailable(secret))
+
+  if (!networked && !hosted()) return
 
   const site = `${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`
   state.net.site = site
 
   // Where somebody else would reach this machine. The plugin knows its own
   // port; a browser is already looking at the answer.
-  if (hosted()) {
+  if (networked && hosted()) {
     const where = await callHost('jaminNetwork', true, secret).catch(() => null)
     if (where && where.port) state.net.address = `http://${where.name}.local:${where.port}/`
-  } else {
+  } else if (networked) {
     state.net.address = window.location.origin + '/'
   }
 
   session = new Session({
     site,
-    transport: hosted() ? hostTransport(secret) : httpTransport(secret),
+    transport: !networked ? localTransport() : hosted() ? hostTransport(secret) : httpTransport(secret),
     onText: (text) => {
       if (text === state.text) return
       applyingRemote = true
@@ -430,6 +450,9 @@ async function joinNetwork() {
       } finally {
         applyingRemote = false
       }
+      // An edit that arrived over the network goes into the segment too, so an
+      // instance in this host that is not on the network still sees it.
+      publishShared()
     },
     onPeers: (peers) => { state.net.peers = peers },
     onState: (net) => {
@@ -437,6 +460,11 @@ async function joinNetwork() {
       state.net.joined = net === 'joined'
     },
   })
+
+  // Whatever the other instances in this host had already agreed, before the
+  // network is asked anything: the segment is the fastest thing here, and for an
+  // instance with no password it is the only thing. @see adoptShared
+  if (hosted()) adoptShared(hostedSong)
 
   await session.start()
 
@@ -460,12 +488,58 @@ async function joinNetwork() {
     else if (!session.peers.length) session.change(state.text)
   }
 
-  state.net.joined = true
+  if (networked) state.net.joined = true
+  publishShared()
+}
+
+/* ------------------------------------------------------------------ *
+ * The chart every instance in this host is holding
+ *
+ * A DAW has no idea that two instances of a plugin are related, so the channel
+ * between them sits outside it: a shared memory segment with the chart in it.
+ * No port, no password, nothing to configure, and it works when the network is
+ * switched off entirely. @see jamin::SongBus
+ *
+ * What travels is the document as operations, never the text. @see Session#ingest
+ * ------------------------------------------------------------------ */
+
+/** True while applying what the segment said, so it is not written straight back. */
+let applyingShared = false
+
+/** Put this instance's whole document in the segment. */
+function publishShared() {
+  if (!hosted() || !session || applyingShared) return
+  const ops = session.everything()
+  if (!ops.length) return
+  callHost('jaminPublishSong', JSON.stringify({ v: 1, ops })).catch(() => {})
+}
+
+/** Take what another instance in this host put there. */
+function adoptShared(json) {
+  if (!hosted() || !session || !json) return false
+
+  let carried = null
+  try {
+    carried = JSON.parse(json)
+  } catch {
+    return false                     // written by a version that meant something else
+  }
+
+  if (!carried || !Array.isArray(carried.ops)) return false
+
+  applyingShared = true
+  try {
+    return session.ingest(carried.ops)
+  } finally {
+    applyingShared = false
+  }
 }
 
 /** Tell the others about an edit made here. */
 function publishEdit(text) {
-  if (session && !applyingRemote) session.change(text)
+  if (!session || applyingRemote) return
+  const ops = session.change(text)
+  if (ops.length) publishShared()
 }
 
 function readStored(key) {

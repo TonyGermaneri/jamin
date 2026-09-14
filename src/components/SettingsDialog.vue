@@ -113,7 +113,13 @@ async function retryMidi() {
             />
             <div class="text-caption text-medium-emphasis mb-4">
               <strong v-if="!state.settings.network.secret" class="text-warning">
-                Nothing is shared until you choose a word.
+                No <em>machine</em> shares this until you choose a word.
+                <InfoTip>
+                  Instances inside one host always hold the same chart — they
+                  share it through memory, with no port and nothing to configure,
+                  so several tracks in this project are already in step. The word
+                  is what lets another machine join them.
+                </InfoTip>
               </strong>
               <template v-else>
                 Every machine that knows this word holds the same chart. Open
