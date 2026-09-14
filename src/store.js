@@ -21,6 +21,7 @@ import {
   TEXT_KEY,
   SONG_PHRASE_KEY,
   ACCENT_KEY,
+  FAVOURITES_KEY,
   SAMPLE_CHART,
 } from './core/settings.js'
 import {
@@ -66,6 +67,9 @@ export const state = reactive({
   text: '',
   songPhrase: null,
   accentPhrase: null,
+  /** Phrase ids the user has starred. A plain array so it serialises; the
+      lookups go through favourite(), which is a Set underneath. */
+  favourites: [],
   score: parseScore(''),
   settings: loadSettings(),
   phrases: [],
@@ -119,6 +123,9 @@ export const state = reactive({
     progressionsTab: 'library',
     armed: false,
     accentArmed: false,
+    /** The chord the phrase book is picking for, when it was opened by
+        right-clicking one. -1 means it was opened for the song. */
+    assignTo: -1,
     learningAccent: false,
     fetching: false,
     fetchProgress: '',
@@ -241,6 +248,8 @@ export async function initApp() {
   state.text = readStoredText()
   state.songPhrase = readStoredSongPhrase()
   state.accentPhrase = readStored(ACCENT_KEY)
+  state.favourites = readFavourites()
+  favouriteSet = new Set(state.favourites)
   reparse()
   loadPhraseBook()
   state.progressions = loadProgressions()
@@ -782,6 +791,51 @@ export function setAccentPhrase(ref) {
   }
   const phrase = player.getPhrase(state.accentPhrase)
   toast(phrase ? `Accent: ${phrase.name}` : 'Accent cleared')
+}
+
+/* ------------------------------------------------------------------ *
+ * Favourites
+ * ------------------------------------------------------------------ */
+
+let favouriteSet = new Set()
+
+function readFavourites() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(FAVOURITES_KEY) || '[]')
+    return Array.isArray(parsed) ? parsed.filter((one) => typeof one === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+/** Is this phrase starred? Takes an entry or a reference. */
+export function favourite(entry) {
+  const ref = typeof entry === 'string' ? entry : entry && (entry.id || entry.name)
+  return Boolean(ref) && favouriteSet.has(ref)
+}
+
+/**
+ * Star or unstar a phrase.
+ *
+ * Kept by id where there is one and by name otherwise, which is the same rule
+ * the accent uses -- a phrase captured before ids existed has only a name, and
+ * losing somebody's favourites to a schema detail would be a poor trade.
+ */
+export function toggleFavourite(entry) {
+  const ref = typeof entry === 'string' ? entry : entry && (entry.id || entry.name)
+  if (!ref) return false
+
+  if (favouriteSet.has(ref)) favouriteSet.delete(ref)
+  else favouriteSet.add(ref)
+
+  state.favourites = [...favouriteSet]
+  try {
+    localStorage.setItem(FAVOURITES_KEY, JSON.stringify(state.favourites))
+  } catch {
+    // A full or disabled store loses the list on reload; it must not stop the
+    // click from registering.
+  }
+  return favouriteSet.has(ref)
 }
 
 export function accentPhrase() {

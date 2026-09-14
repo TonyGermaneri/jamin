@@ -279,3 +279,14 @@ body,
 .jamin-book-filters .v-expansion-panel--active > .v-expansion-panel-title {
   min-height: 32px;
 }
+
+/* The heart sits in the row's prepend slot, where a list item expects an avatar
+   or an icon; without this it takes an avatar's worth of width and pushes every
+   name along. */
+.jamin-heart {
+  margin-inline-start: -4px;
+}
+
+.jamin-book .v-list-item__prepend > .jamin-heart {
+  min-width: 24px;
+}

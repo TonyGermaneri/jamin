@@ -29,6 +29,7 @@ export const TEXT_KEY = 'jamin.chart.v1'
 export const PHRASE_KEY = 'jamin.phrases.v1'
 export const SONG_PHRASE_KEY = 'jamin.songPhrase.v1'
 export const ACCENT_KEY = 'jamin.accent.v1'
+export const FAVOURITES_KEY = 'jamin.favourites.v1'
 
 export function defaultSettings() {
   const theme = THEMES[0]

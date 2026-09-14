@@ -663,7 +663,9 @@
       const catRows = [...document.querySelectorAll('.v-overlay--active .v-list-item')].map((el) => el.innerText)
       ok('a page is a page, not the whole list', catRows.length > 0 && catRows.length <= 14, `${catRows.length} rows`)
       ok('each row is a name and a length', catRows.every((t) => /beats/.test(t)), catRows[0])
-      const catAside = document.querySelector('.v-overlay--active .v-col-md-6:last-child')
+      // By class, not by column width: where the detail sits is a layout
+      // decision and this check is not about layout.
+      const catAside = document.querySelector('.v-overlay--active .jamin-book-detail')
       ok('the aside shows the one selected', catAside && /played over/i.test(catAside.innerText),
         catAside && catAside.innerText.slice(0, 60).replace(/\n/g, ' '))
       // innerText is the rendered text, and Vuetify uppercases buttons in CSS.
@@ -736,6 +738,89 @@
       await settle(150)
       is('and it can be cleared', state.accentPhrase, null)
 
+      /* ---------- favourites ---------- */
+      const favourite = store.catalogue().find((entry) => entry.id)
+      store.toggleFavourite(favourite)
+      await settle(150)
+      ok('starring a phrase records it', store.favourite(favourite))
+      is('and it is in the list', state.favourites.includes(favourite.id), true)
+      store.toggleFavourite(favourite)
+      await settle(100)
+      ok('and starring again unstars it', !store.favourite(favourite))
+      store.toggleFavourite(favourite)
+      await settle(150)
+
+      const hearts = document.querySelectorAll('.v-overlay--active .jamin-heart')
+      ok('every row has a heart', hearts.length > 0, `${hearts.length} hearts`)
+
+      /* ---------- assigning a phrase to one chord ---------- */
+      state.settings.accompany.perChordPhrases = true
+      store.setText('C F G')
+      await settle(250)
+
+      const chordToken = state.score.tokens.findIndex((t) => t.type === 'chord')
+      store.bindPhrase(favourite.id, chordToken)
+      await settle(200)
+      ok('assigning writes the mark into the chart', /^\.C\{/.test(state.text), state.text)
+      is('and the token carries the reference', state.score.tokens[0].phraseRef, favourite.id)
+
+      store.unbindPhrase(0)
+      await settle(200)
+      is('removing takes it back out', state.text, 'C F G')
+
+      // The book, opened for one chord, assigns to it and closes.
+      state.ui.assignTo = 0
+      state.ui.phrases = true
+      await settle(300)
+      const firstRow = document.querySelector('.v-overlay--active .v-list-item')
+      ok('the book opens for that chord', !!firstRow)
+      firstRow.click()
+      await settle(300)
+      ok('picking assigns rather than auditioning', /^\.C\{/.test(state.text), state.text)
+      is('and the book closes', state.ui.phrases, false)
+      is('and stops assigning', state.ui.assignTo, -1)
+      store.unbindPhrase(0)
+      state.settings.accompany.perChordPhrases = false
+      await settle(200)
+
+      /* ---------- copy and paste keep the articulation ---------- */
+      store.setText('.C{riff} F G')
+      await settle(250)
+      const chart = document.querySelector('.jamin-input')
+      chart.focus()
+      chart.setSelectionRange(0, chart.value.length)
+
+      const outgoing = new DataTransfer()
+      const copyEvent = new ClipboardEvent('copy', { clipboardData: outgoing, bubbles: true, cancelable: true })
+      chart.dispatchEvent(copyEvent)
+      is('the plain text is a chart anyone can read', outgoing.getData('text/plain'), 'C F G')
+      is('and jamin keeps its own copy', outgoing.getData('application/x-jamin-chart'), '.C{riff} F G')
+
+      store.setText('Am')
+      await settle(200)
+      chart.setSelectionRange(0, chart.value.length)
+      const incoming = new DataTransfer()
+      incoming.setData('text/plain', 'C F G')
+      incoming.setData('application/x-jamin-chart', '.C{riff} F G')
+      chart.dispatchEvent(new ClipboardEvent('paste', { clipboardData: incoming, bubbles: true, cancelable: true }))
+      await settle(250)
+      is('pasting back into jamin restores the phrase', state.text, '.C{riff} F G')
+
+      // And plain text from anywhere else still works.
+      store.setText('Am')
+      await settle(200)
+      chart.setSelectionRange(0, chart.value.length)
+      const plain = new DataTransfer()
+      plain.setData('text/plain', 'Dm7 G7 Cmaj7')
+      chart.dispatchEvent(new ClipboardEvent('paste', { clipboardData: plain, bubbles: true, cancelable: true }))
+      await settle(250)
+      is('plain text from elsewhere pastes as itself', state.text, 'Dm7 G7 Cmaj7')
+
+      // The assignment checks above closed the book; the next section needs it.
+      state.ui.phrases = true
+      state.ui.phrasesTab = 'catalogue'
+      await settle(300)
+
       /* ---------- walking the catalogue ---------- */
       const catList = document.querySelector('.v-overlay--active .v-list')
       catList.focus()
@@ -782,9 +867,10 @@
       store.bindPhrase(null)
       await settle(200)
 
+      const detail = document.querySelector('.v-overlay--active .jamin-book-detail')
       ok('with one Use button and no keeping step',
-        /\b(use|playing)\b/i.test(catAside.innerText) && !/keep/i.test(catAside.innerText),
-        catAside.innerText.slice(-80).replace(/\n/g, ' '))
+        /\b(use|playing)\b/i.test(detail.innerText) && !/keep/i.test(detail.innerText),
+        detail.innerText.slice(-80).replace(/\n/g, ' '))
 
       state.ui.phrasesTab = 'playback'
       await settle(400)

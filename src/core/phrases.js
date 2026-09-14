@@ -141,3 +141,24 @@ export function unbindPhraseInText(text, token) {
   const after = text.slice(token.end)
   return before + token.body + after
 }
+
+
+/**
+ * The chart as somebody else would want it: chords, without the marks that bind
+ * phrases to them.
+ *
+ * Copying out of jamin puts this on the clipboard as plain text, so what lands
+ * in an email or a text file is a readable chart rather than one full of
+ * punctuation nobody else's software understands. The unstripped text goes on
+ * the clipboard too, under a type only jamin reads, so pasting back into jamin
+ * brings the phrases with it.
+ *
+ * The leading dot only counts at the start of a word. `N.C.` has dots in it and
+ * is not a phrase mark, and losing them would turn a no-chord bar into an
+ * unreadable one.
+ */
+export function stripPhraseMarks(text) {
+  return String(text == null ? '' : text)
+    .replace(/\{[^}]*\}/g, '')
+    .replace(/(^|\s)(\|*:*)\.(?=\S)/g, '$1$2')
+}

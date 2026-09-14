@@ -11,8 +11,9 @@
  * We take over the things it cannot get right -- hit testing and vertical caret
  * movement -- because our lines are each a different size.
  */
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { state, live, setText, describeAt } from '../store.js'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { state, live, setText, describeAt, bindPhrase, unbindPhrase } from '../store.js'
+import { stripPhraseMarks } from '../core/phrases.js'
 import { layoutChart, createMeasurer, caretRect, indexAtPoint, verticalMove, rectForToken } from '../canvas/layout.js'
 import { drawChart } from '../canvas/textRenderer.js'
 import { GlRenderer, MAX_REGIONS } from '../canvas/glRenderer.js'
@@ -152,6 +153,55 @@ function ensureLayout() {
 
 /* ---------------- input ---------------- */
 
+/**
+ * jamin's own flavour of the chart, alongside the plain text.
+ *
+ * A custom type is carried by the clipboard untouched and is invisible to
+ * everything else, so what another application sees is the plain text and what
+ * jamin sees is the chart as it was written -- phrase marks and all.
+ */
+const JAMIN_MIME = 'application/x-jamin-chart'
+
+function writeClipboard(event, alsoCut) {
+  const field = input.value
+  if (!field || field.selectionStart === field.selectionEnd) return   // nothing selected
+
+  const from = field.selectionStart
+  const to = field.selectionEnd
+  const raw = field.value.slice(from, to)
+
+  event.preventDefault()
+  event.clipboardData.setData('text/plain', stripPhraseMarks(raw))
+  try {
+    event.clipboardData.setData(JAMIN_MIME, raw)
+  } catch {
+    // A browser that refuses the custom type still gets the plain text, which
+    // is the half that has to work.
+  }
+
+  if (alsoCut) replaceRange(from, to, '')
+}
+
+function onPaste(event) {
+  const carried = event.clipboardData.getData(JAMIN_MIME)
+  const text = carried || event.clipboardData.getData('text/plain')
+  if (!text) return
+  event.preventDefault()
+  replaceRange(input.value.selectionStart, input.value.selectionEnd, text)
+}
+
+/** Splice text into the chart and leave the caret after it. */
+function replaceRange(from, to, text) {
+  const field = input.value
+  const next = field.value.slice(0, from) + text + field.value.slice(to)
+  const caret = from + text.length
+  field.value = next
+  field.setSelectionRange(caret, caret)
+  setText(next)
+  layoutKey = ''
+  syncCaret()
+}
+
 function onInput(event) {
   setText(event.target.value)
   layoutKey = ''
@@ -181,6 +231,52 @@ function pointIndex(event) {
   const rect = root.value.getBoundingClientRect()
   ensureLayout()
   return indexAtPoint(layout, event.clientX - rect.left, event.clientY - rect.top + scroll, measure)
+}
+
+/**
+ * The chord under the pointer, or -1.
+ *
+ * A right-click has to land on a chord to mean anything, and only chords can
+ * carry a phrase -- bar lines, labels and repeat marks cannot.
+ */
+function chordAt(event) {
+  const index = pointIndex(event)
+  return state.score.tokens.findIndex(
+    (token) => token.type === 'chord' && index >= token.start && index <= token.end
+  )
+}
+
+const menu = ref({ open: false, x: 0, y: 0, token: -1 })
+
+const menuToken = computed(() => (menu.value.token >= 0 ? state.score.tokens[menu.value.token] : null))
+
+/**
+ * Right-clicking a chord offers to give it a phrase of its own.
+ *
+ * Only in per-chord mode: with one phrase for the whole song there is nothing
+ * per-chord to assign, and a menu offering it would be a menu that lies. The
+ * browser's own menu is left alone in that case, and everywhere that is not a
+ * chord.
+ */
+function onContextMenu(event) {
+  if (!state.settings.accompany.perChordPhrases) return
+  const token = chordAt(event)
+  if (token < 0) return
+
+  event.preventDefault()
+  menu.value = { open: true, x: event.clientX, y: event.clientY, token }
+}
+
+function assignPhrase() {
+  state.ui.assignTo = menu.value.token
+  state.ui.phrasesTab = 'catalogue'
+  state.ui.phrases = true
+  menu.value.open = false
+}
+
+function removePhrase() {
+  unbindPhrase(menu.value.token)
+  menu.value.open = false
 }
 
 function onMouseDown(event) {
@@ -501,8 +597,30 @@ defineExpose({ focus: () => input.value && input.value.focus() })
       @input="onInput"
       @keydown="onKeyDown"
       @mousedown="onMouseDown"
+      @contextmenu="onContextMenu"
+      @copy="writeClipboard($event, false)"
+      @cut="writeClipboard($event, true)"
+      @paste="onPaste"
       @focus="focused = true"
       @blur="focused = false"
     />
+
+    <v-menu v-model="menu.open" :target="[menu.x, menu.y]" location="bottom start">
+      <v-list density="compact" min-width="190">
+        <v-list-subheader v-if="menuToken" class="text-caption">
+          {{ menuToken.body }}<span v-if="menuToken.phraseRef"> → {{ menuToken.phraseRef }}</span>
+        </v-list-subheader>
+        <v-list-item prepend-icon="mdi-music-box-outline" @click="assignPhrase">
+          <v-list-item-title class="text-body-2">Assign phrase…</v-list-item-title>
+        </v-list-item>
+        <v-list-item
+          prepend-icon="mdi-music-box-outline"
+          :disabled="!menuToken || !menuToken.phraseRef"
+          @click="removePhrase"
+        >
+          <v-list-item-title class="text-body-2">Remove phrase</v-list-item-title>
+        </v-list-item>
+      </v-list>
+    </v-menu>
   </div>
 </template>
