@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the Standalone app. Nothing here is decorative: AMFI parses this file at sign
+  time and rejects anything it does not like, including a comment placed above the DOCTYPE.
+
+  jamin compiles the chart by running its own JavaScript in JavaScriptCore, which needs to write
+  machine code and run it. Under the hardened runtime that is exactly what is forbidden unless
+  this entitlement says otherwise. Without it JSC does not fail loudly -- it quietly falls back to
+  its interpreter, and the only symptom is a compile that takes longer than it should, which is
+  the kind of thing nobody traces back to a missing line in a plist.
+
+  The AU and VST3 bundles get no entitlements file at all. A plugin runs inside its host's process
+  and inherits the host's entitlements, so an empty dict would be exactly equivalent to omitting
+  the flag -- and one fewer file is one fewer thing that can fail to parse. What they do need is
+  the hardened runtime, which is a codesign flag rather than an entitlement.
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+</dict>
+</plist>

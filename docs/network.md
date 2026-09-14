@@ -299,3 +299,15 @@ ok   no page errors anywhere
 
 The fourth and fifth are the ones a last-writer-wins scheme fails: two edits made before either
 machine has heard the other. Both survive, and both machines agree on the result.
+
+---
+
+## Not on Windows yet
+
+Discovery, the endpoint and the shared bus are written against POSIX sockets and POSIX shared
+memory. On Windows they would be Winsock and a file mapping — a real port rather than a hard one,
+and not one to fake — so there the same classes are compiled from stubs that refuse and say why.
+
+That is deliberately not the same as failing to build. The chart, the timeline and the sequence
+reader are portable and are compiled and tested everywhere, so a change that breaks them is caught
+on both platforms rather than on the one that happens to run the sockets.

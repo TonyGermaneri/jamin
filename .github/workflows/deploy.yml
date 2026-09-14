@@ -1,0 +1,67 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    # The plugin lives in the same repository and shares the page, nothing else. A change
+    # confined to native/ is not a reason to redeploy the site — but a change to src/ is a reason
+    # to build both, because the page belongs to both.
+    paths-ignore:
+      - 'native/**'
+      - 'docs/**'
+      - '.github/workflows/native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let an in-flight deploy finish rather than cancelling it half-published, but never queue more
+# than one pending run behind it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        # Twenty-one suites over the music: the chord parser, the timeline, voice leading,
+        # voicings, playback, the compiler, the shared document and the clipboard. They run in
+        # JavaScriptCore rather than Node, which is also a standing proof that none of it needs
+        # a browser — the thing the plugin depends on.
+        run: npm test
+
+      - name: Build
+        # Builds the page and, beside it, the compiler bundle the plugin evaluates. Both are
+        # wanted here: the second is small, and a page deployed without it would be a page whose
+        # sibling build is untested.
+        run: npm run build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

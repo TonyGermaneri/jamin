@@ -10,6 +10,19 @@
 #
 # Only the bus layout differs. @see PluginProcessor.h
 
+# Read once and handed to every target as text: JUCE parses whatever string
+# PLIST_TO_MERGE is given rather than opening a path.
+#
+# Flattened to one line first, and the comment taken out. JUCE writes these
+# options into a file it reads back a line at a time, so a value with a newline
+# in it does not survive the trip -- it arrives truncated and the entry simply
+# never appears, with nothing anywhere saying why. The file stays readable and
+# commented; what is passed is what is left of it.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../packaging/Info.extra.plist" JAMIN_EXTRA_PLIST)
+string(REGEX REPLACE "<!--.*-->" "" JAMIN_EXTRA_PLIST "${JAMIN_EXTRA_PLIST}")
+string(REGEX REPLACE "[\r\n]+" " " JAMIN_EXTRA_PLIST "${JAMIN_EXTRA_PLIST}")
+string(REGEX REPLACE " +" " " JAMIN_EXTRA_PLIST "${JAMIN_EXTRA_PLIST}")
+
 function(jamin_add_plugin target)
     cmake_parse_arguments(ARG "MIDI_EFFECT;SYNTH" "CODE;PRODUCT" "FORMATS" ${ARGN})
 
@@ -27,13 +40,29 @@ function(jamin_add_plugin target)
         EDITOR_WANTS_KEYBOARD_FOCUS TRUE      # the chart is typed into
 
         FORMATS                   ${ARG_FORMATS}
-        COPY_PLUGIN_AFTER_BUILD   FALSE)
+
+        # The XML itself, not a path to it: JUCE parses whatever string it is
+        # given. @see packaging/Info.extra.plist
+        PLIST_TO_MERGE            "${JAMIN_EXTRA_PLIST}"
+
+        # CI collects from the build tree and signs there; installing into somebody's own plugin
+        # folders is a thing to opt into, not a thing a build does behind their back.
+        COPY_PLUGIN_AFTER_BUILD   ${JAMIN_INSTALL_AFTER_BUILD})
+
+    # JavaScriptCore is macOS's, and is what runs jamin's own music code inside
+    # the plugin. Elsewhere the same class refuses and says why, rather than
+    # returning an empty sequence that looks like an empty chart.
+    if(APPLE)
+        set(_compiler Compiler.cpp)
+    else()
+        set(_compiler CompilerUnsupported.cpp)
+    endif()
 
     target_sources(${target} PRIVATE
         PluginProcessor.cpp
         PluginEditor.cpp
         PluginPaths.cpp
-        Compiler.cpp)
+        ${_compiler})
 
     target_compile_definitions(${target} PUBLIC
         JUCE_WEB_BROWSER=1              # the editor is the web app

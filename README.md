@@ -13,6 +13,28 @@ the point: everyone keeps track of what the hell is going on.
 The whole setup is two things: bind your MIDI ports, and type. If it ever asks
 for more than that, it has failed.
 
+**[Try it in your browser →](https://tonygermaneri.github.io/jamin/)**
+
+## Get it
+
+| | | |
+| --- | --- | --- |
+| **In a browser** | [tonygermaneri.github.io/jamin](https://tonygermaneri.github.io/jamin/) | needs Chrome, Edge or Opera for Web MIDI |
+| **Jamin.vst3** | macOS, universal | **use this one in Ableton Live** — the AU standard has no MIDI out |
+| **Jamin.component** | macOS, universal | the instrument, for Logic and Reaper |
+| **Jamin MIDI FX.component** | macOS, universal | Logic's MIDI FX slot, where nothing needs routing |
+| **Jamin.app** | macOS, universal | the standalone. No DAW needed. |
+
+Every macOS build is signed with a Developer ID and notarised, so they open with
+no warning and no right-click dance. They are on the
+[releases page](https://github.com/TonyGermaneri/jamin/releases).
+
+**Windows is not released yet, and the reason is specific.** jamin works out what
+to play by running its own JavaScript, and macOS ships the engine that does it.
+Windows ships none, so a plugin there would show the chart and stay silent —
+which is worse than shipping nothing. It is built and checked on every change so
+the code stays portable; embedding QuickJS is what would finish it.
+
 ## Running it
 
 Needs Node 20.19+ or 22.12+ (Vite 7's floor).
@@ -100,6 +122,42 @@ terminal, which is where you want it when something has gone wrong:
 
 ```sh
 JAMIN_WEB_DIR="$PWD/dist" "$STANDALONE/Contents/MacOS/Jamin"
+```
+
+### Publishing it
+
+Two workflows, and each has its own paths filter so a stylesheet does not spend
+twenty minutes building four bundles.
+
+| | |
+| --- | --- |
+| `.github/workflows/deploy.yml` | the page, to GitHub Pages, on every push to `main` |
+| `.github/workflows/native.yml` | the plugins: macOS universal, Windows, and a release on a `v*` tag |
+
+The plugin workflow runs the music suites first — a minute, no compiler — then
+builds universal on macOS, checks every binary really is universal (a host under
+Rosetta does not refuse an `arm64`-only plugin, it never lists it), signs,
+validates with `auval` and `pluginval`, runs the host-cycle gates, and notarises
+on a tag.
+
+Signing is a capability the run either has or does not, never a step that fails
+for lacking a secret — so a pull request from a fork still builds and validates.
+The secrets it looks for:
+
+| | |
+| --- | --- |
+| `MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PASSWORD` | the Developer ID Application certificate, base64 |
+| `MACOS_SIGN_IDENTITY` | which identity, when more than one is installed |
+| `NOTARY_KEY_P8`, `NOTARY_KEY_ID`, `NOTARY_ISSUER_ID` | an App Store Connect API key — preferred |
+| `NOTARY_APPLE_ID`, `NOTARY_PASSWORD`, `NOTARY_TEAM_ID` | an Apple ID and app-specific password — the fallback |
+| `MACOS_INSTALLER_IDENTITY` | only for a signed `.pkg`; a different certificate from the one above |
+
+Both signing and notarising also run by hand, with the same scripts CI uses — a
+signing path that only exists inside a workflow is one you cannot debug:
+
+```sh
+native/tools/macos-sign.sh native/build/plugin
+VERSION=v0.1.0 native/tools/macos-notarize.sh native/build/plugin dist
 ```
 
 ### Installing it

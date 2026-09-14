@@ -46,6 +46,7 @@ option(JAMIN_BUILD_PLUGIN "Build the AU and Standalone targets" ON)
 option(JAMIN_BUILD_TESTS  "Build the unit tests" ON)
 option(JAMIN_BUILD_TOOLS  "Build jamin-boot, the page self-test" ON)
 option(JAMIN_SANITIZE     "Build with ASan and UBSan" OFF)
+option(JAMIN_INSTALL_AFTER_BUILD "Copy the built plugins into your own plugin folders" OFF)
 
 # ---------------------------------------------------------------------------- identity
 #

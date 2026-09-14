@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into every bundle's Info.plist.
+
+  macOS asks before an application may speak to the local network, and it shows this string when
+  it asks. Without it the prompt is generic and says nothing about why; with it, somebody being
+  interrupted by a dialog at least learns what it is for.
+
+  The permission belongs to the application rather than to the plugin inside it, so in a DAW this
+  string is never the one shown -- the DAW's is, or none. It is the Standalone that this is really
+  for, and it costs nothing to put in all of them.
+-->
+<plist version="1.0">
+<dict>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>jamin finds the other machines running jamin here, so they can all share one chord chart.</string>
+</dict>
+</plist>
