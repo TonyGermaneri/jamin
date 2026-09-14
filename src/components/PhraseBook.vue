@@ -53,6 +53,8 @@ const category = ref('any')
 const kind = ref('any')
 const source = ref('any')
 const length = ref('any')
+/** Which expansion panel is open; undefined is folded. */
+const filtersOpen = ref(undefined)
 
 /**
  * Facets, built from the catalogue rather than written down.
@@ -114,10 +116,13 @@ const matches = computed(() => {
   })
 })
 
-/** Whether anything is narrowing the list, so the UI can offer to stop. */
-const filtered = computed(() =>
-  Boolean(search.value) || category.value !== 'any' || kind.value !== 'any' ||
-  source.value !== 'any' || length.value !== 'any' || state.ui.lickTexture !== 'any')
+/** How many filters are narrowing the list -- shown on the folded panel, so a
+    list that is mysteriously short explains itself without being opened. */
+const activeFilters = computed(() =>
+  [category.value !== 'any', kind.value !== 'any', source.value !== 'any',
+   length.value !== 'any', state.ui.lickTexture !== 'any'].filter(Boolean).length)
+
+const filtered = computed(() => Boolean(search.value) || activeFilters.value > 0)
 
 function clearFilters() {
   search.value = ''
@@ -293,39 +298,59 @@ const describe = (entry) => (entry.notes ? describeLick(entry) : summarize(entry
           <!-- Catalogue: list on the left, the one you picked on the right -->
           <v-window-item value="catalogue">
             <v-row class="jamin-book-row">
-              <v-col cols="12" md="6" class="jamin-book-col">
-                <v-row dense class="mb-1 flex-grow-0">
-                  <v-col cols="12">
-                    <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable
-                                  density="compact" hide-details />
-                  </v-col>
-                  <v-col cols="7">
-                    <v-select v-model="category" :items="categories" label="Category"
-                              density="compact" hide-details />
-                  </v-col>
-                  <v-col cols="5">
-                    <v-select
-                      v-model="state.ui.lickTexture"
-                      :items="[
-                        { title: 'Any texture', value: 'any' },
-                        { title: 'Two hands', value: 'hands' },
-                        { title: 'Single line', value: 'line' },
-                      ]"
-                      label="Texture"
-                      density="compact"
-                      hide-details
-                    />
-                  </v-col>
-                  <v-col cols="4">
-                    <v-select v-model="source" :items="sources" label="Source" density="compact" hide-details />
-                  </v-col>
-                  <v-col cols="4">
-                    <v-select v-model="kind" :items="kinds" label="Kind" density="compact" hide-details />
-                  </v-col>
-                  <v-col cols="4">
-                    <v-select v-model="length" :items="LENGTHS" label="Length" density="compact" hide-details />
-                  </v-col>
-                </v-row>
+              <v-col cols="12" md="6" class="jamin-book-col"
+                     :class="{ 'jamin-filters-open': filtersOpen !== undefined }">
+                <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable
+                              density="compact" hide-details class="mb-2 flex-grow-0" />
+
+                <!-- Folded away by default: five selects is a lot of the window
+                     to spend on controls nobody has reached for yet, and the
+                     editor is whatever height the DAW left over. -->
+                <v-expansion-panels v-model="filtersOpen" variant="accordion"
+                                    class="mb-2 flex-grow-0 jamin-book-filters">
+                  <v-expansion-panel>
+                    <v-expansion-panel-title class="text-caption py-0">
+                      <v-icon size="16" class="mr-2">mdi-filter-variant</v-icon>
+                      <span v-if="activeFilters">{{ activeFilters }} filter{{ activeFilters === 1 ? '' : 's' }}</span>
+                      <span v-else>Filters</span>
+                      <v-spacer />
+                      <span class="text-medium-emphasis mr-2">{{ matches.length.toLocaleString() }}</span>
+                    </v-expansion-panel-title>
+                    <v-expansion-panel-text>
+                      <v-row dense>
+                        <v-col cols="7">
+                          <v-select v-model="category" :items="categories" label="Category"
+                                    density="compact" hide-details />
+                        </v-col>
+                        <v-col cols="5">
+                          <v-select
+                            v-model="state.ui.lickTexture"
+                            :items="[
+                              { title: 'Any texture', value: 'any' },
+                              { title: 'Two hands', value: 'hands' },
+                              { title: 'Single line', value: 'line' },
+                            ]"
+                            label="Texture"
+                            density="compact"
+                            hide-details
+                          />
+                        </v-col>
+                        <v-col cols="4">
+                          <v-select v-model="source" :items="sources" label="Source" density="compact" hide-details />
+                        </v-col>
+                        <v-col cols="4">
+                          <v-select v-model="kind" :items="kinds" label="Kind" density="compact" hide-details />
+                        </v-col>
+                        <v-col cols="4">
+                          <v-select v-model="length" :items="LENGTHS" label="Length" density="compact" hide-details />
+                        </v-col>
+                        <v-col v-if="activeFilters" cols="12" class="text-right">
+                          <v-btn size="x-small" variant="text" @click="clearFilters">Clear them</v-btn>
+                        </v-col>
+                      </v-row>
+                    </v-expansion-panel-text>
+                  </v-expansion-panel>
+                </v-expansion-panels>
 
                 <div v-if="state.licksLoading && !list.length" class="text-caption text-medium-emphasis py-8 text-center">
                   Loading the catalogue…

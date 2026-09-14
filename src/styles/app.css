@@ -242,12 +242,40 @@ body,
     overflow-y: auto;
   }
 
+  /* Opening the filters spends about a third of a small window on controls.
+     The list is what gives way -- the pagination underneath it has to stay
+     where it can be reached, or the filters have taken away the only means of
+     acting on them. */
+  .jamin-book .jamin-filters-open .jamin-book-scroll {
+    max-height: 12dvh;
+  }
+
   .jamin-book .jamin-book-scroll {
     flex: 0 1 auto;
     /* Sized so the pagination underneath it stays within the first screenful
        at the smallest editor the plugin allows (720x480) -- the filters above
        it take their share first, and the list is what gives way. */
-    max-height: 22dvh;
+    max-height: 32dvh;
     min-height: 0;
   }
+}
+
+/*
+ * The filter panel, folded.
+ *
+ * Vuetify's expansion panel is built for a page, not for a corner of a plugin
+ * window that a DAW has already decided the height of -- so its chrome is
+ * trimmed down to a line of text, and it takes no room at all while closed.
+ */
+.jamin-book-filters .v-expansion-panel-title {
+  min-height: 32px;
+  padding-inline: 12px;
+}
+
+.jamin-book-filters .v-expansion-panel-text__wrapper {
+  padding: 8px 12px 12px;
+}
+
+.jamin-book-filters .v-expansion-panel--active > .v-expansion-panel-title {
+  min-height: 32px;
 }

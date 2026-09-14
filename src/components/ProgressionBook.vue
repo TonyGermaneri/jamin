@@ -73,6 +73,8 @@ const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PER_PAGE)))
 const genre = ref('')
 const decade = ref('')
 const facets = ref({ genres: [], decades: [] })
+const filtersOpen = ref(undefined)
+const activeFilters = computed(() => [genre.value, decade.value].filter(Boolean).length)
 
 const genreItems = computed(() => [
   { title: 'Any genre', value: '' },
@@ -226,18 +228,32 @@ function runExport() {
           <!-- Library: list on the left, the one you picked on the right ---- -->
           <v-window-item value="library">
             <v-row class="jamin-book-row">
-              <v-col cols="12" md="6" class="jamin-book-col">
+              <v-col cols="12" md="6" class="jamin-book-col"
+                     :class="{ 'jamin-filters-open': filtersOpen !== undefined }">
                 <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable
                               density="compact" hide-details class="mb-2 flex-grow-0" />
 
-                <v-row v-if="facets.genres.length || facets.decades.length" dense class="mb-2 flex-grow-0">
-                  <v-col cols="7">
-                    <v-select v-model="genre" :items="genreItems" label="Genre" density="compact" hide-details />
-                  </v-col>
-                  <v-col cols="5">
-                    <v-select v-model="decade" :items="decadeItems" label="Decade" density="compact" hide-details />
-                  </v-col>
-                </v-row>
+                <v-expansion-panels v-if="facets.genres.length || facets.decades.length"
+                                    v-model="filtersOpen" variant="accordion"
+                                    class="mb-2 flex-grow-0 jamin-book-filters">
+                  <v-expansion-panel>
+                    <v-expansion-panel-title class="text-caption py-0">
+                      <v-icon size="16" class="mr-2">mdi-filter-variant</v-icon>
+                      <span v-if="activeFilters">{{ activeFilters }} filter{{ activeFilters === 1 ? '' : 's' }}</span>
+                      <span v-else>Filters</span>
+                    </v-expansion-panel-title>
+                    <v-expansion-panel-text>
+                      <v-row dense>
+                        <v-col cols="7">
+                          <v-select v-model="genre" :items="genreItems" label="Genre" density="compact" hide-details />
+                        </v-col>
+                        <v-col cols="5">
+                          <v-select v-model="decade" :items="decadeItems" label="Decade" density="compact" hide-details />
+                        </v-col>
+                      </v-row>
+                    </v-expansion-panel-text>
+                  </v-expansion-panel>
+                </v-expansion-panels>
 
                 <v-list
                   v-if="rows.length"
