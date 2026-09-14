@@ -2,7 +2,7 @@
 #include <jamin/Discovery.h>
 
 #include <thread>
-#include <unistd.h>
+#include <jamin/Platform.h>
 
 using namespace jamin;
 
@@ -33,7 +33,7 @@ Discovery::Options options (const char* id, int port)
     out.name = std::string ("test ") + id;
     out.port = port;
     out.group = "239.77.65.200";
-    out.groupPort = 40000 + (int) (::getpid() % 20000);
+    out.groupPort = 40000 + (int) (processId() % 20000);
     out.beaconMs = 150;
     out.forgetMs = 900;
     return out;
@@ -98,7 +98,7 @@ void discoveryTests()
     // port. If that did not work, the normal case would be the broken one.
     {
         Discovery a, b, c, d;
-        const int port = 40000 + (int) (::getpid() % 20000) + 1;
+        const int port = 40000 + (int) (processId() % 20000) + 1;
 
         auto sameMachine = [port] (const char* id)
         {

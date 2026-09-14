@@ -2,7 +2,7 @@
 #include <jamin/Node.h>
 
 #include <thread>
-#include <unistd.h>
+#include <jamin/Platform.h>
 
 using namespace jamin;
 
@@ -29,7 +29,7 @@ Node::Options options (const char* id)
     out.secret = "test-word";
     out.onNetwork = true;          // peers reach each other by address, not loopback
     out.group = "239.77.65.201";
-    out.groupPort = 20000 + (int) (::getpid() % 20000);
+    out.groupPort = 20000 + (int) (processId() % 20000);
     out.beaconMs = 150;
     out.forgetMs = 900;
     return out;

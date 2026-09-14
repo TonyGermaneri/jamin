@@ -15,6 +15,7 @@
     agree on. There is no "anybody may join".
 */
 #include <jamin/Node.h>
+#include <jamin/Sockets.h>
 
 #include <atomic>
 #include <csignal>
@@ -22,7 +23,6 @@
 #include <cstring>
 #include <string>
 #include <thread>
-#include <unistd.h>
 
 namespace
 {
@@ -50,10 +50,15 @@ int main (int argc, char** argv)
         else { std::printf ("unknown argument: %s\n", arg.c_str()); return 1; }
     }
 
-    char hostname[256] {};
-    ::gethostname (hostname, sizeof (hostname) - 1);
+    // Winsock has to be up before gethostname, which is a socket call there and
+    // fails with WSANOTINITIALISED if it is not. @see jamin/Sockets.h
+    jamin::startSockets();
 
-    const std::string id = std::string (hostname) + "-" + std::to_string (::getpid());
+    char hostname[256] {};
+    if (::gethostname (hostname, sizeof (hostname) - 1) != 0 || hostname[0] == '\0')
+        std::strcpy (hostname, "jamin");
+
+    const std::string id = std::string (hostname) + "-" + std::to_string (jamin::processId());
     if (name.empty()) name = hostname;
 
     if (secret.empty())

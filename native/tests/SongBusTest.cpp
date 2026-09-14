@@ -1,10 +1,10 @@
 #include "check.h"
 #include <jamin/SongBus.h>
 
+#include <jamin/Platform.h>
+
 #include <cstdio>
 #include <filesystem>
-#include <sys/mman.h>
-#include <unistd.h>
 
 using namespace jamin;
 
@@ -12,11 +12,11 @@ void songBusTests()
 {
     // A private segment and a private file, so the suite never touches the real
     // one and two runs cannot interfere with each other.
-    const auto name = std::string ("/jamin.test.") + std::to_string (::getpid());
+    const auto name = std::string ("/jamin.test.") + std::to_string (processId());
     const auto dir = std::filesystem::temp_directory_path()
-                   / ("jamin-test-" + std::to_string (::getpid()));
+                   / ("jamin-test-" + std::to_string (processId()));
     const auto file = (dir / "song.json").string();
-    ::shm_unlink (name.c_str());
+    SongBus::forget (name.c_str());
 
     {
         SongBus a { name.c_str(), file };
@@ -54,14 +54,16 @@ void songBusTests()
     }
 
     // The durable copy: a fresh process with an empty segment picks the chart
-    // back up off disk rather than starting blank.
-    ::shm_unlink (name.c_str());
+    // back up off disk rather than starting blank. Both buses above have gone
+    // out of scope by now, which on Windows is what destroys the section --
+    // there is no name left to unlink, and forget() says so by doing nothing.
+    SongBus::forget (name.c_str());
     {
         SongBus c { name.c_str(), file };
         check ("the chart survived every instance closing", ! c.snapshot().json.empty());
     }
 
-    ::shm_unlink (name.c_str());
+    SongBus::forget (name.c_str());
     std::error_code ec;
     std::filesystem::remove_all (dir, ec);
     std::filesystem::remove (file + ".other", ec);

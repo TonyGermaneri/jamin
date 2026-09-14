@@ -24,10 +24,13 @@ namespace jamin
     real-time problem, and synchronising the document is not a real-time problem
     at all.
 
-    The transport is a POSIX shared-memory segment with a seqlock over it, so a
+    The transport is a named shared-memory segment with a seqlock over it, so a
     reader never blocks a writer and there is no daemon, no socket and no
-    listening port anywhere. A file in Application Support backs it up, so the
-    chart survives every instance closing.
+    listening port anywhere. A POSIX segment from `shm_open` on macOS and Linux,
+    a pagefile-backed section from `CreateFileMapping` on Windows: the same
+    bytes and the same seqlock either way, and only the four calls that get the
+    memory differ. A file in Application Support -- Local AppData on Windows --
+    backs it up, so the chart survives every instance closing.
 
     The payload is opaque: whatever JSON the page decided to publish. Nothing
     here parses it, for the same reason nothing here parses a chord.
@@ -65,6 +68,11 @@ public:
     /** Where the durable copy lives. */
     static std::string storagePath();
 
+    /** Forget a segment by name. A test seam: the segment outlives the process
+        that made it on POSIX, so a run has to clear up after the last one. On
+        Windows a section dies with its last handle and this does nothing. */
+    static void forget (const char* segmentName);
+
     // Test seams. attach() is called by instance(); the tests drive it directly
     // so they can use a private segment instead of the real one.
     explicit SongBus (const char* segmentName, const std::string& filePath);
@@ -79,7 +87,16 @@ private:
 
     struct Shared;
     Shared* shared { nullptr };
+
+    // The segment's own handle, in the platform's own type rather than one
+    // pretending to be the other: a descriptor from shm_open, or a Windows
+    // section handle, which is a pointer and is not -1 when it is missing.
+   #if defined (_WIN32)
+    void* section { nullptr };
+   #else
     int fd { -1 };
+   #endif
+
     size_t mapped { 0 };
     std::string path;
 

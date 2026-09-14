@@ -11,7 +11,11 @@ endif()
 # jamin-compile: the plugin's compiler, without a plugin. Needs juce_core for
 # String/File/JSON and QuickJS for the engine itself -- but nothing of the
 # plugin API, so it builds and runs in a second.
-if(APPLE)
+#
+# JAMIN_BUILD_PLUGIN is what fetches JUCE, so this cannot be built without it --
+# which is the configuration a core-only check uses, and which used to fail at
+# configure time with "juce::juce_core ... target was not found".
+if(APPLE AND JAMIN_BUILD_PLUGIN)
     add_executable(jamin-compile
         compile_check.cpp
         ../plugin/Compiler.cpp)

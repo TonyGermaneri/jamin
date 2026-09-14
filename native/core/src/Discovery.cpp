@@ -1,13 +1,10 @@
 #include "jamin/Discovery.h"
+#include "jamin/Sockets.h"
 
 #include <algorithm>
-#include <arpa/inet.h>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
-#include <netinet/in.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 namespace jamin
 {
@@ -73,54 +70,60 @@ bool Discovery::start (Options options)
         return false;
     }
 
-    socketHandle = ::socket (AF_INET, SOCK_DGRAM, 0);
-    if (socketHandle < 0)
+    in_addr group {};
+    if (! parseIPv4 (settings.group, group))
     {
-        lastError = "no datagram socket: " + std::string (std::strerror (errno));
+        lastError = "\"" + settings.group + "\" is not a multicast address";
+        return false;
+    }
+
+    socketHandle = openSocket (SOCK_DGRAM);
+    if (! valid (socketHandle))
+    {
+        lastError = "no datagram socket: " + socketErrorText();
         return false;
     }
 
     // Several instances share one machine -- a DAW with jamin on four tracks is
     // four nodes -- so the port has to be shareable or only the first would
-    // hear anything.
-    int on = 1;
-    ::setsockopt (socketHandle, SOL_SOCKET, SO_REUSEPORT, &on, sizeof (on));
-    ::setsockopt (socketHandle, SOL_SOCKET, SO_REUSEADDR, &on, sizeof (on));
+    // hear anything. @see allowSharedBind, which is two different options.
+    allowSharedBind (socketHandle);
 
+    // Bound to the wildcard rather than to the group, which is the only thing
+    // Windows accepts and is fine everywhere else.
     sockaddr_in address {};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl (INADDR_ANY);
     address.sin_port = htons ((uint16_t) settings.groupPort);
 
-    if (::bind (socketHandle, (sockaddr*) &address, sizeof (address)) < 0)
+    if (::bind (nativeSocket (socketHandle), (sockaddr*) &address, sizeof (address)) != 0)
     {
-        lastError = "could not bind the discovery port: " + std::string (std::strerror (errno));
-        ::close (socketHandle);
-        socketHandle = -1;
+        lastError = "could not bind the discovery port: " + socketErrorText();
+        closeSocket (socketHandle);
         return false;
     }
 
+    // The default interface, which is the one with the best route. On a machine
+    // with several -- a laptop on Wi-Fi with a dock plugged in -- that is a
+    // choice the routing table makes and this does not second-guess.
     ip_mreq membership {};
-    membership.imr_multiaddr.s_addr = ::inet_addr (settings.group.c_str());
+    membership.imr_multiaddr = group;
     membership.imr_interface.s_addr = htonl (INADDR_ANY);
 
-    if (::setsockopt (socketHandle, IPPROTO_IP, IP_ADD_MEMBERSHIP, &membership, sizeof (membership)) < 0)
+    if (! setOption (socketHandle, IPPROTO_IP, IP_ADD_MEMBERSHIP, membership))
     {
-        lastError = "could not join the group: " + std::string (std::strerror (errno));
-        ::close (socketHandle);
-        socketHandle = -1;
+        lastError = "could not join the group: " + socketErrorText();
+        closeSocket (socketHandle);
         return false;
     }
 
     // Loopback on, because several nodes on one machine is the normal case here
     // and they have to hear each other. A node ignores its own beacon by id.
-    unsigned char loopback = 1;
-    ::setsockopt (socketHandle, IPPROTO_IP, IP_MULTICAST_LOOP, &loopback, sizeof (loopback));
+    setMulticastLoop (socketHandle, true);
 
     // One hop. Discovery has no business leaving this subnet, whatever the
     // routers in between have been told to do.
-    unsigned char ttl = 1;
-    ::setsockopt (socketHandle, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof (ttl));
+    setMulticastTtl (socketHandle, 1);
 
     running = true;
     worker = std::thread ([this] { run(); });
@@ -132,16 +135,18 @@ void Discovery::stop()
 {
     running = false;
 
-    if (socketHandle >= 0)
-    {
-        // Closing wakes the poll below; there is no need for a pipe to prod it.
-        ::shutdown (socketHandle, SHUT_RDWR);
-        ::close (socketHandle);
-        socketHandle = -1;
-    }
-
+    // Joined *before* the socket is closed, not after.
+    //
+    // Closing it first is the obvious way round and is a use-after-close: the
+    // worker may be between reading the handle and polling on it. On POSIX a
+    // descriptor that has just been closed is usually still unused for a moment
+    // and the bug hides; on Windows a handle is reused immediately, and the
+    // thing polled could by then be a socket belonging to the host. The loop
+    // checks `running` every quarter of a second, so this costs that at most.
     if (worker.joinable())
         worker.join();
+
+    closeSocket (socketHandle);
 
     const std::lock_guard<std::mutex> guard (lock);
     known.clear();
@@ -149,7 +154,7 @@ void Discovery::stop()
 
 void Discovery::announce()
 {
-    if (socketHandle < 0)
+    if (! valid (socketHandle))
         return;
 
     const std::string packet = std::string (kMagic) + '\t' + sanitise (settings.id) + '\t'
@@ -157,12 +162,13 @@ void Discovery::announce()
 
     sockaddr_in to {};
     to.sin_family = AF_INET;
-    to.sin_addr.s_addr = ::inet_addr (settings.group.c_str());
     to.sin_port = htons ((uint16_t) settings.groupPort);
+    if (! parseIPv4 (settings.group, to.sin_addr))
+        return;
 
     // Nothing is done about a failure. A beacon is a statement, not a request,
     // and the next one is two seconds away.
-    ::sendto (socketHandle, packet.data(), packet.size(), 0, (sockaddr*) &to, sizeof (to));
+    sendTo (socketHandle, packet.data(), packet.size(), to);
 }
 
 void Discovery::run()
@@ -179,11 +185,11 @@ void Discovery::run()
         }
 
         pollfd waiting {};
-        waiting.fd = socketHandle;
+        waiting.fd = nativeSocket (socketHandle);
         waiting.events = POLLIN;
 
         const int wait = (int) std::min<uint64_t> (250, nextBeacon > now ? nextBeacon - now : 0);
-        const int ready = ::poll (&waiting, 1, std::max (10, wait));
+        const int ready = pollSockets (&waiting, 1, std::max (10, wait));
 
         if (! running)
             break;
@@ -199,10 +205,8 @@ void Discovery::receive()
 {
     char buffer[kMaxPacket];
     sockaddr_in from {};
-    socklen_t fromLength = sizeof (from);
 
-    const auto got = ::recvfrom (socketHandle, buffer, sizeof (buffer) - 1, 0,
-                                 (sockaddr*) &from, &fromLength);
+    const auto got = recvFrom (socketHandle, buffer, sizeof (buffer) - 1, from);
     if (got <= 0)
         return;
 
@@ -223,9 +227,7 @@ void Discovery::receive()
     heard.port = std::atoi (parts[4].c_str());
     heard.lastSeen = nowMs();
 
-    char address[INET_ADDRSTRLEN] {};
-    ::inet_ntop (AF_INET, &from.sin_addr, address, sizeof (address));
-    heard.host = address;
+    heard.host = addressText (from.sin_addr);
 
     if (heard.port <= 0 || heard.port > 65535)
         return;

@@ -1,17 +1,12 @@
 #include "jamin/Endpoint.h"
+#include "jamin/Sockets.h"
 
 #include <algorithm>
 #include <cctype>
-#include <arpa/inet.h>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <poll.h>
 #include <sstream>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 namespace jamin
 {
@@ -22,6 +17,17 @@ namespace
 constexpr size_t kMaxHeader = 16 * 1024;
 constexpr size_t kMaxBody = 4 * 1024 * 1024;
 
+/**
+    How long a connection may say nothing before it is given up on.
+
+    This is what bounds stop(): a thread parked in recv() on a client that
+    opened a socket and then went quiet would otherwise keep the node alive for
+    as long as that client felt like holding it. It applies to the request, not
+    to a stream -- /events is held open by a poll loop that watches `running`,
+    not by a blocking read.
+*/
+constexpr int kIdleMs = 2000;
+
 /** Allows anyone, deliberately, and says so where somebody will read it. */
 constexpr const char* kCors =
     "Access-Control-Allow-Origin: *\r\n"
@@ -29,12 +35,12 @@ constexpr const char* kCors =
     "Access-Control-Allow-Headers: Content-Type\r\n"
     "Access-Control-Max-Age: 86400\r\n";
 
-bool writeAll (int connection, const char* data, size_t size)
+bool writeAll (SocketHandle connection, const char* data, size_t size)
 {
     size_t sent = 0;
     while (sent < size)
     {
-        const auto wrote = ::send (connection, data + sent, size - sent, 0);
+        const auto wrote = sendBytes (connection, data + sent, size - sent);
         if (wrote <= 0)
             return false;
         sent += (size_t) wrote;
@@ -42,12 +48,13 @@ bool writeAll (int connection, const char* data, size_t size)
     return true;
 }
 
-bool writeAll (int connection, const std::string& text)
+bool writeAll (SocketHandle connection, const std::string& text)
 {
     return writeAll (connection, text.data(), text.size());
 }
 
-void respond (int connection, const char* status, const std::string& type, const std::string& body)
+void respond (SocketHandle connection, const char* status, const std::string& type,
+              const std::string& body)
 {
     std::ostringstream head;
     head << "HTTP/1.1 " << status << "\r\n"
@@ -101,8 +108,10 @@ bool safePath (const std::string& path)
 
 std::string readFile (const std::string& path, bool& found)
 {
-    struct ::stat info {};
-    if (::stat (path.c_str(), &info) != 0 || (info.st_mode & S_IFDIR) != 0)
+    // std::filesystem rather than stat, which is spelled three ways across the
+    // platforms this builds on and means slightly different things in each.
+    std::error_code ec;
+    if (! std::filesystem::is_regular_file (std::filesystem::path (path), ec))
     {
         found = false;
         return {};
@@ -162,26 +171,25 @@ bool sameSecret (const std::string& a, const std::string& b)
 bool postTo (const std::string& host, int port, const std::string& path,
              const std::string& body, const std::string& secret, int timeoutMs)
 {
-    const int handle = ::socket (AF_INET, SOCK_STREAM, 0);
-    if (handle < 0)
-        return false;
-
-    timeval timeout {};
-    timeout.tv_sec = timeoutMs / 1000;
-    timeout.tv_usec = (timeoutMs % 1000) * 1000;
-    ::setsockopt (handle, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof (timeout));
-    ::setsockopt (handle, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof (timeout));
-    int on = 1;
-    ::setsockopt (handle, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof (on));
-
     sockaddr_in to {};
     to.sin_family = AF_INET;
     to.sin_port = htons ((uint16_t) port);
-    to.sin_addr.s_addr = ::inet_addr (host.c_str());
 
-    if (::connect (handle, (sockaddr*) &to, sizeof (to)) < 0)
+    // A peer's address comes from the packet its beacon arrived in, so it is
+    // always a dotted quad and there is nothing here to resolve.
+    if (! parseIPv4 (host, to.sin_addr))
+        return false;
+
+    auto handle = openSocket (SOCK_STREAM);
+    if (! valid (handle))
+        return false;
+
+    setTimeouts (handle, timeoutMs);
+    suppressSigPipe (handle);
+
+    if (::connect (nativeSocket (handle), (sockaddr*) &to, sizeof (to)) != 0)
     {
-        ::close (handle);
+        closeSocket (handle);
         return false;
     }
 
@@ -200,9 +208,9 @@ bool postTo (const std::string& host, int port, const std::string& path,
     // a socket nobody is reading.
     char discard[512];
     if (sent)
-        ::recv (handle, discard, sizeof (discard), 0);
+        recvBytes (handle, discard, sizeof (discard));
 
-    ::close (handle);
+    closeSocket (handle);
     return sent;
 }
 
@@ -214,16 +222,21 @@ bool Endpoint::start (Options options)
     settings = std::move (options);
     lastError.clear();
 
-    listener = ::socket (AF_INET, SOCK_STREAM, 0);
-    if (listener < 0)
+    if (settings.secret.empty())
     {
-        lastError = "no socket: " + std::string (std::strerror (errno));
+        lastError = "no password set, so nothing will be shared";
         return false;
     }
 
-    int on = 1;
-    ::setsockopt (listener, SOL_SOCKET, SO_REUSEADDR, &on, sizeof (on));
-    ::setsockopt (listener, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof (on));
+    listener = openSocket (SOCK_STREAM);
+    if (! valid (listener))
+    {
+        lastError = "no socket: " + socketErrorText();
+        return false;
+    }
+
+    allowRebind (listener);
+    suppressSigPipe (listener);
 
     sockaddr_in address {};
     address.sin_family = AF_INET;
@@ -232,34 +245,24 @@ bool Endpoint::start (Options options)
     address.sin_addr.s_addr = htonl (settings.onNetwork ? INADDR_ANY : INADDR_LOOPBACK);
     address.sin_port = htons ((uint16_t) settings.port);
 
-    if (settings.secret.empty())
-    {
-        lastError = "no password set, so nothing will be shared";
-        ::close (listener);
-        listener = -1;
-        return false;
-    }
-
-    if (::bind (listener, (sockaddr*) &address, sizeof (address)) < 0)
+    if (::bind (nativeSocket (listener), (sockaddr*) &address, sizeof (address)) != 0)
     {
         lastError = "could not bind port " + std::to_string (settings.port) + ": "
-                  + std::string (std::strerror (errno));
-        ::close (listener);
-        listener = -1;
+                  + socketErrorText();
+        closeSocket (listener);
         return false;
     }
 
-    if (::listen (listener, 32) < 0)
+    if (::listen (nativeSocket (listener), 32) != 0)
     {
-        lastError = "could not listen: " + std::string (std::strerror (errno));
-        ::close (listener);
-        listener = -1;
+        lastError = "could not listen: " + socketErrorText();
+        closeSocket (listener);
         return false;
     }
 
     sockaddr_in actual {};
-    socklen_t length = sizeof (actual);
-    ::getsockname (listener, (sockaddr*) &actual, &length);
+    socklen_t length = (socklen_t) sizeof (actual);
+    ::getsockname (nativeSocket (listener), (sockaddr*) &actual, &length);
     boundPort = ntohs (actual.sin_port);
 
     running = true;
@@ -271,24 +274,17 @@ void Endpoint::stop()
 {
     running = false;
 
-    if (listener >= 0)
-    {
-        ::shutdown (listener, SHUT_RDWR);
-        ::close (listener);
-        listener = -1;
-    }
-
-    {
-        // Closing the streams is what ends the threads parked on them.
-        const std::lock_guard<std::mutex> guard (lock);
-        for (const int stream : streams)
-        {
-            ::shutdown (stream, SHUT_RDWR);
-            ::close (stream);
-        }
-        streams.clear();
-    }
-
+    // Every thread here owns the socket it is working on and closes it itself,
+    // and every one of them notices `running` within a quarter of a second --
+    // the accept loop and the streams because they poll with a timeout, a
+    // request because its socket cannot block for longer than kIdleMs. So this
+    // waits for them rather than closing sockets out from under them.
+    //
+    // The alternative -- close everything, then join -- is two bugs. One is a
+    // double close, because a stream thread closes its own connection on the
+    // way out. The other is worse: a closed handle is reused immediately on
+    // Windows, so a thread that was about to read from it reads from whatever
+    // the host opened next instead.
     if (accepter.joinable())
         accepter.join();
 
@@ -296,6 +292,13 @@ void Endpoint::stop()
         if (worker.joinable())
             worker.join();
     workers.clear();
+
+    {
+        const std::lock_guard<std::mutex> guard (lock);
+        streams.clear();                 // already closed by their own threads
+    }
+
+    closeSocket (listener);
 }
 
 void Endpoint::acceptLoop()
@@ -303,37 +306,34 @@ void Endpoint::acceptLoop()
     while (running)
     {
         pollfd waiting {};
-        waiting.fd = listener;
+        waiting.fd = nativeSocket (listener);
         waiting.events = POLLIN;
 
-        if (::poll (&waiting, 1, 200) <= 0)
+        if (pollSockets (&waiting, 1, 200) <= 0)
             continue;
         if (! running)
             break;
 
-        const int connection = ::accept (listener, nullptr, nullptr);
-        if (connection < 0)
+        const auto connection = acceptOn (listener);
+        if (! valid (connection))
             continue;
 
-        int on = 1;
-        ::setsockopt (connection, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof (on));
-        ::setsockopt (connection, IPPROTO_TCP, TCP_NODELAY, &on, sizeof (on));
+        const int on = 1;
+        suppressSigPipe (connection);
+        setOption (connection, IPPROTO_TCP, TCP_NODELAY, on);
+        setTimeouts (connection, kIdleMs);
 
         const std::lock_guard<std::mutex> guard (lock);
         // Finished threads are joined here rather than detached, so stop() can
         // be sure nothing is still running when it returns.
         workers.erase (std::remove_if (workers.begin(), workers.end(),
-                                       [] (std::thread& t)
-                                       {
-                                           if (! t.joinable()) return true;
-                                           return false;
-                                       }),
+                                       [] (std::thread& t) { return ! t.joinable(); }),
                        workers.end());
         workers.emplace_back ([this, connection] { serve (connection); });
     }
 }
 
-void Endpoint::serve (int connection)
+void Endpoint::serve (SocketHandle connection)
 {
     std::string request;
     char buffer[4096];
@@ -346,7 +346,7 @@ void Endpoint::serve (int connection)
         if (headerEnd != std::string::npos)
             break;
 
-        const auto got = ::recv (connection, buffer, sizeof (buffer), 0);
+        const auto got = recvBytes (connection, buffer, sizeof (buffer));
         if (got <= 0)
             break;
         request.append (buffer, (size_t) got);
@@ -357,7 +357,7 @@ void Endpoint::serve (int connection)
 
     if (headerEnd == std::string::npos)
     {
-        ::close (connection);
+        closeSocket (connection);
         return;
     }
 
@@ -384,7 +384,7 @@ void Endpoint::serve (int connection)
         {
             respond (connection, "401 Unauthorized", "application/json",
                      R"({"error":"password"})");
-            ::close (connection);
+            closeSocket (connection);
             return;
         }
     }
@@ -392,7 +392,7 @@ void Endpoint::serve (int connection)
     if (method == "OPTIONS")
     {
         respond (connection, "204 No Content", "text/plain", "");
-        ::close (connection);
+        closeSocket (connection);
         return;
     }
 
@@ -406,14 +406,14 @@ void Endpoint::serve (int connection)
         if (length > kMaxBody)
         {
             respond (connection, "413 Payload Too Large", "text/plain", "too big");
-            ::close (connection);
+            closeSocket (connection);
             return;
         }
 
         std::string body = request.substr (headerEnd + 4);
         while (running && body.size() < length)
         {
-            const auto got = ::recv (connection, buffer, sizeof (buffer), 0);
+            const auto got = recvBytes (connection, buffer, sizeof (buffer));
             if (got <= 0)
                 break;
             body.append (buffer, (size_t) got);
@@ -423,28 +423,28 @@ void Endpoint::serve (int connection)
             onOps (body);
 
         respond (connection, "200 OK", "application/json", "{\"ok\":true}");
-        ::close (connection);
+        closeSocket (connection);
         return;
     }
 
     if (method != "GET" && method != "HEAD")
     {
         respond (connection, "405 Method Not Allowed", "text/plain", "no");
-        ::close (connection);
+        closeSocket (connection);
         return;
     }
 
     if (path == "/doc")
     {
         respond (connection, "200 OK", "application/json", docJson ? docJson() : "[]");
-        ::close (connection);
+        closeSocket (connection);
         return;
     }
 
     if (path == "/peers")
     {
         respond (connection, "200 OK", "application/json", peersJson ? peersJson() : "[]");
-        ::close (connection);
+        closeSocket (connection);
         return;
     }
 
@@ -460,7 +460,7 @@ void Endpoint::serve (int connection)
 
         if (! writeAll (connection, head))
         {
-            ::close (connection);
+            closeSocket (connection);
             return;
         }
 
@@ -476,7 +476,7 @@ void Endpoint::serve (int connection)
     if (settings.files.empty() || ! safePath (path))
     {
         respond (connection, "404 Not Found", "text/plain", "no");
-        ::close (connection);
+        closeSocket (connection);
         return;
     }
 
@@ -489,10 +489,10 @@ void Endpoint::serve (int connection)
     else
         respond (connection, "200 OK", mimeFor (relative), body);
 
-    ::close (connection);
+    closeSocket (connection);
 }
 
-void Endpoint::holdStream (int connection)
+void Endpoint::holdStream (SocketHandle connection)
 {
     // The stream is written to from broadcast(); this thread only waits for the
     // other end to go away. A comment every fifteen seconds keeps anything in
@@ -503,13 +503,13 @@ void Endpoint::holdStream (int connection)
     while (running)
     {
         pollfd waiting {};
-        waiting.fd = connection;
+        waiting.fd = nativeSocket (connection);
         waiting.events = POLLIN;
 
-        const int ready = ::poll (&waiting, 1, 250);
+        const int ready = pollSockets (&waiting, 1, 250);
         if (ready > 0)
         {
-            const auto got = ::recv (connection, discard, sizeof (discard), 0);
+            const auto got = recvBytes (connection, discard, sizeof (discard));
             if (got <= 0)
                 break;              // the browser closed it
         }
@@ -527,7 +527,7 @@ void Endpoint::holdStream (int connection)
 
     const std::lock_guard<std::mutex> guard (lock);
     streams.erase (std::remove (streams.begin(), streams.end(), connection), streams.end());
-    ::close (connection);
+    closeSocket (connection);
 }
 
 void Endpoint::broadcast (const std::string& event, const std::string& data)
@@ -540,15 +540,15 @@ void Endpoint::broadcast (const std::string& event, const std::string& data)
     frame += "\n\n";
 
     const std::lock_guard<std::mutex> guard (lock);
-    std::vector<int> alive;
+    std::vector<SocketHandle> alive;
     alive.reserve (streams.size());
 
-    for (const int stream : streams)
+    for (const SocketHandle stream : streams)
     {
         if (writeAll (stream, frame))
             alive.push_back (stream);
         else
-            ::shutdown (stream, SHUT_RDWR);   // its thread will notice and tidy up
+            shutdownSocket (stream);          // its thread will notice and tidy up
     }
 
     streams = alive;

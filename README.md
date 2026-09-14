@@ -30,10 +30,11 @@ Every macOS build is signed with a Developer ID and notarised, so they open with
 no warning and no right-click dance. They are on the
 [releases page](https://github.com/TonyGermaneri/jamin/releases).
 
-On Windows everything works except sharing a chart between machines, which is
-POSIX sockets and would be Winsock. The engine that works out what to play is
-carried with us rather than borrowed from the system, so a Windows plugin plays
-exactly what a macOS one does.
+Windows and macOS do the same things, including sharing a chart between
+machines: one set of sources, with Winsock and BSD sockets behind the same few
+functions, proved by running the suite on both. The engine that works out what
+to play is carried with us rather than borrowed from the system, so a Windows
+plugin plays exactly what a macOS one does.
 
 ## Running it
 

@@ -135,8 +135,10 @@ Nothing needs to synchronise *playback* between instances, because the host has 
 All that has to travel between them is the text, and it can take several milliseconds to get
 there without anybody hearing anything at all.
 
-So the channel can be simple, and it is: `jamin::SongBus`, a POSIX shared-memory segment with a
-seqlock over it and a file in Application Support behind it.
+So the channel can be simple, and it is: `jamin::SongBus`, a named shared-memory segment with a
+seqlock over it and a file behind it — `shm_open` and Application Support on macOS,
+`CreateFileMapping` and Local AppData on Windows. The same bytes and the same seqlock either way;
+only the four calls that get the memory differ.
 
 | | |
 | --- | --- |
@@ -272,7 +274,9 @@ the entire identity, so the configure refuses any code already taken under `WvCt
 `PrPl`, `Wvr1`) and refuses to let jamin's own two share one. A host settles a collision
 silently, by loading whichever it saw first, which is not a thing to discover in a session.
 
-**A sandboxed host may refuse the shared segment.** `shm_open` can fail. It is handled — instances
+**A sandboxed host may refuse the shared segment.** `shm_open` can fail, and so can
+`CreateFileMapping` — the Windows segment is in the `Local\` namespace, which is the logon
+session, so a host running plugins as another user would not see it. It is handled — instances
 inside that process still share through the singleton, and the file still carries the chart
 between sessions — but cross-process sharing would be lost, and it needs testing in Logic
 specifically rather than assumed.

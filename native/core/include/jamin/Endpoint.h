@@ -1,6 +1,9 @@
 #pragma once
 
+#include "Platform.h"
+
 #include <functional>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -106,17 +109,23 @@ public:
 
 private:
     void acceptLoop();
-    void serve (int connection);
-    void holdStream (int connection);
+    void serve (SocketHandle connection);
+    void holdStream (SocketHandle connection);
 
     Options settings;
-    int listener { -1 };
+    SocketHandle listener { kNoSocket };
     int boundPort { 0 };
     std::thread accepter;
-    volatile bool running { false };
+    /// Not `volatile`, which is the traditional spelling and is not a
+    /// synchronisation primitive: it orders nothing, and both shutdowns here
+    /// depend on the worker seeing this promptly and in order. MSVC gives
+    /// volatile acquire/release under /volatile:ms and nothing at all under
+    /// /volatile:iso, which is the default on ARM -- so the two platforms would
+    /// not even agree about what the old code meant.
+    std::atomic<bool> running { false };
 
     mutable std::mutex lock;
-    std::vector<int> streams;
+    std::vector<SocketHandle> streams;
     std::vector<std::thread> workers;
 };
 

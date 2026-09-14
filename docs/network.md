@@ -302,12 +302,33 @@ machine has heard the other. Both survive, and both machines agree on the result
 
 ---
 
-## Not on Windows yet
+## Windows
 
-Discovery, the endpoint and the shared bus are written against POSIX sockets and POSIX shared
-memory. On Windows they would be Winsock and a file mapping — a real port rather than a hard one,
-and not one to fake — so there the same classes are compiled from stubs that refuse and say why.
+All of it. A Windows jamin discovers the others, serves the page, relays edits, and shares a chart
+with a Mac in the same session — the same protocol on the wire, because it is the same code.
 
-That is deliberately not the same as failing to build. The chart, the timeline and the sequence
-reader are portable and are compiled and tested everywhere, so a change that breaks them is caught
-on both platforms rather than on the one that happens to run the sockets.
+It is one program rather than two. Winsock is BSD sockets with a handful of deliberate
+differences, and the honest ones are these:
+
+| | |
+| --- | --- |
+| `SOCKET` is unsigned | So `if (handle >= 0)` is always true. Every failure would read as success, and it would compile. |
+| `WSAStartup` comes first | Or every call fails with `WSANOTINITIALISED` and nothing says why. |
+| `SO_RCVTIMEO` takes milliseconds | A `DWORD`, not a `timeval`. Handing it a `timeval` is *accepted*, and the timeout becomes whatever its first four bytes happened to mean. |
+| `IP_MULTICAST_TTL` takes a `DWORD` | POSIX takes one byte. The one-byte version fails with `WSAEFAULT`. |
+| `SO_REUSEADDR` means the other thing | On BSD it waives TIME_WAIT. On Windows it lets an unrelated process bind a port you are listening on and take your traffic. The Windows spelling of the intent is `SO_EXCLUSIVEADDRUSE`; the Windows spelling of BSD's `SO_REUSEPORT` is `SO_REUSEADDR`. So the discovery socket and the listening socket want *opposite* options on the two platforms. |
+| A closed handle is reused at once | So a thread about to poll a socket that was just closed out from under it does not read a stale handle, it reads whatever the host opened next. Both shutdowns here join their threads before closing anything, rather than closing to wake them. |
+
+Each of those lives behind one function in `core/include/jamin/Sockets.h`, and the sources above
+it read as one program. The shared segment is the same story in two `#if`s: `shm_open` and `mmap`
+on macOS, `CreateFileMapping` and `MapViewOfFile` on Windows, the same seqlock over the same bytes.
+
+**What proves it.** The suite runs on the Windows CI job as well as the macOS one — two nodes
+finding each other over multicast, a chart passing between them, an edit crossing from one process
+to another through the segment. None of that can be checked from a Mac, so without that run a
+break would only ever be found by somebody on Windows trying to share.
+
+**The firewall will ask.** The first time a Windows jamin binds a port on the network, Defender
+puts up a dialog. Allow it on **Private** networks; there is no reason to allow it on Public, and
+a chart nobody can reach is what "Public" means here. A node that was refused looks exactly like a
+node with no peers — `jamin-node` is the way to tell the difference.

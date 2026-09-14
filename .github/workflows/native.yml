@@ -323,6 +323,16 @@ jobs:
         shell: bash
         run: cmake --build native/build --config RelWithDebInfo
 
+      # The networking is Winsock here and BSD sockets on the macOS job, from one
+      # set of sources. This is the run that says the Windows half of that works:
+      # two nodes find each other over multicast, a chart passes between them,
+      # and the shared segment carries an edit from one process to another. There
+      # is no way to check any of that from a Mac, so a break here would
+      # otherwise only ever be found by somebody on Windows trying to share.
+      - name: Tests
+        shell: bash
+        run: ctest --test-dir native/build -C RelWithDebInfo --output-on-failure -LE installed
+
       - name: pluginval
         shell: bash
         run: |

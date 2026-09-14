@@ -3,13 +3,26 @@
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
-#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
+
+#if defined (_WIN32)
+ // The same guards Sockets.h carries, for the same reason -- this is the other
+ // file that includes <windows.h>, and it does not want the min/max macros.
+ #ifndef WIN32_LEAN_AND_MEAN
+  #define WIN32_LEAN_AND_MEAN
+ #endif
+ #ifndef NOMINMAX
+  #define NOMINMAX
+ #endif
+ #include <windows.h>
+#else
+ #include <fcntl.h>
+ #include <sys/mman.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
+#endif
 
 namespace jamin
 {
@@ -19,6 +32,33 @@ namespace
 constexpr uint32_t kMagic = 0x6a616d31;   // 'jam1'
 constexpr size_t kCapacity = 1u << 20;    // 1 MiB of chart is about 20,000 bars
 std::mutex& localLock() { static std::mutex m; return m; }
+
+#if defined (_WIN32)
+/**
+    A POSIX segment name as Windows spells it.
+
+    `/jamin.song.v1` becomes `Local\jamin.song.v1`. A backslash is the namespace
+    separator and is legal nowhere else in the name, so the leading slash has to
+    go rather than be translated.
+
+    `Local\` rather than `Global\` deliberately: it scopes the segment to the
+    logon session, which is exactly the scope wanted -- the DAW, the standalone
+    and anything else this person is running -- and `Global\` would need
+    SeCreateGlobalPrivilege, which an ordinary user does not have.
+*/
+std::string windowsName (const char* segmentName)
+{
+    std::string name = segmentName != nullptr ? segmentName : "";
+    while (! name.empty() && (name.front() == '/' || name.front() == '\\'))
+        name.erase (name.begin());
+
+    for (char& c : name)
+        if (c == '/' || c == '\\')
+            c = '.';
+
+    return "Local\\" + name;
+}
+#endif
 }
 
 /**
@@ -41,14 +81,32 @@ struct SongBus::Shared
 
 std::string SongBus::storagePath()
 {
+#if defined (_WIN32)
+    // LOCALAPPDATA rather than APPDATA: this is a cache of one machine's state,
+    // not a document, and a roaming profile should not carry it between
+    // machines that each have their own chart.
+    const char* base = std::getenv ("LOCALAPPDATA");
+    if (base == nullptr) base = std::getenv ("USERPROFILE");
+    std::filesystem::path dir = base != nullptr ? std::filesystem::path (base)
+                                                : std::filesystem::temp_directory_path();
+    dir /= "jamin";
+#else
     const char* home = std::getenv ("HOME");
     std::filesystem::path dir = home != nullptr ? std::filesystem::path (home) : std::filesystem::temp_directory_path();
-#if defined (__APPLE__)
+ #if defined (__APPLE__)
     dir /= "Library/Application Support/jamin";
-#else
+ #else
     dir /= ".local/share/jamin";
+ #endif
 #endif
     return (dir / "song.json").string();
+}
+
+void SongBus::forget ([[maybe_unused]] const char* segmentName)
+{
+#if ! defined (_WIN32)
+    ::shm_unlink (segmentName);
+#endif
 }
 
 SongBus& SongBus::instance()
@@ -64,6 +122,29 @@ SongBus::SongBus (const char* segmentName, const std::string& filePath)
     // fatal: instances inside this process still share through the singleton,
     // and the file still carries the chart between sessions. Losing the segment
     // costs cross-process sharing, not the feature.
+#if defined (_WIN32)
+    // Backed by the pagefile rather than by a file, which is what
+    // INVALID_HANDLE_VALUE means here. A section created this way starts
+    // zeroed, and the size is fixed when it is made -- so unlike ftruncate
+    // below there is no separate step to size it, and a second process opening
+    // the same name simply gets the one that is already there.
+    const auto name = windowsName (segmentName);
+    section = ::CreateFileMappingA (INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+                                    (DWORD) (sizeof (Shared) >> 32),
+                                    (DWORD) (sizeof (Shared) & 0xffffffffu),
+                                    name.c_str());
+
+    if (section != nullptr)
+    {
+        void* p = ::MapViewOfFile (section, FILE_MAP_ALL_ACCESS, 0, 0, sizeof (Shared));
+
+        if (p != nullptr)
+        {
+            shared = static_cast<Shared*> (p);
+            mapped = sizeof (Shared);
+        }
+    }
+#else
     fd = ::shm_open (segmentName, O_CREAT | O_RDWR, 0600);
 
     if (fd >= 0)
@@ -79,25 +160,29 @@ SongBus::SongBus (const char* segmentName, const std::string& filePath)
             {
                 shared = static_cast<Shared*> (p);
                 mapped = sizeof (Shared);
-
-                // Whoever gets there first stamps it. A second instance racing
-                // through here writes the same values, so the race is benign.
-                if (shared->magic.load (std::memory_order_acquire) != kMagic)
-                {
-                    shared->seq.store (0, std::memory_order_relaxed);
-                    shared->generation.store (0, std::memory_order_relaxed);
-                    shared->length.store (0, std::memory_order_relaxed);
-                    shared->version.store (1, std::memory_order_relaxed);
-                    shared->magic.store (kMagic, std::memory_order_release);
-                }
             }
         }
     }
+#endif
 
-    if (fd >= 0 && shared == nullptr)
+    // Whoever gets there first stamps it. A second instance racing through
+    // here writes the same values, so the race is benign.
+    if (shared != nullptr && shared->magic.load (std::memory_order_acquire) != kMagic)
     {
-        ::close (fd);
-        fd = -1;
+        shared->seq.store (0, std::memory_order_relaxed);
+        shared->generation.store (0, std::memory_order_relaxed);
+        shared->length.store (0, std::memory_order_relaxed);
+        shared->version.store (1, std::memory_order_relaxed);
+        shared->magic.store (kMagic, std::memory_order_release);
+    }
+
+    if (shared == nullptr)
+    {
+       #if defined (_WIN32)
+        if (section != nullptr) { ::CloseHandle (section); section = nullptr; }
+       #else
+        if (fd >= 0) { ::close (fd); fd = -1; }
+       #endif
     }
 
     // Which way this goes depends on who got here first. A segment somebody is
@@ -120,10 +205,17 @@ SongBus::SongBus (const char* segmentName, const std::string& filePath)
 
 SongBus::~SongBus()
 {
+#if defined (_WIN32)
+    if (shared != nullptr)
+        ::UnmapViewOfFile (shared);
+    if (section != nullptr)
+        ::CloseHandle (section);
+#else
     if (shared != nullptr)
         ::munmap (shared, mapped);
     if (fd >= 0)
         ::close (fd);
+#endif
 }
 
 uint64_t SongBus::publish (const std::string& json)

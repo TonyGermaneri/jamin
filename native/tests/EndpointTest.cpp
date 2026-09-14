@@ -1,15 +1,11 @@
 #include "check.h"
 #include <jamin/Endpoint.h>
+#include <jamin/Sockets.h>
 
-#include <arpa/inet.h>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
-#include <netinet/in.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
 #include <thread>
-#include <unistd.h>
 
 using namespace jamin;
 
@@ -19,22 +15,29 @@ namespace
 /** Speaks HTTP over a real socket, because that is what a browser will do. */
 struct Client
 {
-    int handle { -1 };
+    SocketHandle handle { kNoSocket };
 
     bool open (int port)
     {
-        handle = ::socket (AF_INET, SOCK_STREAM, 0);
+        handle = openSocket (SOCK_STREAM);
+        if (! valid (handle)) return false;
+
         sockaddr_in to {};
         to.sin_family = AF_INET;
         to.sin_port = htons ((uint16_t) port);
-        to.sin_addr.s_addr = ::inet_addr ("127.0.0.1");
-        if (::connect (handle, (sockaddr*) &to, sizeof (to)) < 0) { close(); return false; }
-        int on = 1;
-        ::setsockopt (handle, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof (on));
+        parseIPv4 ("127.0.0.1", to.sin_addr);
+
+        if (::connect (nativeSocket (handle), (sockaddr*) &to, sizeof (to)) != 0)
+        {
+            close();
+            return false;
+        }
+
+        suppressSigPipe (handle);
         return true;
     }
 
-    void send (const std::string& text) const { ::send (handle, text.data(), text.size(), 0); }
+    void send (const std::string& text) const { sendBytes (handle, text.data(), text.size()); }
 
     /** Read whatever has arrived within the timeout. Not until close: a stream
         never closes, which is the point of it. */
@@ -47,17 +50,17 @@ struct Client
         while (std::chrono::steady_clock::now() < until)
         {
             pollfd waiting {};
-            waiting.fd = handle;
+            waiting.fd = nativeSocket (handle);
             waiting.events = POLLIN;
-            if (::poll (&waiting, 1, 40) <= 0) continue;
-            const auto got = ::recv (handle, buffer, sizeof (buffer), 0);
+            if (pollSockets (&waiting, 1, 40) <= 0) continue;
+            const auto got = recvBytes (handle, buffer, sizeof (buffer));
             if (got <= 0) break;
             out.append (buffer, (size_t) got);
         }
         return out;
     }
 
-    void close() { if (handle >= 0) { ::close (handle); handle = -1; } }
+    void close() { closeSocket (handle); }
     ~Client() { close(); }
 };
 
@@ -85,8 +88,9 @@ void endpointTests()
     Endpoint endpoint;
 
     // Somewhere to serve from, so the static path is exercised for real.
-    const auto dir = std::string ("/tmp/jamin-endpoint-") + std::to_string (::getpid());
-    ::mkdir (dir.c_str(), 0755);
+    const auto dir = (std::filesystem::temp_directory_path()
+                        / ("jamin-endpoint-" + std::to_string (processId()))).string();
+    std::filesystem::create_directories (dir);
     { std::ofstream page (dir + "/index.html"); page << "<!doctype html><title>jamin</title>"; }
     { std::ofstream asset (dir + "/thing.json"); asset << "{\"real\":true}"; }
 

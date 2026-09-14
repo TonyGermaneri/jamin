@@ -149,7 +149,8 @@ endif()
 # Used everywhere, including on macOS, which has JavaScriptCore already. See
 # plugin/Compiler.cpp for why one engine beats a faster one: briefly, the
 # alternative is a second implementation that only runs where nobody can test it.
-if(JAMIN_BUILD_PLUGIN OR JAMIN_BUILD_TOOLS)
+# Only jamin-compile wants it outside the plugin, and that needs JUCE anyway.
+if(JAMIN_BUILD_PLUGIN)
     set(JAMIN_QUICKJS_TAG "v0.10.1" CACHE STRING "quickjs-ng release tag")
 
     include(FetchContent)

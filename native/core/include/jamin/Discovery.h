@@ -1,6 +1,9 @@
 #pragma once
 
+#include "Platform.h"
+
 #include <cstdint>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -87,9 +90,15 @@ private:
     void forgetTheDeparted();
 
     Options settings;
-    int socketHandle { -1 };
+    SocketHandle socketHandle { kNoSocket };
     std::thread worker;
-    volatile bool running { false };
+    /// Not `volatile`, which is the traditional spelling and is not a
+    /// synchronisation primitive: it orders nothing, and both shutdowns here
+    /// depend on the worker seeing this promptly and in order. MSVC gives
+    /// volatile acquire/release under /volatile:ms and nothing at all under
+    /// /volatile:iso, which is the default on ARM -- so the two platforms would
+    /// not even agree about what the old code meant.
+    std::atomic<bool> running { false };
 
     mutable std::mutex lock;
     std::vector<Peer> known;
