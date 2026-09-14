@@ -19,6 +19,9 @@ export const STORAGE_KEY = 'jamin.settings.v1'
  *   5 -- snapping notes that are not in the chord onto the nearest one that is
  *        became the default, and became a setting you can see. Nobody can have
  *        chosen the old value, because there was nothing to choose it with.
+ *   9 -- `drums` arrived, with `midi.drumOutputId` and `midi.drumChannel`. New
+ *        blocks with defaults, so a settings object saved before them reads as
+ *        the defaults.
  *   8 -- `instances.quantize` arrived with mute and solo across instances. New
  *        block, default `bar`, so a saved settings object without it reads as
  *        the default anyway.
@@ -31,11 +34,12 @@ export const STORAGE_KEY = 'jamin.settings.v1'
  *        chord alike; `chords.bassNote` and `accompany.keepBass` are gone, and
  *        anyone who had the chord one on gets the remaining one on.
  */
-export const SETTINGS_VERSION = 8
+export const SETTINGS_VERSION = 9
 export const TEXT_KEY = 'jamin.chart.v1'
 export const PHRASE_KEY = 'jamin.phrases.v1'
 export const SONG_PHRASE_KEY = 'jamin.songPhrase.v1'
 export const ACCENT_KEY = 'jamin.accent.v1'
+export const DRUM_ACCENT_KEY = 'jamin.drumAccent.v1'
 export const FAVOURITES_KEY = 'jamin.favourites.v1'
 
 export function defaultSettings() {
@@ -51,6 +55,11 @@ export function defaultSettings() {
       accompInputId: '',
       accompOutputId: '',
       accompChannel: 1,
+      drumOutputId: '',
+      // Channel 10, counted from zero. Every drum machine and every sampler
+      // since 1991 listens there; a drum part sent anywhere else is a drum part
+      // nobody hears.
+      drumChannel: 9,
       velocity: 90,
       // A control change that fires the accent, from any input. null until bound.
       accentCc: null,
@@ -124,6 +133,20 @@ export function defaultSettings() {
       // Off by default: one phrase plays for the whole song. Turn it on to bind
       // a different phrase to individual chords, marked with a dot.
       perChordPhrases: false,
+    },
+    drums: {
+      // A drum part is an articulation like any other -- it is just that its
+      // notes are instruments rather than pitches, so nothing about it is
+      // transposed. @see core/drums.js
+      enabled: true,
+      // Which kit the grooves are translated to on the way out. @see drumKits.js
+      kit: 'gm',
+      // Voice -> note, overriding the chosen kit. Where a hand-built Drum Rack
+      // gets fixed.
+      customMap: {},
+      // A fill in the bar before every section change, which is what a drum
+      // chart has meant since long before there were corpora to draw on.
+      fillOnEveryBoundary: true,
     },
     instances: {
       // Muting a part is a musical act, not a mixer move: it lands on a bar line

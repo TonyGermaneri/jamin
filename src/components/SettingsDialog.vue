@@ -135,6 +135,21 @@ async function retryMidi() {
               </InfoTip>
             </div>
 
+            <v-switch
+              v-model="state.settings.drums.enabled"
+              density="compact" hide-details color="success" class="mb-1"
+              label="Play the drums"
+            />
+            <v-switch
+              v-model="state.settings.drums.fillOnEveryBoundary"
+              :disabled="!state.settings.drums.enabled"
+              density="compact" hide-details color="success" class="mb-2"
+              label="A fill into every section change"
+            />
+            <div class="text-caption text-medium-emphasis mb-4">
+              Write <code>[d:nofill]</code> in a section to stop just that one.
+            </div>
+
             <v-select
               v-if="state.host.active"
               v-model="state.settings.instances.quantize"
@@ -282,6 +297,26 @@ async function retryMidi() {
               </v-col>
               <v-col cols="12" md="4">
                 <v-select v-model="state.settings.midi.accompChannel" :items="channels" label="Accompaniment channel" />
+              </v-col>
+
+              <v-col cols="12" md="8">
+                <v-select v-model="state.settings.midi.drumOutputId" :items="outputs" label="Drum out (blank = chord out)" />
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-select v-model="state.settings.midi.drumChannel" :items="channels" label="Drum channel" />
+              </v-col>
+              <v-col cols="12">
+                <div class="text-caption text-medium-emphasis mb-3">
+                  Channel 10 unless you have a reason — it is where every drum machine since 1991
+                  listens.
+                  <InfoTip>
+                    Drums are the one part of jamin that is played exactly as it was recorded: a
+                    drum note is an instrument rather than a pitch, so nothing about a groove is
+                    transposed or voice-led. What does happen is a translation from the kit the
+                    corpus was played on to the kit you have loaded, which is the Kit tab of the
+                    drum book.
+                  </InfoTip>
+                </div>
               </v-col>
 
               <v-col cols="12">

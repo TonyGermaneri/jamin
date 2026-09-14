@@ -149,3 +149,99 @@ export function placeFill(fill, spanPulses, map) {
     .map((note) => ({ ...note, at: offset + note.at }))
     .sort((a, b) => a.at - b.at || a.note - b.note)
 }
+
+/**
+ * Where the drums change, over the whole chart.
+ *
+ * A span is a stretch of chart playing one groove. Sections make them, and so
+ * does a `[d:...]` written mid-section -- which is why this is not simply a walk
+ * over `score.sections`. A chart with no sections at all is one span, because a
+ * song with no marked parts still has drums.
+ */
+function drumSpans(score) {
+  const total = score.totalPulses | 0
+  if (!total) return []
+
+  const spans = []
+  let open = null
+
+  for (const event of score.events) {
+    const section = event.section ?? -1
+    const groove = event.drums || null
+
+    // A new section, or the chart asking for something different inside one.
+    if (!open || open.section !== section || open.groove !== groove) {
+      if (open) open.endPulse = event.startPulse
+      open = {
+        section,
+        sectionName: event.sectionName || null,
+        groove,
+        startPulse: event.startPulse,
+        endPulse: total,
+        // Only the span that reaches a section's end can carry its fill.
+        noFill: event.noFill,
+      }
+      spans.push(open)
+    } else {
+      open.noFill = event.noFill
+    }
+  }
+
+  if (open) open.endPulse = total
+  return spans.filter((span) => span.endPulse > span.startPulse)
+}
+
+/**
+ * The whole drum part, worked out once.
+ *
+ * Built ahead rather than decided beat by beat, for the same reason the rest of
+ * the song is compiled: it depends on nothing that happens at play time, and a
+ * list of notes at fixed pulses is a thing the plugin can perform without
+ * knowing what a section is.
+ *
+ * @param {object} score            a parsed chart
+ * @param {object} options
+ * @param {function} options.groove  name or section -> a groove, or null
+ * @param {function} [options.fill]  a section -> the fill to lead out of it
+ * @param {object} options.map       the kit in use @see drumKits.js
+ * @param {boolean} [options.fillOnEveryBoundary]
+ */
+export function buildDrumTrack(score, options = {}) {
+  if (!score || !score.events || !score.events.length) return []
+
+  const { groove: pickGroove, fill: pickFill, map, fillOnEveryBoundary = true } = options
+  if (typeof pickGroove !== 'function') return []
+
+  const spans = drumSpans(score)
+  const out = []
+
+  for (let i = 0; i < spans.length; i++) {
+    const span = spans[i]
+    const chosen = pickGroove(span)
+    if (!chosen) continue                       // nothing bound, and nothing invented
+
+    const length = span.endPulse - span.startPulse
+
+    // A fill belongs to the boundary, not to the section: it leads into the
+    // change, so it goes in the bar before the *next* section starts. Which is
+    // why it is only considered on the span that actually reaches one.
+    const next = spans[i + 1]
+    const leavesSection = next && next.section !== span.section
+    const wantFill = fillOnEveryBoundary && leavesSection && !span.noFill
+
+    const fill = wantFill && typeof pickFill === 'function' ? pickFill(span) : null
+    const placed = fill ? placeFill(fill, length, map) : []
+
+    // The groove stops where the fill starts. Both playing at once is two
+    // drummers, which is not what a fill is.
+    const grooveSpan = placed.length ? length - fill.lengthPulses : length
+    for (const note of layOutGroove(chosen, grooveSpan, map)) {
+      out.push({ ...note, at: span.startPulse + note.at })
+    }
+    for (const note of placed) {
+      out.push({ ...note, at: span.startPulse + note.at })
+    }
+  }
+
+  return out.sort((a, b) => a.at - b.at || a.note - b.note)
+}

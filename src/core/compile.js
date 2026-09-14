@@ -24,6 +24,7 @@
 
 import { parseScore } from './score.js'
 import { Player } from './player.js'
+import { WHOLE_SONG } from './drumBindings.js'
 
 /**
  * The parse options the chart is read with.
@@ -106,6 +107,9 @@ const clampVelocity = (velocity) => Math.min(127, Math.max(1, velocity | 0))
  * @param {object} [request.phrases]   phrase id -> phrase, already resolved by
  *                                     the page, because the catalogue is a
  *                                     browser thing and this is not
+ * @param {object} [request.grooves]  groove id -> groove, resolved by the page
+ *                                     for the same reason the phrases are
+ * @param {object} [request.drumBindings] section name -> { groove, fill }
  * @param {string} [request.songPhrase] the phrase bound to the whole song
  * @param {number} [request.accentAt]  an event index whose phrase is replaced by
  *                                     the accent, or absent for none
@@ -129,6 +133,23 @@ export function compileSong(request) {
   const recorder = new Recorder()
   const player = new Player(recorder, settings)
   player.getPhrase = (id) => phrases[id] || null
+
+  // The drums, resolved the same way and for the same reason: the catalogue is
+  // two and a half thousand grooves in a browser's memory, and the compiler
+  // runs inside a plugin that has neither.
+  const grooves = request.grooves || {}
+  const bindings = request.drumBindings || {}
+  const bound = (span, what) => {
+    // What the chart said beats what the drum book has bound, which is the same
+    // order of precedence the pedal marks use.
+    if (what === 'groove' && span.groove && grooves[span.groove]) return grooves[span.groove]
+    const row = bindings[span.sectionName ?? WHOLE_SONG] || bindings[WHOLE_SONG] || {}
+    const id = what === 'fill' ? row.fill : row.groove
+    return (id && grooves[id]) || null
+  }
+  player.getGroove = (span) => bound(span, 'groove')
+  player.getFill = (span) => bound(span, 'fill')
+
   player.setScore(score)
 
   // The accent replaces one chord's phrase, and which chord is decided by

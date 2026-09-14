@@ -28,7 +28,10 @@ SUITES = [
     ], "tests/importers.test.js"),
     (["src/core/themes.js", "src/core/settings.js"], "tests/settings.test.js"),
     (["src/core/host.js"], "tests/host.test.js"),
-    (["src/core/fetchResource.js", "src/core/drumKits.js", "src/core/drums.js"], "tests/drums.test.js"),
+    ([
+        "src/core/chordParser.js", "src/core/score.js", "src/core/fetchResource.js",
+        "src/core/drumKits.js", "src/core/drums.js", "src/core/drumBindings.js",
+    ], "tests/drums.test.js"),
     (["src/core/crdt.js"], "tests/crdt.test.js"),
     # The shared segment: what may travel between instances in one host, and why
     # it is operations rather than text.
@@ -40,7 +43,8 @@ SUITES = [
     ([
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
         "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js",
-        "src/core/player.js", "src/core/compile.js",
+        "src/core/fetchResource.js", "src/core/drumKits.js", "src/core/drums.js",
+        "src/core/drumBindings.js", "src/core/player.js", "src/core/compile.js",
     ], "tests/compile.test.js"),
     (["src/core/vocParser.js"], "tests/voc.test.js"),
     ([
@@ -51,7 +55,8 @@ SUITES = [
     ([
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
         "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js",
-        "src/core/player.js", "src/core/compile.js",
+        "src/core/fetchResource.js", "src/core/drumKits.js", "src/core/drums.js",
+        "src/core/drumBindings.js", "src/core/player.js", "src/core/compile.js",
     ], "tests/accent.test.js"),
     ([
         "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",
@@ -73,11 +78,13 @@ SUITES = [
     ], "tests/phrase-names.test.js"),
     ([
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
-        "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js", "src/core/player.js",
+        "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js", "src/core/fetchResource.js", "src/core/drumKits.js", "src/core/drums.js",
+        "src/core/drumBindings.js", "src/core/player.js",
     ], "tests/player.test.js"),
     ([
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
-        "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js", "src/core/player.js",
+        "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js", "src/core/fetchResource.js", "src/core/drumKits.js", "src/core/drums.js",
+        "src/core/drumBindings.js", "src/core/player.js",
         # The rest of the program that walks the same token list: transposing,
         # the shorthand rewrite, the progression library and the clipboard.
         # Not key.js: it and voiceLeading.js each declare mod12, and these are

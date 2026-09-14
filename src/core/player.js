@@ -13,6 +13,8 @@
 import { eventAtPulse, sameChord, wrapPulse } from './score.js'
 import { realizeChord } from './voicing.js'
 import { realizePhrase } from './voiceLeading.js'
+import { buildDrumTrack } from './drums.js'
+import { kitById, cleanKitMap } from './drumKits.js'
 
 const mod = (n, m) => ((n % m) + m) % m
 
@@ -67,9 +69,21 @@ export class Player {
     // changed between pressing it and having to let it go.
     this.pedalDown = []
 
+    // The drum part, worked out once when the chart changes rather than decided
+    // beat by beat. It depends on nothing that happens at play time.
+    this.drumTrack = []
+    this.drumCursor = 0
+    this.drumSounding = new Set()
+    /** Armed, waiting for the next section. @see armDrumAccent */
+    this.drumAccent = null
+
     this.capture = { armed: false, mode: 'once', notes: [], open: new Map(), startedEvent: -1 }
 
     this.getPhrase = () => null
+    /** name or span -> a groove. The catalogue is a browser thing, as the
+        phrase catalogue is, so the application supplies it. */
+    this.getGroove = () => null
+    this.getFill = () => null
     this.onEventChange = null
     this.onCapture = null
     this.onNotes = null
@@ -88,6 +102,7 @@ export class Player {
     const previous = this.current
     this.score = score
     this.scoreId++
+    this.rebuildDrums()
 
     const event = previous ? eventAtPulse(score, this.position, this.settings.transport.loop) : null
     if (event && sameChord(event.chord, previous.chord)) {
@@ -129,6 +144,9 @@ export class Player {
 
     this.local = position - event.startPulse
     this.flushPhrase(this.local)
+    // Driven from the song position, not the chord: a groove runs across chord
+    // changes and stops at a section, which is a different clock.
+    this.flushDrums(position, wrapped)
 
     // Up before the change, down again after it. @see PEDAL_LIFT_PULSES
     if (this.pedalDown.length) {
@@ -270,6 +288,99 @@ export class Player {
   }
 
   /**
+   * Arm a groove to replace the next section's.
+   *
+   * The phrase accent waits for a chord; this waits for a section, because that
+   * is the unit a drummer thinks in -- firing a new groove halfway through a
+   * verse is a mistake, not a gesture.
+   */
+  armDrumAccent(groove) {
+    this.drumAccent = groove || null
+    this.rebuildDrums()
+    return this.drumAccent !== null
+  }
+
+  /**
+   * The drum part for this chart, in this kit.
+   *
+   * Rebuilt whenever the chart changes, which is every keystroke -- so it is
+   * built from the parsed score rather than re-read from anywhere, and it is
+   * nothing but arithmetic over a list that is already in memory.
+   */
+  rebuildDrums() {
+    this.drumTrack = []
+    this.drumCursor = 0
+
+    const drums = this.settings.drums
+    if (!drums || !drums.enabled || !this.score) return
+
+    // The accent replaces whatever the next section was going to play, and is
+    // not gated on the bindings: it is a deliberate gesture rather than part of
+    // the arrangement, which is how the phrase accent works too.
+    const accent = this.drumAccent
+    let spent = false
+
+    this.drumTrack = buildDrumTrack(this.score, {
+      groove: (span) => {
+        if (accent && !spent) { spent = true; return accent }
+        return this.getGroove(span)
+      },
+      fill: (span) => this.getFill(span),
+      map: { ...kitById(drums.kit).map, ...cleanKitMap(drums.customMap) },
+      fillOnEveryBoundary: drums.fillOnEveryBoundary !== false,
+    })
+  }
+
+  /**
+   * Everything the drums do between the last pulse and this one.
+   *
+   * Played literally. Nothing here goes near the voice leading: a drum note is
+   * an instrument and not a pitch, and transposing one turns a snare into a
+   * tom. It is the one part of jamin that plays exactly what it was given.
+   */
+  flushDrums(position, wrapped) {
+    if (!this.drumTrack.length) return
+
+    const midi = this.settings.midi
+    const outputId = midi.drumOutputId || midi.chordOutputId
+    const channel = midi.drumChannel ?? 9
+
+    if (wrapped) {
+      this.stopDrums()
+      this.drumCursor = 0
+    }
+
+    // The cursor only ever moves forward, so a locate backwards has to find its
+    // place again rather than play the whole song to catch up.
+    if (this.drumCursor > 0 && this.drumTrack[this.drumCursor - 1].at > position) {
+      this.stopDrums()
+      this.drumCursor = 0
+    }
+
+    while (this.drumCursor < this.drumTrack.length
+           && this.drumTrack[this.drumCursor].at <= position) {
+      const hit = this.drumTrack[this.drumCursor++]
+      if (this.engine.noteOn(outputId, channel, hit.note, hit.velocity)) {
+        this.drumSounding.add(hit.note)
+      }
+    }
+
+    // Drums are struck, not held: the note-off is a formality the instrument
+    // ignores, but leaving them on would stack a hundred held notes on one
+    // channel and some samplers do count them.
+    for (const note of this.drumSounding) this.engine.noteOff(outputId, channel, note)
+    this.drumSounding.clear()
+  }
+
+  stopDrums() {
+    const midi = this.settings.midi
+    const outputId = midi.drumOutputId || midi.chordOutputId
+    const channel = midi.drumChannel ?? 9
+    for (const note of this.drumSounding) this.engine.noteOff(outputId, channel, note)
+    this.drumSounding.clear()
+  }
+
+  /**
    * Whether this chord wants the pedal.
    *
    * The chart wins where it says anything: `[p]` and `[np]` set it from the
@@ -382,6 +493,8 @@ export class Player {
     this.releasePedal()
     this.phraseQueue = []
     this.phraseCursor = 0
+    this.stopDrums()
+    this.drumCursor = 0
     if (this.onNotes) this.onNotes([])
   }
 

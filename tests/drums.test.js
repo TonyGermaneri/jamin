@@ -160,4 +160,107 @@ check('and it starts at nought when it does', placeFill(oneBarFill, bar, gm)[0].
 
 check('no fill, no notes', placeFill(null, bar * 4, gm).length, 0)
 
+
+/* ---------------- the whole part, from a chart --------------------------- */
+const beat = { id: 'b1', lengthPulses: bar, bars: 1, kind: 'beat',
+  notes: [{ at: 0, note: 36, duration: 6, velocity: 110 },
+          { at: 48, note: 38, duration: 6, velocity: 100 }] }
+const fillGroove = { id: 'f1', lengthPulses: bar, bars: 1, kind: 'fill',
+  notes: [{ at: 0, note: 43, duration: 6, velocity: 100 }] }
+
+const chart = parseScore('[Verse] | C | F | G | Am |\n[Chorus] | F | G |')
+const track = buildDrumTrack(chart, {
+  groove: () => beat,
+  fill: () => fillGroove,
+  map: gm,
+  fillOnEveryBoundary: true,
+})
+
+check('it comes out in time order',
+      track.every((n, i) => i === 0 || n.at >= track[i - 1].at), true)
+
+// Four bars of verse: three of groove, and the fourth is the fill leading into
+// the chorus. Then two bars of chorus with nothing after it to lead into.
+const kicks = track.filter((n) => n.note === 36).map((n) => n.at)
+check('the groove stops where the fill starts', kicks, [0, bar, bar * 2, bar * 4, bar * 5])
+check('the fill is in the last bar of the verse',
+      track.filter((n) => n.note === 43).map((n) => n.at), [bar * 3])
+check('and the last section gets no fill, having nothing to lead into',
+      track.filter((n) => n.at >= bar * 4 && n.note === 43).length, 0)
+
+// Switched off, it simply plays through.
+const noFills = buildDrumTrack(chart, { groove: () => beat, fill: () => fillGroove, map: gm,
+                                        fillOnEveryBoundary: false })
+check('no fills means the groove plays the whole section',
+      noFills.filter((n) => n.note === 36).map((n) => n.at),
+      [0, bar, bar * 2, bar * 3, bar * 4, bar * 5])
+
+// [d:nofill] stops the one it is written in.
+const quietBoundary = buildDrumTrack(parseScore('[Verse] | C | [d:nofill] | F |\n[Chorus] | G |'),
+                                     { groove: () => beat, fill: () => fillGroove, map: gm })
+check('nofill stops the fill into the next section',
+      quietBoundary.filter((n) => n.note === 43).length, 0)
+
+// Nothing bound is silence, not an invention.
+check('nothing bound plays nothing',
+      buildDrumTrack(chart, { groove: () => null, map: gm }).length, 0)
+check('and a chart with no chords has no part',
+      buildDrumTrack(parseScore(''), { groove: () => beat, map: gm }).length, 0)
+
+// A chart with no sections still has drums.
+const sectionless = buildDrumTrack(parseScore('| C | F |'), { groove: () => beat, map: gm })
+check('a chart with no sections is one span', sectionless.filter((n) => n.note === 36).map((n) => n.at),
+      [0, bar])
+
+// A [d:...] inside a section changes the groove from where it is written.
+const other = { ...beat, id: 'b2', notes: [{ at: 0, note: 42, duration: 6, velocity: 90 }] }
+const swapped = buildDrumTrack(parseScore('[Verse] | C | [d:other] | F |'), {
+  groove: (span) => (span.groove === 'other' ? other : beat),
+  map: gm,
+  fillOnEveryBoundary: false,
+})
+check('the first bar is the bound groove', swapped.filter((n) => n.at < bar).map((n) => n.note), [36, 38])
+check('and the second is what the chart asked for', swapped.filter((n) => n.at >= bar).map((n) => n.note), [42])
+
+/* ---------------- bindings and the chart drifting apart ------------------ */
+let bound = {}
+bound = bindGroove(bound, 'Verse', 'b1')
+bound = bindGroove(bound, 'Chorus', 'b2')
+bound = bindGroove(bound, 'Chorus', 'f9', 'fill')
+check('a groove is bound', bound.Verse.groove, 'b1')
+check('and a fill separately', bound.Chorus, { groove: 'b2', fill: 'f9' })
+
+const rows = reconcileBindings(bound, chart.sections)
+check('every section in the chart has a row', rows.map((r) => r.name), ['Verse', 'Chorus'])
+check('in the order the chart has them', rows[0].name, 'Verse')
+check('and none of them is stale', rows.every((r) => !r.stale), true)
+
+// The chorus marker is deleted from the chart. The assignment is not lost.
+const cut = parseScore('[Verse] | C | F |')
+const afterCut = reconcileBindings(bound, cut.sections)
+check('the section that went is kept', afterCut.map((r) => r.name), ['Verse', 'Chorus'])
+check('and marked stale', afterCut.find((r) => r.name === 'Chorus').stale, true)
+check('with its groove intact', afterCut.find((r) => r.name === 'Chorus').groove, 'b2')
+
+// Stale ones can be deleted; live ones cannot, because they would come back.
+check('a stale binding can be forgotten',
+      'Chorus' in forgetBinding(bound, 'Chorus', cut.sections), false)
+check('a live one cannot', 'Verse' in forgetBinding(bound, 'Verse', cut.sections), true)
+check('and putting the marker back brings the binding with it',
+      reconcileBindings(bound, chart.sections).find((r) => r.name === 'Chorus').stale, false)
+
+// A part nobody has chosen a groove for still gets a row to choose one in.
+const empty = reconcileBindings({}, chart.sections)
+check('an unassigned part is still listed', empty.length, 2)
+check('and says it is waiting', unassigned(empty), 2)
+
+// A chart with no sections binds as a whole.
+check('a chart with no sections has one row',
+      reconcileBindings({}, []).map((r) => r.name), [WHOLE_SONG])
+check('and it knows what it is', reconcileBindings({}, [])[0].wholeSong, true)
+
+// Two choruses are one binding, not two rows.
+check('a repeated section is one row',
+      reconcileBindings({}, parseScore('[A] C\n[B] F\n[A] G').sections).map((r) => r.name), ['A', 'B'])
+
 console.log(failed ? `drums: ${failed} FAILED` : 'drums: all checks passed')

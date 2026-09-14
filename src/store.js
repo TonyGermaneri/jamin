@@ -12,6 +12,11 @@ import { reactive, watch } from 'vue'
 import { MidiEngine } from './core/midi.js'
 import { hosted, hostData, callHost, onHost, HostClock } from './core/host.js'
 import { nodeAvailable, Session, httpTransport, hostTransport, localTransport } from './core/net.js'
+import { loadDrums, loadedDrums, drumReport, buildDrumTrack } from './core/drums.js'
+import {
+  loadDrumBindings, saveDrumBindings, reconcileBindings, bindGroove,
+  forgetBinding, WHOLE_SONG,
+} from './core/drumBindings.js'
 import { Player } from './core/player.js'
 import { parseScore } from './core/score.js'
 import {
@@ -22,6 +27,7 @@ import {
   TEXT_KEY,
   SONG_PHRASE_KEY,
   ACCENT_KEY,
+  DRUM_ACCENT_KEY,
   FAVOURITES_KEY,
   SAMPLE_CHART,
 } from './core/settings.js'
@@ -86,6 +92,12 @@ export const state = reactive({
   // Several machines holding the same chart. Empty until this page turns out
   // to have been served by a node. @see src/core/net.js
   net: { joined: false, state: 'offline', peers: [], site: null, address: null },
+  // The drum catalogue, and which groove plays where. @see core/drums.js
+  drums: [],
+  drumBindings: {},
+  drumAccent: null,
+  drumReport: { grooves: 0, error: null },
+
   // Every instance of jamin in this host: which track each is on, what it is
   // playing, and whether it may be heard. @see jamin::Roster
   roster: { me: null, instances: [] },
@@ -128,6 +140,9 @@ export const state = reactive({
     settingsTab: 'midi',
     phrasesTab: 'catalogue',
     lickTexture: 'any',
+    drums: false,
+    drumsTab: 'grooves',
+    drumAccentArmed: false,
     /// Which instance the phrase book is pointed at. Null is this one.
     targetInstance: null,
     progressionsTab: 'library',
@@ -276,6 +291,16 @@ export async function initApp() {
   // Build the lick catalogue once the chart is up. It is a few tens of
   // milliseconds off the critical path, so it is ready before anyone opens the
   // tab, and nothing waits on it if they never do.
+  state.drumBindings = loadDrumBindings()
+  state.drumAccent = readStored(DRUM_ACCENT_KEY)
+  loadDrums().then((list) => {
+    state.drums = list
+    state.drumReport = drumReport()
+    // The part can only be built once the catalogue is here, and the plugin is
+    // already playing the chords while it arrives.
+    refreshDrums()
+  })
+
   const build = () => ensureLicks()
   if (typeof requestIdleCallback === 'function') requestIdleCallback(build, { timeout: 4000 })
   else setTimeout(build, 1200)
@@ -396,6 +421,8 @@ function compileRequest() {
     settings: state.settings,
     songPhrase: state.songPhrase,
     phrases,
+    grooves: groovesInUse(),
+    drumBindings: state.drumBindings,
     accentAt,
     accent: accentAt === null ? null : accentPhrase(),
     generation: ++hostGeneration,
@@ -668,6 +695,126 @@ export function randomSongPhrase(pool = null) {
   const pick = list[Math.floor(Math.random() * list.length)]
   if (pick) setSongPhrase(pick.id || pick.name)
   return pick
+}
+
+/* ------------------------------------------------------------------ *
+ * The drums
+ *
+ * A groove is an articulation like any other -- it is just that its notes are
+ * instruments rather than pitches, so nothing about it is transposed. What the
+ * chart says beats what the drum book has bound, the same way the pedal marks
+ * beat the pedal switch. @see core/drums.js
+ * ------------------------------------------------------------------ */
+
+/** A groove by id, from the catalogue. */
+export function grooveById(id) {
+  if (!id) return null
+  return state.drums.find((groove) => groove.id === id) || null
+}
+
+/** The rows the drum book shows: every section, plus anything left over. */
+export function drumRows() {
+  return reconcileBindings(state.drumBindings, state.score.sections || [])
+}
+
+/** What plays over a stretch of chart, and what leads out of it. */
+function grooveForSpan(span, what) {
+  if (what === 'groove' && span.groove) {
+    // `[d:name]` names a groove. Matched on the name rather than the id,
+    // because a name is what somebody can type.
+    const named = state.drums.find((groove) => groove.name === span.groove)
+    if (named) return named
+  }
+
+  const row = state.drumBindings[span.sectionName ?? WHOLE_SONG]
+            || state.drumBindings[WHOLE_SONG]
+            || {}
+  return grooveById(what === 'fill' ? row.fill : row.groove)
+}
+
+export function setGrooveFor(name, grooveId, what = 'groove') {
+  state.drumBindings = bindGroove(state.drumBindings, name, grooveId, what)
+  saveDrumBindings(state.drumBindings)
+  refreshDrums()
+}
+
+export function forgetDrumBinding(name) {
+  const next = forgetBinding(state.drumBindings, name, state.score.sections || [])
+  if (next === state.drumBindings) {
+    toast('That part is still in the chart')
+    return
+  }
+  state.drumBindings = next
+  saveDrumBindings(state.drumBindings)
+  refreshDrums()
+}
+
+/** The player is told again, and the plugin recompiled. */
+function refreshDrums() {
+  player.getGroove = (span) => grooveForSpan(span, 'groove')
+  player.getFill = (span) => grooveForSpan(span, 'fill')
+  player.rebuildDrums()
+  // pushToHost is the compile: it debounces and sends the whole request, which
+  // now carries the grooves this chart uses.
+  pushToHost()
+}
+
+/** Only the grooves this chart actually uses, resolved for the compiler --
+    two and a half thousand would not fit through the bridge and none of the
+    rest is wanted. */
+function groovesInUse() {
+  const out = {}
+  if (!state.settings.drums.enabled) return out
+
+  const take = (groove) => { if (groove) out[groove.id] = groove }
+  for (const span of buildDrumSpansForRequest()) {
+    take(grooveForSpan(span, 'groove'))
+    take(grooveForSpan(span, 'fill'))
+  }
+  return out
+}
+
+/** The spans the compiler will see, so the same grooves are sent. */
+function buildDrumSpansForRequest() {
+  const spans = []
+  let open = null
+  for (const event of state.score.events || []) {
+    const key = `${event.section}|${event.drums || ''}`
+    if (!open || open.key !== key) {
+      open = { key, section: event.section, sectionName: event.sectionName, groove: event.drums }
+      spans.push(open)
+    }
+  }
+  return spans
+}
+
+/**
+ * The drum accent: one groove, fired by hand or by a control.
+ *
+ * The phrase book's accent replaces the phrase on the next chord; this replaces
+ * the groove on the next *section*, because that is the unit a drummer thinks
+ * in. A fill fired this way lands where a fill lands -- at the end of the
+ * section it is leading out of -- rather than starting under the next downbeat.
+ */
+export function setDrumAccent(groove) {
+  state.drumAccent = groove ? groove.id : null
+  try {
+    if (state.drumAccent) localStorage.setItem(DRUM_ACCENT_KEY, state.drumAccent)
+    else localStorage.removeItem(DRUM_ACCENT_KEY)
+  } catch {
+    /* ignore */
+  }
+  toast(groove ? `${groove.name} is the drum accent` : 'Drum accent cleared')
+}
+
+export function triggerDrumAccent() {
+  const groove = grooveById(state.drumAccent)
+  if (!groove) {
+    toast('No drum accent chosen')
+    return
+  }
+  state.ui.drumAccentArmed = !state.ui.drumAccentArmed
+  player.armDrumAccent(state.ui.drumAccentArmed ? groove : null)
 }
 
 /** Tell the others about an edit made here. */
