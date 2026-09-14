@@ -54,6 +54,13 @@ endif()
 if(APPLE AND TARGET jamin-auhost)
     add_test(NAME jamin-auhost COMMAND jamin-auhost 4 --seconds 0.5)
     set_tests_properties(jamin-auhost PROPERTIES TIMEOUT 120 LABELS installed)
+
+    # The case a DAW actually crashed on: a track jamin is playing that is also
+    # being played from a keyboard. The editor is open, a compiled sequence is
+    # performing, and MIDI arrives at the same time. The harness fails if the
+    # plugin emits nothing, so a run that survives by doing nothing cannot pass.
+    add_test(NAME jamin-auhost-midi COMMAND jamin-auhost 2 --midi 300 --seconds 6)
+    set_tests_properties(jamin-auhost-midi PROPERTIES TIMEOUT 180 LABELS installed)
 endif()
 
 # The seal. Copying the page into a bundle that was already signed breaks its

@@ -74,4 +74,40 @@ void SequencePlayer::collect (const Sequence& seq,
     }
 }
 
+std::unique_ptr<Sequence> SequenceHolder::swap (std::unique_ptr<Sequence> next)
+{
+    while (busy.test_and_set (std::memory_order_acquire))
+    {
+        // The reader holds this for the length of one block's arithmetic over a
+        // sorted array. Spinning is the right thing here and the wait is over in
+        // microseconds; this is not the audio thread.
+    }
+
+    auto previous = std::move (current);
+    current = std::move (next);
+    busy.clear (std::memory_order_release);
+
+    // Destroyed by the caller, after the lock is released: no reader can reach
+    // it any more, and freeing under the lock would make the audio thread skip
+    // a block for the length of a deallocation.
+    return previous;
+}
+
+SequenceHolder::Read::Read (SequenceHolder& holder) noexcept : owner (holder)
+{
+    // Never waits. A swap in flight means this block plays nothing, which is a
+    // few milliseconds of silence rather than a use-after-free.
+    if (! owner.busy.test_and_set (std::memory_order_acquire))
+    {
+        locked = true;
+        sequence = owner.current.get();
+    }
+}
+
+SequenceHolder::Read::~Read() noexcept
+{
+    if (locked)
+        owner.busy.clear (std::memory_order_release);
+}
+
 } // namespace jamin

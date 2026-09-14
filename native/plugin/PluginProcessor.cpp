@@ -70,10 +70,10 @@ private:
             if (! compiler.isLoaded())
                 compiler.load (jamin::webRoot().getChildFile ("jamin-compile.js"));
 
-            auto sequence = compiler.compile (job);
+            auto compiled = compiler.compile (job);
 
             const juce::ScopedLock guard (lock);
-            result = std::move (sequence);
+            result = std::move (compiled);
             resultError = compiler.lastError;
             resultChords = compiler.lastChordCount;
             haveResult = true;
@@ -114,7 +114,7 @@ JaminProcessor::~JaminProcessor()
     // then does anything the audio thread reads go away.
     stopTimer();
     compiler.reset();
-    live.store (nullptr, std::memory_order_release);
+    sequence.swap (nullptr);
 }
 
 void JaminProcessor::prepareToPlay (double sampleRate, int)
@@ -147,8 +147,6 @@ void JaminProcessor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBu
     juce::ScopedNoDenormals noDenormals;
     audio.clear();
 
-    blocksProcessed.fetch_add (1, std::memory_order_acq_rel);
-
     // Anything arriving stays in the stream -- a chord generator that swallowed
     // the keys under it would make the track unplayable -- and is copied out for
     // the editor's phrase capture on the way past.
@@ -166,8 +164,6 @@ void JaminProcessor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBu
         for (int i = 0; i < metadata.numBytes; ++i)
             slot.bytes[i] = metadata.data[i];
     }
-
-    const auto* sequence = live.load (std::memory_order_acquire);
 
     auto* playHead = getPlayHead();
     const auto position = playHead != nullptr ? playHead->getPosition() : juce::nullopt;
@@ -219,7 +215,10 @@ void JaminProcessor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBu
     wasPlaying = true;
     lastPpq = ppq;
 
-    if (sequence == nullptr || sequence->empty())
+    // Borrowed for the rest of the block. Null means either no song or a swap in
+    // flight, and there is nothing to do in either case.
+    const jamin::SequenceHolder::Read song { sequence };
+    if (! song || song.get()->empty())
         return;
 
     // A MIDI effect has no audio buffer to take a length from, so the host's
@@ -233,7 +232,7 @@ void JaminProcessor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBu
     const double ppqPerSample = bpm / (60.0 * currentSampleRate);
 
     scratch.clear();
-    jamin::SequencePlayer::collect (*sequence, ppq, ppqPerSample, numSamples, scratch);
+    jamin::SequencePlayer::collect (*song.get(), ppq, ppqPerSample, numSamples, scratch);
 
     for (const auto& event : scratch)
     {
@@ -258,22 +257,11 @@ void JaminProcessor::setSequence (std::unique_ptr<jamin::Sequence> next)
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
-    const auto* raw = next.get();
-    const auto* previous = live.exchange (raw, std::memory_order_acq_rel);
-
-    alive.push_back (std::move (next));
-
-    if (previous != nullptr)
-    {
-        const auto at = blocksProcessed.load (std::memory_order_acquire);
-        for (auto it = alive.begin(); it != alive.end(); ++it)
-            if (it->get() == previous)
-            {
-                retired.push_back ({ std::move (*it), at });
-                alive.erase (it);
-                break;
-            }
-    }
+    // The old sequence is destroyed here, on the message thread, once swap() has
+    // made it unreachable -- never on the audio thread and never while a reader
+    // could still be inside it.
+    const auto previous = sequence.swap (std::move (next));
+    juce::ignoreUnused (previous);
 }
 
 void JaminProcessor::requestCompile (const juce::String& requestJson)
@@ -302,14 +290,6 @@ void JaminProcessor::timerCallback()
         compiledEvents.store (0, std::memory_order_relaxed);
     }
 
-    // A sequence the audio thread might still be reading cannot be freed. Two
-    // whole blocks after the swap it certainly is not, because the pointer it
-    // loads at the top of a block is the new one. Freeing happens here rather
-    // than at the swap so nothing allocates or frees on the audio thread.
-    const auto now = blocksProcessed.load (std::memory_order_acquire);
-    retired.erase (std::remove_if (retired.begin(), retired.end(),
-                                   [now] (const Retired& r) { return now > r.atBlock + 2; }),
-                   retired.end());
 }
 
 void JaminProcessor::getStateInformation (juce::MemoryBlock& destination)

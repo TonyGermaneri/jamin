@@ -9,12 +9,62 @@
 
     Any crash here is the bug, reproduced, with no DAW in the way.
 
-      jamin-auhost [passes] [--no-view] [--seconds N]
+      jamin-auhost [passes] [--no-view] [--seconds N] [--render] [--midi N]
+
+    --render drives processBlock the way a host does: a rolling playhead and
+    real render calls. --midi additionally injects that many notes per second
+    of incoming MIDI, which is the case a track under jamin's control that is
+    also being played from a keyboard. That combination is what a DAW reported
+    crashing on, and it is the one auval never performs -- auval renders, but
+    it does not render with a transport and it does not send notes in.
 */
 #import <Cocoa/Cocoa.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <AudioUnit/AudioUnit.h>
 #import <AudioUnit/AUCocoaUIView.h>
+#import <CoreMIDI/CoreMIDI.h>
+
+/* What the plugin sent out. Counted rather than inspected: the point is that a
+   sequence really is being performed, so a run that emits nothing is a run that
+   proved nothing. */
+static int gEmitted = 0;
+
+static OSStatus midiOutput(void *userData, const AudioTimeStamp *timeStamp, UInt32 midiOutNum,
+                           const struct MIDIPacketList *packetList) {
+    (void) userData; (void) timeStamp; (void) midiOutNum;
+    if (!packetList) return noErr;
+    const MIDIPacket *packet = &packetList->packet[0];
+    for (UInt32 i = 0; i < packetList->numPackets; ++i) {
+        gEmitted += (int) packet->length;
+        packet = MIDIPacketNext(packet);
+    }
+    return noErr;
+}
+
+/* A playhead for the plugin to read: rolling, 120 bpm, 4/4. */
+static Float64 gBeat = 0.0;
+static Float64 gSampleTime = 0.0;
+static const Float64 kSampleRate = 48000.0;
+
+static OSStatus beatAndTempo(void *inHostUserData, Float64 *outCurrentBeat, Float64 *outCurrentTempo) {
+    (void) inHostUserData;
+    if (outCurrentBeat) *outCurrentBeat = gBeat;
+    if (outCurrentTempo) *outCurrentTempo = 120.0;
+    return noErr;
+}
+
+static OSStatus transportState(void *inHostUserData, Boolean *outIsPlaying, Boolean *outTransportStateChanged,
+                               Float64 *outCurrentSampleInTimeLine, Boolean *outIsCycling,
+                               Float64 *outCycleStartBeat, Float64 *outCycleEndBeat) {
+    (void) inHostUserData;
+    if (outIsPlaying) *outIsPlaying = true;
+    if (outTransportStateChanged) *outTransportStateChanged = false;
+    if (outCurrentSampleInTimeLine) *outCurrentSampleInTimeLine = gSampleTime;
+    if (outIsCycling) *outIsCycling = false;
+    if (outCycleStartBeat) *outCycleStartBeat = 0;
+    if (outCycleEndBeat) *outCycleEndBeat = 0;
+    return noErr;
+}
 
 static void spin(double seconds) {
     NSDate *until = [NSDate dateWithTimeIntervalSinceNow:seconds];
@@ -28,9 +78,13 @@ int main(int argc, const char **argv) {
         int passes = 3;
         double seconds = 3.0;
         BOOL withView = YES;
+        BOOL render = NO;
+        int notesPerSecond = 0;
         for (int i = 1; i < argc; ++i) {
             if (strcmp(argv[i], "--no-view") == 0) withView = NO;
+            else if (strcmp(argv[i], "--render") == 0) render = YES;
             else if (strcmp(argv[i], "--seconds") == 0 && i + 1 < argc) seconds = atof(argv[++i]);
+            else if (strcmp(argv[i], "--midi") == 0 && i + 1 < argc) { notesPerSecond = atoi(argv[++i]); render = YES; }
             else passes = atoi(argv[i]);
         }
 
@@ -104,8 +158,100 @@ int main(int argc, const char **argv) {
                 free(info);
             }
 
-            // Let it live: the page loads, the timers run, the compile happens.
-            spin(seconds);
+            if (render && withView) {
+                /* The page has to load and compile before there is a sequence to
+                   perform; without this the render loop would prove nothing. */
+                spin(4.0);
+            }
+
+            if (render) {
+                /* Set the stream format and hand the plugin a playhead, then
+                   render it the way a host does. */
+                AudioStreamBasicDescription format = {0};
+                format.mSampleRate = kSampleRate;
+                format.mFormatID = kAudioFormatLinearPCM;
+                format.mFormatFlags = kAudioFormatFlagsNativeFloatPacked | kAudioFormatFlagIsNonInterleaved;
+                format.mBytesPerPacket = 4; format.mFramesPerPacket = 1; format.mBytesPerFrame = 4;
+                format.mChannelsPerFrame = 2; format.mBitsPerChannel = 32;
+                AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0,
+                                     &format, sizeof(format));
+
+                AUMIDIOutputCallbackStruct midiOut = {0};
+                midiOut.midiOutputCallback = midiOutput;
+                midiOut.userData = NULL;
+                AudioUnitSetProperty(unit, kAudioUnitProperty_MIDIOutputCallback, kAudioUnitScope_Global, 0,
+                                     &midiOut, sizeof(midiOut));
+
+                HostCallbackInfo callbacks = {0};
+                callbacks.beatAndTempoProc = beatAndTempo;
+                callbacks.transportStateProc2 = NULL;
+                callbacks.transportStateProc = transportState;
+                AudioUnitSetProperty(unit, kAudioUnitProperty_HostCallbacks, kAudioUnitScope_Global, 0,
+                                     &callbacks, sizeof(callbacks));
+
+                const UInt32 frames = 512;
+                AudioUnitSetProperty(unit, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0,
+                                     &frames, sizeof(frames));
+                AudioUnitReset(unit, kAudioUnitScope_Global, 0);
+
+                float left[512], right[512];
+                AudioBufferList *list = calloc(1, sizeof(AudioBufferList) + sizeof(AudioBuffer));
+                list->mNumberBuffers = 2;
+                list->mBuffers[0].mNumberChannels = 1;
+                list->mBuffers[0].mDataByteSize = frames * 4;
+                list->mBuffers[0].mData = left;
+                list->mBuffers[1].mNumberChannels = 1;
+                list->mBuffers[1].mDataByteSize = frames * 4;
+                list->mBuffers[1].mData = right;
+
+                const int blocks = (int) (seconds * kSampleRate / frames);
+                const double notesPerBlock = notesPerSecond * (frames / kSampleRate);
+                double owed = 0;
+                int sent = 0, held = -1;
+
+                printf("render(%d blocks, %d notes/s) ", blocks, notesPerSecond); fflush(stdout);
+
+                for (int block = 0; block < blocks; ++block) {
+                    /* Incoming MIDI, as another device playing the same track. */
+                    owed += notesPerBlock;
+                    while (owed >= 1.0) {
+                        owed -= 1.0;
+                        if (held >= 0) { MusicDeviceMIDIEvent(unit, 0x80, (UInt32) held, 0, 0); held = -1; }
+                        const int note = 48 + (sent % 25);
+                        MusicDeviceMIDIEvent(unit, 0x90, (UInt32) note, 100, (UInt32) (sent % (int) frames));
+                        held = note;
+                        ++sent;
+                        /* An MPE controller sends a stream of these per note. */
+                        MusicDeviceMIDIEvent(unit, 0xE0, 0, 64, 0);
+                        MusicDeviceMIDIEvent(unit, 0xD0, 80, 0, 0);
+                    }
+
+                    AudioUnitRenderActionFlags flags = 0;
+                    AudioTimeStamp when = {0};
+                    when.mFlags = kAudioTimeStampSampleTimeValid;
+                    when.mSampleTime = gSampleTime;
+
+                    const OSStatus r = AudioUnitRender(unit, &flags, &when, 0, frames, list);
+                    if (r != noErr) { printf("\nFAIL AudioUnitRender -> %d\n", (int) r); return 1; }
+
+                    gSampleTime += frames;
+                    gBeat += (frames / kSampleRate) * (120.0 / 60.0);
+
+                    /* Let the message thread breathe: the compile lands there. */
+                    if ((block % 32) == 0) spin(0.001);
+                }
+                if (held >= 0) MusicDeviceMIDIEvent(unit, 0x80, (UInt32) held, 0, 0);
+                printf("in %d, out %d bytes ", sent, gEmitted); fflush(stdout);
+                if (withView && gEmitted == 0) {
+                    printf("\nFAIL the plugin emitted nothing -- nothing was under test\n");
+                    return 1;
+                }
+                gEmitted = 0;
+                free(list);
+            } else {
+                /* Let it live: the page loads, the timers run, the compile happens. */
+                spin(seconds);
+            }
 
             // And down, in the order a host does it: the view goes first, then
             // the instance.

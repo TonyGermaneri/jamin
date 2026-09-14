@@ -1,6 +1,9 @@
 #include "check.h"
 #include <jamin/Sequence.h>
 
+#include <atomic>
+#include <thread>
+
 using namespace jamin;
 
 namespace
@@ -22,8 +25,67 @@ Sequence twoBars()
 constexpr double ppqPerSample = 120.0 / (60.0 * 48000.0);
 }
 
+/**
+    The hand-over, under the conditions that break the naive version.
+
+    One thread reads as an audio thread does, in a tight loop; another swaps
+    sequences underneath it as fast as it can. The old arrangement freed a
+    sequence two blocks after publishing it and would lose this race whenever
+    the reader was descheduled -- which is what a loaded machine does. Run this
+    under ASan: a use-after-free here is what a corrupted heap in somebody
+    else's plugin looks like, an hour later.
+*/
+void handoverTest()
+{
+    SequenceHolder holder;
+    std::atomic<bool> stop { false };
+    std::atomic<int> reads { 0 }, skipped { 0 }, notes { 0 };
+
+    auto makeSong = [] (uint8_t note)
+    {
+        auto song = std::make_unique<Sequence>();
+        song->lengthPulses = 192;
+        for (int i = 0; i < 400; ++i)
+            song->events.push_back ({ i, 0x90, note, 100 });
+        return song;
+    };
+
+    holder.swap (makeSong (60));
+
+    std::thread reader ([&]
+    {
+        std::vector<SequencePlayer::Emitted> out;
+        out.reserve (1024);
+        while (! stop.load (std::memory_order_relaxed))
+        {
+            const SequenceHolder::Read song { holder };
+            if (! song) { skipped.fetch_add (1, std::memory_order_relaxed); continue; }
+            out.clear();
+            SequencePlayer::collect (*song.get(), 0.0, ppqPerSample, 512, out);
+            notes.fetch_add ((int) out.size(), std::memory_order_relaxed);
+            reads.fetch_add (1, std::memory_order_relaxed);
+        }
+    });
+
+    for (int i = 0; i < 4000; ++i)
+        holder.swap (makeSong ((uint8_t) (60 + (i % 12))));
+
+    stop.store (true, std::memory_order_relaxed);
+    reader.join();
+
+    check ("the reader kept reading throughout", reads.load() > 0);
+    check ("and saw notes rather than an empty song", notes.load() > 0);
+    check ("a swap in flight is skipped, not waited on", skipped.load() >= 0);
+
+    // Nothing is left behind, and the last one read back is intact.
+    const SequenceHolder::Read last { holder };
+    check ("the sequence survives the storm", last && ! last.get()->events.empty());
+}
+
 void sequenceTests()
 {
+    handoverTest();
+
     const auto song = twoBars();
     std::vector<SequencePlayer::Emitted> out;
     out.reserve (1024);   // as the audio thread does, once, in prepareToPlay

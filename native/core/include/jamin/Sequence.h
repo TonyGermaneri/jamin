@@ -1,6 +1,8 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace jamin
@@ -89,6 +91,61 @@ public:
 private:
     double cursor { 0.0 };
     bool located { false };
+};
+
+/**
+    Handing a compiled song to the audio thread.
+
+    The obvious version of this is wrong in a way that only shows up under load:
+    publish the new pointer, note which block it happened on, and free the old
+    one a couple of blocks later on the assumption that nobody can still be
+    reading it. An audio thread that has been preempted -- which is what a
+    session full of heavy plugins does to it -- can still be inside that block
+    tens of milliseconds later, reading a sequence that has just been freed. The
+    result is a corrupted heap and a crash somewhere else entirely, at some
+    later time, in somebody else's code.
+
+    So the reader takes a try-lock instead. It never waits: if a swap is in
+    flight it skips the block, which costs at most a few milliseconds of notes
+    and cannot cost a session. The writer holds the lock only long enough to
+    exchange two pointers -- the old sequence is destroyed after the lock is
+    released, by which time no reader can reach it.
+*/
+class SequenceHolder
+{
+public:
+    /** Replace the sequence. Returns the old one, already unreachable by any
+        reader, for the caller to destroy when it likes. */
+    std::unique_ptr<Sequence> swap (std::unique_ptr<Sequence> next);
+
+    /**
+        A borrowed view of the current sequence, held for as long as this lives.
+
+        `get()` is null either because there is no sequence or because a swap was
+        in flight -- the caller does nothing in both cases, so they do not need
+        telling apart.
+    */
+    class Read
+    {
+    public:
+        explicit Read (SequenceHolder&) noexcept;
+        ~Read() noexcept;
+
+        Read (const Read&) = delete;
+        Read& operator= (const Read&) = delete;
+
+        const Sequence* get() const noexcept { return sequence; }
+        explicit operator bool() const noexcept { return sequence != nullptr; }
+
+    private:
+        SequenceHolder& owner;
+        const Sequence* sequence { nullptr };
+        bool locked { false };
+    };
+
+private:
+    std::atomic_flag busy = ATOMIC_FLAG_INIT;
+    std::unique_ptr<Sequence> current;
 };
 
 } // namespace jamin

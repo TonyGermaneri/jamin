@@ -144,15 +144,9 @@ private:
 
     TransportView view;
 
-    // Sequence hand-over, without a lock on the audio thread. The message thread
-    // publishes a pointer and retires the old one; a retired sequence is not
-    // freed until the audio thread has been round at least twice since the swap,
-    // which is what makes the free safe without either side waiting.
-    std::atomic<const jamin::Sequence*> live { nullptr };
-    std::atomic<uint64_t> blocksProcessed { 0 };
-    struct Retired { std::unique_ptr<jamin::Sequence> seq; uint64_t atBlock; };
-    std::vector<Retired> retired;
-    std::vector<std::unique_ptr<jamin::Sequence>> alive;
+    // @see jamin::SequenceHolder for why this is a try-lock and not a pointer
+    // swap with a grace period.
+    jamin::SequenceHolder sequence;
 
     std::vector<jamin::SequencePlayer::Emitted> scratch;
     double currentSampleRate { 44100.0 };
