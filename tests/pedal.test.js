@@ -69,8 +69,10 @@ check('and on', player.pedalFor({ pedal: true }), true)
 check('no event at all falls back to the switch', player.pedalFor(null), false)
 
 /* ---------------- the order it comes out in ------------------------------- */
-// Everything the engine was asked to send, in order, so the sequence can be
-// read the way an instrument would receive it.
+// Stepped a pulse at a time, the way compile.js drives it and the way a real
+// playhead moves. Ticking only at the chord boundaries is what hid the fault
+// this section now pins down: the lift happens *between* chords, so a test that
+// never looks between chords cannot see whether it happened there.
 function record(text, pedal) {
   const sent = []
   const s = defaultSettings()
@@ -78,34 +80,44 @@ function record(text, pedal) {
   s.accompany.enabled = false
   s.accompany.pedal = pedal
   s.chords.mergeRepeats = false
+  let at = 0
   const engine = {
-    noteOn: (_o, ch, note) => (sent.push(`on ${note}`), true),
-    noteOff: (_o, ch, note) => sent.push(`off ${note}`),
-    controlChange: (_o, ch, cc, value) => (sent.push(`cc${cc} ${value}`), true),
+    noteOn: (_o, _c, note) => (sent.push({ at, what: `on ${note}` }), true),
+    noteOff: (_o, _c, note) => sent.push({ at, what: `off ${note}` }),
+    controlChange: (_o, _c, cc, value) => (sent.push({ at, what: `cc${cc} ${value}` }), true),
   }
   const p = new Player(engine, s)
-  p.setScore(parseScore(text, { beatsPerBar: 4 }))
-  p.tick(0)
-  p.tick(96)          // the second chord, one bar on
+  const score = parseScore(text, { beatsPerBar: 4 })
+  p.setScore(score)
+  for (at = 0; at < score.totalPulses; at++) p.tick(at)
   return sent
 }
 
 const off = record('C F', false)
-check('no pedal, no control changes', off.some((m) => m.startsWith('cc')), false)
+check('no pedal, no control changes', off.some((m) => m.what.startsWith('cc')), false)
 
 const on = record('C F', true)
-check('the pedal goes down once the chord is sounding', on[on.length - 1], 'cc64 127')
-check('it goes down again for the second chord', on.filter((m) => m === 'cc64 127').length, 2)
-check('and is lifted once in between', on.filter((m) => m === 'cc64 0').length, 1)
+const ccs = on.filter((m) => m.what.startsWith('cc64'))
+check('two chords, two presses and two lifts', ccs.length, 4)
+check('and they alternate, lift before press',
+      ccs.map((m) => m.what), ['cc64 127', 'cc64 0', 'cc64 127', 'cc64 0'])
 
-// The order at a chord change is what makes it a pedal: the old notes stop, the
-// pedal lifts so they actually stop, and only then does the new chord sound and
-// the pedal go back down. Lifting it after the new notes would sustain both.
-const lift = on.indexOf('cc64 0')
-const firstOn = on.indexOf('on ', lift)
-check('the lift precedes the new notes', lift < on.findIndex((m, i) => i > lift && m.startsWith('on ')), true)
-check('the press follows them', on.lastIndexOf('cc64 127') > on.findLastIndex((m) => m.startsWith('on ')), true)
-check('the old notes are released before the lift', on.findIndex((m) => m.startsWith('off ')) < lift, true)
+// The point of the whole thing. A lift and the press that follows it landing on
+// one pulse arrive at one sample offset, and an instrument reading a block in
+// order sees the lift undone before it can do anything -- so the chord sustains
+// straight through the change, which is the smear the pedal exists to avoid.
+const lift = ccs[1]
+const press = ccs[2]
+check('the lift comes before the chord change', lift.at, 95)
+check('the press comes at it', press.at, 96)
+check('so they are never on the same pulse', lift.at < press.at, true)
+
+// And the notes of the outgoing chord are still down when it lifts, so nothing
+// is heard to stop early -- the lift only damps what was already released.
+const offsAt96 = on.filter((m) => m.at === 96 && m.what.startsWith('off '))
+check('the outgoing notes are released at the change, not before', offsAt96.length > 0, true)
+check('nothing is released before the lift',
+      on.some((m) => m.at < lift.at && m.what.startsWith('off ')), false)
 
 // Stopping must lift it, or the chord rings under a stopped transport.
 ;(() => {

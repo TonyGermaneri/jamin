@@ -19,6 +19,24 @@ const mod = (n, m) => ((n % m) + m) % m
 /** CC 64. The sustain pedal, everywhere, since 1983. */
 const SUSTAIN = 64
 
+/**
+ * How far before the chord change the pedal comes up, in pulses.
+ *
+ * It cannot come up *at* the change. Everything at a chord boundary happens on
+ * one pulse, so the lift and the press that follows it land on the same sample
+ * offset -- and an instrument working through a block in order sees CC64 0
+ * immediately undone by CC64 127. The lift may as well not have been sent: the
+ * chord sustains straight through the change, which is the smear the pedal
+ * exists to avoid.
+ *
+ * One pulse is 1/24 of a quarter note -- about 20ms at 120bpm. Long enough to be
+ * a separate event at any tempo and any block size, short enough that nothing is
+ * heard to stop early. Nothing is, in fact: the notes of the outgoing chord are
+ * still keyed down at that point, so the lift only damps what has already been
+ * released, which is exactly what lifting a pedal does.
+ */
+const PEDAL_LIFT_PULSES = 1
+
 export class Player {
   constructor(engine, settings) {
     this.engine = engine
@@ -111,6 +129,12 @@ export class Player {
 
     this.local = position - event.startPulse
     this.flushPhrase(this.local)
+
+    // Up before the change, down again after it. @see PEDAL_LIFT_PULSES
+    if (this.pedalDown.length) {
+      const lift = Math.max(event.startPulse + 1, event.endPulse - PEDAL_LIFT_PULSES)
+      if (position >= lift) this.releasePedal()
+    }
   }
 
   /**

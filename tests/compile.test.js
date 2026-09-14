@@ -142,10 +142,24 @@ ok('the pedal is in the compiled sequence', ccs.length >= 3)
 check('as CC 64', [...new Set(ccs.map((e) => e[2]))], [64])
 check('down and up, nothing in between', [...new Set(ccs.map((e) => e[3]))].sort((a, b) => a - b), [0, 127])
 
-// The loop has to start clean: whatever was held at the end is released at the
-// front of the sequence, and that includes the pedal.
-check('the sequence opens by lifting it', ccs[0][3], 0)
-check('at pulse zero', ccs[0][0], 0)
+// Never two presses in a row, and never a lift on the same pulse as the press
+// that follows it -- they would reach the instrument at one sample offset and
+// the lift would be undone before it did anything.
+let previous = null
+let sameP = 0
+let doubled = 0
+for (const [pulse, , , value] of ccs) {
+  const down = value >= 64
+  if (previous && previous.down === down) doubled++
+  if (previous && !previous.down && down && previous.pulse === pulse) sameP++
+  previous = { pulse, down }
+}
+check('presses and lifts alternate', doubled, 0)
+check('and a lift never shares a pulse with the press after it', sameP, 0)
+
+// The last chord's pedal is lifted before the sequence ends, so a loop does not
+// begin with the previous pass still sustaining.
+check('the sequence ends lifted', ccs[ccs.length - 1][3], 0)
 
 const plain = compileSong({ text: '| C | F |', settings }).events
 check('and none of it when the switch is off', plain.filter(([, s]) => (s & 0xf0) === 0xb0).length, 0)
