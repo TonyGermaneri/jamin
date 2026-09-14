@@ -163,6 +163,8 @@ export class Player {
   transport(kind) {
     if (kind === 'stop') this.finishCapture(true)
     this.stopAll()
+    // Unlike a chord change, this really is the drums starting again.
+    this.drumCursor = 0
     this.current = null
     this.currentIndex = -1
     this.lastPosition = 0
@@ -493,8 +495,12 @@ export class Player {
     this.releasePedal()
     this.phraseQueue = []
     this.phraseCursor = 0
+    // The sounding notes go, but *not* the cursor. stopAll() runs on every
+    // chord change, and the drums do not answer to chords -- a groove runs
+    // across them and stops at a section. Resetting here replayed every hit in
+    // the song from the top at each new chord, which is as bad as it sounds.
+    // A real stop goes through transport(), which does reset it.
     this.stopDrums()
-    this.drumCursor = 0
     if (this.onNotes) this.onNotes([])
   }
 

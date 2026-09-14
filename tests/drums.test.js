@@ -263,4 +263,32 @@ check('and it knows what it is', reconcileBindings({}, [])[0].wholeSong, true)
 check('a repeated section is one row',
       reconcileBindings({}, parseScore('[A] C\n[B] F\n[A] G').sections).map((r) => r.name), ['A', 'B'])
 
+/* ---------------- the drums do not answer to chords ---------------------- */
+// A groove runs across chord changes and stops at a section, which is a
+// different clock. The player calls stopAll() on every chord change, and for a
+// while that reset the drum cursor too -- so every hit in the song replayed
+// from the top at each new chord. Three bars came out as six.
+;(() => {
+  const sent = []
+  const s = defaultSettings()
+  s.midi.chordOutputId = 'x'
+  s.midi.drumChannel = 9
+  const engine = {
+    noteOn: (_o, ch, note) => (ch === 9 && sent.push(`${note}`), true),
+    noteOff: () => true,
+    controlChange: () => true,
+  }
+  const p = new Player(engine, s)
+  p.getGroove = () => beat
+  p.getFill = () => null
+  const score = parseScore('[Verse] | C | F |\n[Chorus] | G |', { beatsPerBar: 4 })
+  p.setScore(score)
+  for (let pulse = 0; pulse < score.totalPulses; pulse++) p.tick(pulse)
+
+  // One bar of groove over three bars of chart: three kicks and three snares,
+  // and a chord change in the middle of it that must not restart anything.
+  check('a chord change does not rewind the drums', sent.length, 6)
+  check('and the hits are the groove, once per bar', sent.join(' '), '36 38 36 38 36 38')
+})()
+
 console.log(failed ? `drums: ${failed} FAILED` : 'drums: all checks passed')

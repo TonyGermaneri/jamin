@@ -37,7 +37,10 @@ juce::String settingsJson()
     return R"({
         "version": 5,
         "midi": { "chordOutputId": "x", "chordChannel": 0, "accompChannel": 1,
-                  "bassChannel": 0, "accompOutputId": "", "bassOutputId": "", "velocity": 90 },
+                  "bassChannel": 0, "accompOutputId": "", "bassOutputId": "",
+                  "drumOutputId": "", "drumChannel": 9, "velocity": 90 },
+        "drums": { "enabled": true, "kit": "gm", "customMap": {},
+                   "fillOnEveryBoundary": true },
         "transport": { "beatsPerBar": 4, "loop": true, "latencyPulses": 0 },
         "chords": { "octave": 4, "rangeLow": 48, "rangeHigh": 84, "smartVoicing": true,
                     "maxVoices": 5, "mergeRepeats": true,
@@ -143,6 +146,50 @@ int main (int argc, char** argv)
         if (count != 0)
             ++hanging;
     check ("nothing is left sounding at the end of a pass", hanging == 0, juce::String (hanging));
+
+    // The drums, through this engine. A groove is supplied inline rather than
+    // read from the catalogue: the point is that the compiler turns a section
+    // and a binding into notes on the drum channel, not that a 1.3MB file can
+    // be loaded -- and a plugin has no fetch to load it with anyway.
+    {
+        const juce::String groove =
+            R"({"id":"gTest","name":"test","kind":"beat","bars":1,"lengthPulses":96,)"
+            R"("notes":[{"at":0,"note":36,"duration":6,"velocity":110},)"
+            R"({"at":48,"note":38,"duration":6,"velocity":100}]})";
+
+        const auto request =
+            R"({"text":"[Verse] | C | F |\n[Chorus] | G |",)"
+            R"("grooves":{"gTest":)" + groove + "},"
+            R"("drumBindings":{"Verse":{"groove":"gTest"},"Chorus":{"groove":"gTest"}},)"
+            R"("settings":)" + settingsJson() + "}";
+
+        const auto drummed = compiler.compile (request);
+        check ("a chart with drums compiles", drummed != nullptr, compiler.lastError);
+
+        if (drummed != nullptr)
+        {
+            int onChannel10 = 0, kicks = 0, snares = 0;
+            for (const auto& e : drummed->events)
+            {
+                if ((e.status & 0x0f) != 9 || (e.status & 0xf0) != 0x90 || e.data2 == 0)
+                    continue;
+                ++onChannel10;
+                if (e.data1 == 36) ++kicks;
+                if (e.data1 == 38) ++snares;
+            }
+
+            // Three bars of chart, one bar of groove, so three of each -- and on
+            // channel 10, where every drum machine since 1991 listens.
+            check ("the drums reached channel 10", onChannel10 == 6, juce::String (onChannel10));
+            check ("a kick in every bar", kicks == 3, juce::String (kicks));
+            check ("and a snare in every bar", snares == 3, juce::String (snares));
+
+            // General MIDI is the default kit, and 36/38 are 36/38 there -- so
+            // this also says the kit translation ran rather than being skipped.
+            check ("nothing landed on a pitch no kit asked for",
+                   onChannel10 == kicks + snares);
+        }
+    }
 
     // The sustain pedal, through this engine rather than through the browser's.
     // `[p]` is in the chart rather than the settings deliberately: it proves the
