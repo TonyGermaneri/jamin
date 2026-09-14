@@ -35,8 +35,43 @@ def walk():
                 if name.endswith((".js", ".vue")):
                     yield os.path.join(dirpath, name)
 
+ICON = re.compile(r"mdi-[a-z0-9]+(?:-[a-z0-9]+)*")
+FONT_CSS = os.path.join(ROOT, "node_modules", "@mdi", "font", "css", "materialdesignicons.css")
+
+
+def known_icons():
+    """Every icon class the bundled font actually defines.
+
+    An icon that does not exist does not fail, warn or fall back -- it renders
+    as nothing at all. A toolbar button with no glyph is an invisible button,
+    which is how `mdi-drum` shipped: the markup was right, the icon was not in
+    Material Design Icons, and the drum book had no way in.
+    """
+    try:
+        with open(FONT_CSS, encoding="utf-8") as handle:
+            return set(re.findall(r"^\.(mdi-[a-z0-9-]+)::before", handle.read(), re.M))
+    except OSError:
+        return None
+
+
 def main():
     failures = 0
+
+    icons = known_icons()
+    if icons is None:
+        print("     (no @mdi/font installed; skipping the icon check)")
+    else:
+        for path in sorted(walk()):
+            relative = os.path.relpath(path, ROOT)
+            with open(path, encoding="utf-8") as handle:
+                for number, line in enumerate(handle, 1):
+                    for name in ICON.findall(line):
+                        if name in icons:
+                            continue
+                        failures += 1
+                        print(f"FAIL {relative}:{number}: {name} is not in @mdi/font")
+                        print("     An icon that does not exist renders as nothing, so the")
+                        print("     control it belongs to is invisible rather than wrong.")
 
     for path in sorted(walk()):
         relative = os.path.relpath(path, ROOT)

@@ -172,7 +172,7 @@ function toggleArm() {
         />
         <v-btn icon="mdi-book-music-outline" size="small" variant="text" title="Phrase book" @click="state.ui.phrases = true" />
         <v-btn icon="mdi-bookshelf" size="small" variant="text" title="Progression library" @click="state.ui.progressions = true" />
-        <v-btn icon="mdi-drum" size="small" variant="text" title="Drum book" @click="state.ui.drums = true" />
+        <v-btn icon="mdi-circle-multiple-outline" size="small" variant="text" title="Drum book" @click="state.ui.drums = true" />
         <v-btn icon="mdi-cog-outline" size="small" variant="text" title="Settings" @click="state.ui.settings = true" />
         <v-btn icon="mdi-volume-off" size="small" variant="text" title="All notes off" @click="panic" />
         <v-tooltip :text="midiHint" location="bottom">

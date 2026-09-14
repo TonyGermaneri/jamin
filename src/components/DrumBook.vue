@@ -170,7 +170,7 @@ function resetMap() {
   <v-dialog v-model="state.ui.drums" max-width="900" scrollable class="jamin-book">
     <v-card>
       <v-card-title class="d-flex align-center">
-        <v-icon size="18" class="mr-2">mdi-drum</v-icon>
+        <v-icon size="18" class="mr-2">mdi-circle-multiple-outline</v-icon>
         <span class="text-body-1">Drum book</span>
         <v-spacer />
         <span v-if="waiting" class="text-caption text-warning mr-3">
@@ -250,7 +250,7 @@ function resetMap() {
                   >
                     <template #prepend>
                       <v-icon size="16" :color="groove.kind === 'fill' ? 'warning' : undefined">
-                        {{ groove.kind === 'fill' ? 'mdi-flash-outline' : 'mdi-drum' }}
+                        {{ groove.kind === 'fill' ? 'mdi-flash-outline' : 'mdi-circle-multiple-outline' }}
                       </v-icon>
                     </template>
                     <v-list-item-title class="text-body-2">{{ groove.name }}</v-list-item-title>
