@@ -10,6 +10,7 @@ ROOT = os.path.dirname(HERE)
 SUITES = [
     (["src/core/chordParser.js"], "tests/chords.test.js"),
     (["src/core/chordParser.js", "src/core/score.js"], "tests/score.test.js"),
+    (["src/core/chordParser.js", "src/core/score.js"], "tests/sections.test.js"),
     (["src/core/chordParser.js", "src/core/voiceLeading.js", "src/core/voicing.js"], "tests/voicing.test.js"),
     (["src/canvas/layout.js", "src/core/chordParser.js", "src/core/score.js"], "tests/layout.test.js"),
     ([

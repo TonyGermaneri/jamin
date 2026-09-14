@@ -57,6 +57,20 @@ export function parseScore(text, opts = {}) {
   let pulse = 0
   let repeatFrom = null
 
+  // The section the chart is in, and where it started. A label is no longer
+  // only something to read: a section runs from its own label to the next one,
+  // which is what lets a groove be bound to "the chorus" rather than to a bar
+  // number that moves the moment anybody edits anything.
+  let section = null
+  let sectionAt = 0
+  let sectionIndex = -1
+  const sections = []
+
+  // What the drums are doing, and from where. Same three states as the pedal:
+  // null is "the chart has not said", so the binding in the drum book decides.
+  let drums = null
+  let noFill = false
+
   // null means nothing in the chart has said either way, so the switch in the
   // settings decides. Kept as three states rather than seeded from the setting
   // so that turning the switch on takes effect immediately, on a chart that was
@@ -75,12 +89,42 @@ export function parseScore(text, opts = {}) {
 
     for (const group of splitBars(lineText, lineStart, useBarlines)) {
       if (group.type === 'label') {
-        const mark = pedalMark(group.text)
-        const token = makeToken(group, lineIndex, mark ? 'pedal' : 'label')
-        if (mark) {
-          pedal = mark === 'down'
+        const pedalling = pedalMark(group.text)
+        const drumming = pedalling ? null : drumMark(group.text)
+        const kind = pedalling ? 'pedal' : drumming ? 'drum' : 'label'
+        const token = makeToken(group, lineIndex, kind)
+
+        if (pedalling) {
+          pedal = pedalling === 'down'
           token.pedal = pedal
+        } else if (drumming) {
+          token.drum = drumming
+          if (drumming.kind === 'off') { drums = null; noFill = true }
+          else if (drumming.kind === 'nofill') noFill = true
+          else if (drumming.kind === 'fill') noFill = false
+          else { drums = drumming.name; noFill = false }
+        } else {
+          // An ordinary bracket is a section: [Intro], [Verse 1], [Chorus].
+          // Named rather than lettered, because a name is what somebody in the
+          // room says. @see docs/drums.md
+          section = group.text.slice(1, -1).trim()
+          sectionAt = pulse
+          sectionIndex = sections.length
+          sections.push({
+            index: sectionIndex,
+            name: section,
+            startPulse: pulse,
+            endPulse: pulse,
+            firstEvent: events.length,
+            lastEvent: events.length,
+            token: tokens.length,
+          })
+          // A new section takes the drums the chart last asked for, not the
+          // previous section's override -- an override is for where it is
+          // written, and the section is a fresh page.
+          noFill = false
         }
+
         tokens.push(token)
         line.tokens.push(tokens.length - 1)
         continue
@@ -184,6 +228,12 @@ export function parseScore(text, opts = {}) {
             phraseId: null,
             // true, false, or null for "the chart did not say". @see pedalMark
             pedal,
+            // Which section this chord is in, and what the chart said about
+            // drums at this point. @see drumMark
+            section: sectionIndex,
+            sectionName: section,
+            drums,
+            noFill,
             valid: token.type === 'chord',
           }
           events.push(event)
@@ -206,12 +256,14 @@ export function parseScore(text, opts = {}) {
   }
 
   resolvePhraseSections(events, opts)
+  closeSections(sections, events, pulse)
 
   return {
     text: src,
     tokens,
     lines,
     events,
+    sections,
     beatsPerBar,
     pulsesPerBar,
     barlines: useBarlines,
@@ -238,6 +290,37 @@ const HOLD = /^(\/+|%+|x)$/i
  */
 const PEDAL_DOWN = /^\[\s*p\.?\s*\]$/i
 const PEDAL_UP = /^\[\s*n\.?\s*p\.?\s*\]$/i
+
+/**
+ * The drum marks: `[d:name]`.
+ *
+ * Drums are articulations like any other, so they are named the same way -- and
+ * they go in brackets because that is already how this notation says "not a
+ * chord", alongside the section labels they sit next to and the pedal marks.
+ *
+ *   [d:halftime]   play this groove from here
+ *   [d:nofill]     no fill into the next section
+ *   [d:none]       drums out
+ *
+ * A name rather than a catalogue number. `[d:g1841]` would be unreadable, would
+ * not survive the catalogue changing, and could not be typed by somebody who
+ * had not just looked it up -- which is the same objection that keeps phrase
+ * references to names.
+ */
+const DRUM_MARK = /^\[\s*d\s*:\s*([^\]]*?)\s*\]$/i
+
+/** What a `[d:...]` says, or null for a bracket that is not one. */
+export function drumMark(text) {
+  const found = DRUM_MARK.exec(String(text || '').trim())
+  if (!found) return null
+
+  const body = found[1].toLowerCase()
+  if (!body) return null
+  if (body === 'none' || body === 'off' || body === 'out') return { kind: 'off' }
+  if (body === 'nofill') return { kind: 'nofill' }
+  if (body === 'fill') return { kind: 'fill' }
+  return { kind: 'groove', name: found[1] }
+}
 
 /** 'down', 'up', or null for a bracket that is an ordinary section label. */
 export function pedalMark(text) {
@@ -412,6 +495,27 @@ function closeRepeat(events, from, endPulse, times, pulsesPerBar, token) {
     }
   }
   return from.pulse + span * times
+}
+
+/**
+ * Give every section its end, and the events it holds.
+ *
+ * A section runs to wherever the next one starts, and the last runs to the end
+ * of the chart. Sections are spans rather than points because that is what a
+ * groove needs: "play this for the chorus" is a question about how long the
+ * chorus is, and a fill going into the next section is a question about where
+ * this one stops.
+ */
+function closeSections(sections, events, totalPulses) {
+  for (let i = 0; i < sections.length; i++) {
+    const section = sections[i]
+    const next = sections[i + 1]
+
+    section.endPulse = next ? next.startPulse : totalPulses
+    section.lastEvent = next ? next.firstEvent - 1 : events.length - 1
+    section.bars = section.endPulse - section.startPulse
+    section.empty = section.lastEvent < section.firstEvent
+  }
 }
 
 /** Split `total` pulses into `count` near-equal integer slices. */
