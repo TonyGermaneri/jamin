@@ -201,9 +201,18 @@ and a DAW will.
 **Phase N0 — the document. *Done; see `src/core/crdt.js`.*** Edits that converge, with the
 property tested rather than asserted.
 
-**Phase N1 — discovery.** A multicast beacon carrying name, port and instance id; a peer table
-that ages entries out. Nothing depends on it yet, so it can be watched with `tcpdump` before
-anything trusts it.
+**Phase N1 — discovery. *Done; see `native/core/src/Discovery.cpp`.*** A beacon every two
+seconds carrying id, name and port; a peer table that ages an entry out after three missed ones.
+No registry, no first machine that has to be started before the others, and nothing to type.
+
+The address a peer is reachable at is taken from the **packet**, not from what the packet says: a
+sender does not always know which of its interfaces something left by, and cannot know how it
+looks from here. The receiving socket does.
+
+Several nodes share a machine as the normal case -- a DAW with jamin on four tracks is four
+nodes -- so the socket is shareable and a node ignores its own beacon by id. That case is tested
+rather than assumed, along with a third node arriving, one leaving and being forgotten, and a
+node with no id being refused rather than started.
 
 **Phase N2 — the endpoint.** HTTP in the plugin: the built page, `GET /events` as a stream, `POST
 /ops`, `GET /peers`. Same files the editor already serves, so there is one page.

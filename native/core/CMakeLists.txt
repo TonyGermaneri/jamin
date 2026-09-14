@@ -5,7 +5,8 @@
 # a second front end.
 add_library(jamin_core STATIC
     src/Sequence.cpp
-    src/SongBus.cpp)
+    src/SongBus.cpp
+    src/Discovery.cpp)
 
 target_include_directories(jamin_core PUBLIC include)
 target_compile_features(jamin_core PUBLIC cxx_std_20)
