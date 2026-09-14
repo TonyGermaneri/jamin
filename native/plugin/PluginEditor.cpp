@@ -113,8 +113,10 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                            // Switch it on or off, and say where it ended up: the
                            // page shows the address so somebody can open it on
                            // their phone without being told what it is.
-                           if (! args.isEmpty())
-                               plugin.setNetworking (static_cast<bool> (args[0]));
+                           if (args.size() >= 2)
+                               plugin.setNetworking (static_cast<bool> (args[0]), args[1].toString());
+                           else if (! args.isEmpty())
+                               plugin.setNetworking (static_cast<bool> (args[0]), plugin.networkSecret);
 
                            auto* state = new juce::DynamicObject();
                            state->setProperty ("running", plugin.isNetworking());

@@ -123,6 +123,10 @@ export function defaultSettings() {
       // anyone who can reach it can edit the chart, which the settings say
       // plainly rather than leaving to be found out.
       enabled: true,
+      // Blank means not yet configured, not "anybody may join": nothing is
+      // shared until somebody chooses a word. A chart every machine on the
+      // network can edit by default is not a decision to make for people.
+      secret: '',
     },
   }
 }

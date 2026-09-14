@@ -9,6 +9,7 @@ import { THEMES, SHADER_DEFAULTS } from '../core/themes.js'
 import { loadChordDictionary, searchChords } from '../core/chordDictionary.js'
 import { pcName } from '../core/chordParser.js'
 
+const showSecret = ref(false)
 const inputs = computed(() => [
   { title: 'None', value: '' },
   { title: 'Any input', value: '__any__' },
@@ -97,19 +98,43 @@ async function retryMidi() {
               class="mb-2"
               label="Share this chart with other machines on the network"
             />
+            <v-text-field
+              v-model="state.settings.network.secret"
+              label="Shared word"
+              placeholder="pick one, and use the same on every machine"
+              density="compact"
+              hide-details
+              class="mb-2"
+              :append-inner-icon="showSecret ? 'mdi-eye-off' : 'mdi-eye'"
+              :type="showSecret ? 'text' : 'password'"
+              autocomplete="off"
+              @click:append-inner="showSecret = !showSecret"
+            />
             <div class="text-caption text-medium-emphasis mb-4">
-              Every machine running jamin here finds the others on its own, and they all hold the
-              same chart — type on any of them. Open
-              <code v-if="state.net.address">{{ state.net.address }}</code>
-              <code v-else>http://&lt;this machine&gt;.local:7777</code>
-              on a phone or a laptop and that is jamin too.
-              <strong>Anyone who can reach it can edit the chart; there is no password.</strong>
-              Turning this off closes the port. Changing it takes effect next time the plugin
+              <strong v-if="!state.settings.network.secret" class="text-warning">
+                Nothing is shared until you choose a word.
+              </strong>
+              <template v-else>
+                Every machine running jamin here finds the others on its own, and the ones that
+                know this word hold the same chart — type on any of them. Open
+                <code v-if="state.net.address">{{ state.net.address }}</code>
+                <code v-else>http://&lt;this machine&gt;.local:7777</code>
+                on a phone or a laptop and that is jamin too.
+              </template>
+              It travels in the clear on your own network, so pick a word you would say out loud
+              rather than one you use anywhere else. Changing it takes effect next time the plugin
               loads.
             </div>
 
             <v-alert
-              v-if="state.net.state !== 'offline'"
+              v-if="state.net.state === 'refused'"
+              type="error" variant="tonal" density="compact" class="mb-4"
+            >
+              That word was refused. Every machine sharing a chart has to use the same one.
+            </v-alert>
+
+            <v-alert
+              v-if="state.net.state !== 'offline' && state.net.state !== 'refused'"
               :type="state.net.peers.length ? 'success' : 'info'"
               variant="tonal" density="compact" class="mb-4"
             >
@@ -129,7 +154,7 @@ async function retryMidi() {
                 </tr>
               </table>
               <div class="text-caption mt-2 text-medium-emphasis">
-                Anyone who can reach this machine can edit the chart. There is no password.
+                Anyone on this network who knows the word can edit the chart.
               </div>
             </v-alert>
 

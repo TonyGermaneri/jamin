@@ -26,6 +26,7 @@ Node::Options options (const char* id)
     Node::Options out;
     out.id = id;
     out.name = id;
+    out.secret = "test-word";
     out.onNetwork = true;          // peers reach each other by address, not loopback
     out.group = "239.77.65.201";
     out.groupPort = 20000 + (int) (::getpid() % 20000);
@@ -94,6 +95,15 @@ void nodeTests()
     const auto steady = heardByOne.size();
     one.submit ("");
     check ("an empty envelope does nothing", heardByOne.size(), steady);
+
+    /* ---------------- and no word, no node ---------------- */
+    {
+        Node shut;
+        auto bare = options ("shut");
+        bare.secret.clear();
+        check ("a node with no password refuses to start", shut.start (bare), false);
+        check ("and is not running", shut.isRunning(), false);
+    }
 
     one.stop();
     two.stop();

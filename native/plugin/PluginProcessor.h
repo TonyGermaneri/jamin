@@ -131,8 +131,13 @@ public:
     */
     jamin::Node network;
 
-    /** Start or stop networking. Returns whether it is running afterwards. */
-    bool setNetworking (bool shouldRun);
+    /** What the page last told us. Kept so a changed word restarts the node
+        rather than leaving the old one running. Never logged. */
+    juce::String networkSecret;
+
+    /** Start or stop networking. Returns whether it is running afterwards; a
+        blank word is a refusal rather than an invitation. */
+    bool setNetworking (bool shouldRun, const juce::String& secret);
     bool isNetworking() const { return network.isRunning(); }
 
     /** An edit that arrived from another machine, waiting for the editor. */

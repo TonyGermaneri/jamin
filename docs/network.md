@@ -177,17 +177,34 @@ solving something nobody asked for. What is shared is the document.
 
 ---
 
-## No authentication, and what that means
+## One shared word
 
-Asked for, and worth stating plainly rather than burying: **anyone who can reach the port can
-change the chart.** There is no password, no pairing, no confirmation. On a studio network that
-is the point — a phone, a laptop and three machines all editing the same chart with nothing to
-set up.
+Every machine sharing a chart agrees on one word, and it is **blank to begin with**, which means
+nothing is shared at all. Blank is not "anybody may join" — it is "not configured". A node with
+no word **refuses to start**, so a chart that everybody on the network can edit is never the
+default, and never something that happens because a feature compiled.
 
-It also means this does not belong on a network you do not control. The mitigations that cost
-nothing are worth taking anyway: bind to the local network rather than every interface, a
-multicast TTL of 1 so discovery cannot leave the subnet, and a plugin that does not open the port
-at all until networking is switched on.
+What it protects, and what it does not:
+
+| | |
+| --- | --- |
+| The page | served to anybody. A browser has to load something before it can be asked for a word, and an application shell is not a secret. |
+| `/doc`, `/peers`, `/ops`, `/events` | behind the word. The chart is what is behind the door. |
+| The word itself | sent in the clear, over HTTP, on your own network. |
+
+That last row is the honest one. This is a latch, not a lock: it stops the machine in the next
+room from joining by accident and stops somebody idle from wandering in, which is the threat
+worth spending anything on here. It does not survive somebody watching the wire, so the word
+should be one you would say out loud rather than one you use anywhere else — the settings say so
+where somebody will read it.
+
+Carried as an `X-Jamin-Key` header, except on the stream: `EventSource` cannot set headers at
+all, so `/events` takes it in the query. Compared without giving away how far the comparison got,
+which is cheap and the right habit.
+
+The rest costs nothing and is worth having anyway: bound to the local network rather than every
+interface, a multicast time-to-live of 1 so discovery cannot leave the subnet, and a plugin that
+opens no port until there is a word to open it with.
 
 macOS will ask the **host** application — Live, Logic — for Local Network permission the first
 time, because permission belongs to the application and not to the plugin inside it. A command

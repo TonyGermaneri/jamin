@@ -55,6 +55,19 @@ public:
         /// Bound to the loopback only unless this is set. Opening a port to the
         /// network is the sort of thing that should be asked for.
         bool onNetwork { false };
+
+        /**
+            The shared word, without which nothing is served but the page itself.
+
+            Empty is not "no password", it is "not yet configured": start()
+            refuses, because a chart that anybody on the network can edit by
+            default is not a decision to make on somebody's behalf.
+
+            The page is served without it -- an application shell is not a
+            secret, and a browser has to load something before it can be asked
+            for anything. The chart is what is behind the door.
+        */
+        std::string secret;
     };
 
     bool start (Options options);
@@ -110,6 +123,9 @@ private:
 /** The content type for a file name, for the handful jamin actually serves. */
 std::string mimeFor (const std::string& path);
 
+/** Compares without giving away how far it got. Cheap, and the right habit. */
+bool sameSecret (const std::string& a, const std::string& b);
+
 /**
     Hand a body to another node.
 
@@ -118,6 +134,6 @@ std::string mimeFor (const std::string& path);
     next beacon will say so. Returns whether the bytes were accepted.
 */
 bool postTo (const std::string& host, int port, const std::string& path,
-             const std::string& body, int timeoutMs = 1500);
+             const std::string& body, const std::string& secret = {}, int timeoutMs = 1500);
 
 } // namespace jamin

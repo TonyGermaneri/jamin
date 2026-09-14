@@ -47,6 +47,10 @@ public:
         int port { 0 };                 ///< 0 for any free one
         bool onNetwork { false };       ///< bind beyond the loopback
 
+        /// The word every machine sharing this chart has to agree on. Empty
+        /// refuses to start: there is no "anybody may join" setting.
+        std::string secret;
+
         /// Overridden by the tests so a suite cannot mistake a real jamin on the
         /// network for one of its own.
         std::string group { "239.77.65.74" };
@@ -92,6 +96,8 @@ private:
 
     Endpoint endpoint;
     Discovery discovery;
+
+    std::string secret;
 
     mutable std::mutex lock;
     std::set<std::string> seen;

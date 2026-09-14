@@ -42,6 +42,7 @@ bool Node::start (Options options)
 {
     stop();
     lastError.clear();
+    secret = options.secret;
 
     endpoint.onOps = [this] (const std::string& body) { submit (body); };
     endpoint.peersJson = [this] { return peersJson(); };
@@ -51,6 +52,7 @@ bool Node::start (Options options)
     served.port = options.port;
     served.files = options.files;
     served.onNetwork = options.onNetwork;
+    served.secret = options.secret;
 
     if (! endpoint.start (served))
     {
@@ -125,7 +127,7 @@ void Node::submit (const std::string& envelope)
     // And so does every other machine. The duplicate check above is what makes
     // that a relay rather than a broadcast storm.
     for (const auto& peer : discovery.peers())
-        postTo (peer.host, peer.port, "/ops", envelope);
+        postTo (peer.host, peer.port, "/ops", envelope, secret);
 }
 
 std::string Node::peersJson() const

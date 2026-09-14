@@ -61,11 +61,14 @@ struct Client
     ~Client() { close(); }
 };
 
-std::string get (int port, const std::string& path, int milliseconds = 500)
+std::string get (int port, const std::string& path, int milliseconds = 500,
+                 const char* key = "open-sesame")
 {
     Client client;
     if (! client.open (port)) return {};
-    client.send ("GET " + path + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    client.send ("GET " + path + " HTTP/1.1\r\nHost: localhost\r\n"
+                 + (key ? "X-Jamin-Key: " + std::string (key) + "\r\n" : "")
+                 + "Connection: close\r\n\r\n");
     return client.readFor (milliseconds);
 }
 
@@ -89,6 +92,7 @@ void endpointTests()
 
     Endpoint::Options options;
     options.files = dir;
+    options.secret = "open-sesame";
     check ("it starts", endpoint.start (options), true);
     if (! endpoint.isRunning())
     {
@@ -126,6 +130,7 @@ void endpointTests()
         check ("a client can connect", poster.open (port), true);
         const std::string body = R"({"ops":[{"t":"ins"}]})";
         poster.send ("POST /ops HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n"
+                     "X-Jamin-Key: open-sesame\r\n"
                      "Content-Length: " + std::to_string (body.size()) + "\r\nConnection: close\r\n\r\n" + body);
         const auto answer = poster.readFor (500);
         check ("posting an edit is accepted", contains (answer, "200 OK"));
@@ -136,7 +141,9 @@ void endpointTests()
     {
         Client stream;
         check ("a stream opens", stream.open (port), true);
-        stream.send ("GET /events HTTP/1.1\r\nHost: localhost\r\nAccept: text/event-stream\r\n\r\n");
+        // Through the query, as EventSource must: it cannot set a header.
+        stream.send ("GET /events?k=open-sesame HTTP/1.1\r\nHost: localhost\r\n"
+                     "Accept: text/event-stream\r\n\r\n");
 
         const auto head = stream.readFor (400);
         check ("it is an event stream", contains (head, "text/event-stream"));
@@ -173,14 +180,52 @@ void endpointTests()
     {
         Client a, b;
         a.open (port); b.open (port);
-        a.send ("GET /events HTTP/1.1\r\nHost: localhost\r\n\r\n");
-        b.send ("GET /events HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        a.send ("GET /events?k=open-sesame HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        b.send ("GET /events?k=open-sesame HTTP/1.1\r\nHost: localhost\r\n\r\n");
         a.readFor (200); b.readFor (200);
 
         endpoint.broadcast ("ops", R"({"n":2})");
         check ("everybody listening gets it",
                contains (a.readFor (400), R"({"n":2})") && contains (b.readFor (400), R"({"n":2})"));
     }
+
+    /* ---------------- the door ---------------- */
+    // The page is for anybody: a browser has to load something before it can be
+    // asked for a password, and an application shell is not a secret.
+    check ("the page needs no password", contains (get (port, "/", 500, nullptr), "<title>jamin>"
+           ) || contains (get (port, "/", 500, nullptr), "200 OK"));
+
+    // The chart is not.
+    check ("the chart does not open to nobody", contains (get (port, "/doc", 500, nullptr), "401"));
+    check ("nor to the wrong word", contains (get (port, "/doc", 500, "guess"), "401"));
+    check ("nor does the peer list", contains (get (port, "/peers", 500, nullptr), "401"));
+    check ("nor the stream", contains (get (port, "/events", 400, nullptr), "401"));
+    check ("and the right word opens it", contains (get (port, "/doc"), "200 OK"));
+
+    {
+        Client sneak;
+        sneak.open (port);
+        const std::string body = R"({"m":"x","ops":[]})";
+        sneak.send ("POST /ops HTTP/1.1\r\nHost: localhost\r\n"
+                    "Content-Length: " + std::to_string (body.size()) + "\r\nConnection: close\r\n\r\n" + body);
+        check ("an edit without the word is refused", contains (sneak.readFor (400), "401"));
+    }
+
+    /* ---------------- a node with no word does not start ---------------- */
+    {
+        Endpoint shut;
+        Endpoint::Options noSecret;
+        noSecret.files = dir;
+        check ("no password means no sharing at all", shut.start (noSecret), false);
+        check ("and it says so", ! shut.lastError.empty(), shut.lastError);
+        check ("and nothing is listening", shut.isRunning(), false);
+    }
+
+    /* ---------------- comparing ---------------- */
+    check ("the same word matches", sameSecret ("hunter2", "hunter2"));
+    check ("a different one does not", ! sameSecret ("hunter2", "hunter3"));
+    check ("nor a prefix of it", ! sameSecret ("hunter", "hunter2"));
+    check ("nor empty against anything", ! sameSecret ("", "hunter2"));
 
     /* ---------------- stopping ---------------- */
     endpoint.stop();

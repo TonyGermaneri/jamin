@@ -22,6 +22,10 @@ from playwright.sync_api import sync_playwright
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Every machine sharing a chart agrees on one word. The pages are told it the
+# same way a person would tell them: through the setting.
+SECRET = "rehearsal-room"
+
 results = []
 
 
@@ -65,7 +69,8 @@ def main():
     nodes = []
     for port, name in zip(ports, ("alpha", "beta")):
         nodes.append(subprocess.Popen(
-            [args.node, "--port", str(port), "--files", args.files, "--name", name, "--network", "--quiet"],
+            [args.node, "--port", str(port), "--files", args.files, "--name", name,
+             "--secret", SECRET, "--network", "--quiet"],
             stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT))
 
     try:
@@ -85,6 +90,14 @@ def main():
             for page, who in ((a, "alpha"), (b, "beta")):
                 page.on("pageerror", lambda e, who=who: errors.append(f"{who}: {e}"))
 
+            # Set before the app boots, because it reads the setting on the way up.
+            for context, port in ((one, ports[0]), (two, ports[1])):
+                context.add_init_script(
+                    "try { const k = 'jamin.settings.v1';"
+                    " const s = JSON.parse(localStorage.getItem(k) || '{}');"
+                    " s.network = Object.assign({}, s.network, { enabled: true, secret: '%s' });"
+                    " localStorage.setItem(k, JSON.stringify(s)); } catch (e) {}" % SECRET)
+
             a.goto(f"http://127.0.0.1:{ports[0]}/", wait_until="load")
             b.goto(f"http://127.0.0.1:{ports[1]}/", wait_until="load")
             settle(a, 4000)
@@ -93,8 +106,12 @@ def main():
             ok("both pages load", a.query_selector(".jamin-input") is not None
                and b.query_selector(".jamin-input") is not None)
 
-            joined = a.evaluate("() => !!(window.__jaminNet && window.__jaminNet.joined)")
-            peers = a.evaluate("async () => (await (await fetch('/peers')).json()).length")
+            # The probe carries the word, as anything asking a node for anything
+            # must -- /peers is behind the door too.
+            count_peers = ("async () => (await (await fetch('/peers',"
+                           " { headers: { 'X-Jamin-Key': '%s' } })).json()).length" % SECRET)
+
+            peers = a.evaluate(count_peers)
             ok("the node found its peer", peers == 1, f"{peers} peers")
 
             # --- one types, the other agrees --------------------------------
@@ -132,6 +149,11 @@ def main():
 
             # --- a third browser arrives later ------------------------------
             three = browser.new_context()
+            three.add_init_script(
+                "try { const k = 'jamin.settings.v1';"
+                " const s = JSON.parse(localStorage.getItem(k) || '{}');"
+                " s.network = Object.assign({}, s.network, { enabled: true, secret: '%s' });"
+                " localStorage.setItem(k, JSON.stringify(s)); } catch (e) {}" % SECRET)
             c = three.new_page()
             c.goto(f"http://127.0.0.1:{ports[0]}/", wait_until="load")
             settle(c, 4000)
@@ -142,7 +164,7 @@ def main():
             nodes[1].terminate()
             nodes[1].wait(timeout=5)
             time.sleep(8.0)   # three missed beacons plus room
-            left = a.evaluate("async () => (await (await fetch('/peers')).json()).length")
+            left = a.evaluate(count_peers)
             ok("a node that leaves is forgotten", left == 0, f"{left} peers")
 
             # And the survivors carry on.
@@ -150,6 +172,21 @@ def main():
             settle(a, 500)
             ok("and the rest keep working",
                wait_for_chart(c, "F-7 Bb7 Ebmaj7"), chart_of(c))
+
+            # --- and the wrong word gets nowhere -----------------------------
+            refused = browser.new_context()
+            refused.add_init_script(
+                "try { const k = 'jamin.settings.v1';"
+                " const s = JSON.parse(localStorage.getItem(k) || '{}');"
+                " s.network = Object.assign({}, s.network, { enabled: true, secret: 'not-it' });"
+                " localStorage.setItem(k, JSON.stringify(s)); } catch (e) {}")
+            d = refused.new_page()
+            d.goto(f"http://127.0.0.1:{ports[0]}/", wait_until="load")
+            settle(d, 3500)
+            denied = d.evaluate("async () => (await fetch('/doc', { headers: { 'X-Jamin-Key': 'not-it' } })).status")
+            ok("the wrong word is refused", denied == 401, f"status {denied}")
+            ok("and that page never sees the chart",
+               chart_of(d) != chart_of(c), f"{chart_of(d)!r}")
 
             ok("no page errors anywhere", not errors, "; ".join(errors[:2]))
             browser.close()

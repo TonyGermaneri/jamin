@@ -403,8 +403,9 @@ let applyingRemote = false
  */
 async function joinNetwork() {
   if (!hosted() && typeof EventSource !== 'function') return
-  if (!state.settings.network.enabled) return
-  if (!(await nodeAvailable())) return
+  const { enabled, secret } = state.settings.network
+  if (!enabled || !secret) return
+  if (!(await nodeAvailable(secret))) return
 
   const site = `${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`
   state.net.site = site
@@ -412,7 +413,7 @@ async function joinNetwork() {
   // Where somebody else would reach this machine. The plugin knows its own
   // port; a browser is already looking at the answer.
   if (hosted()) {
-    const where = await callHost('jaminNetwork').catch(() => null)
+    const where = await callHost('jaminNetwork', true, secret).catch(() => null)
     if (where && where.port) state.net.address = `http://${where.name}.local:${where.port}/`
   } else {
     state.net.address = window.location.origin + '/'
@@ -420,7 +421,7 @@ async function joinNetwork() {
 
   session = new Session({
     site,
-    transport: hosted() ? hostTransport() : httpTransport(),
+    transport: hosted() ? hostTransport(secret) : httpTransport(secret),
     onText: (text) => {
       if (text === state.text) return
       applyingRemote = true

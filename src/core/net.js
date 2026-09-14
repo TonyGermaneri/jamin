@@ -34,12 +34,16 @@ const RETRY_MAX_MS = 8000
  * answers with a 404, and the plugin's own bundle has no server behind it at
  * all. One request settles it and costs nothing.
  */
-export async function nodeAvailable(origin = '') {
+export async function nodeAvailable(secret, origin = '') {
+  // Blank is not "anybody may join", it is "not configured". Nothing is asked
+  // of the network until somebody has chosen a word.
+  if (!secret) return false
+
   if (hosted()) {
     // The plugin is a node when its networking is switched on, and asking is
     // also what switches it on for the first time.
     try {
-      const state = await callHost('jaminNetwork', true)
+      const state = await callHost('jaminNetwork', true, secret)
       return Boolean(state && state.running)
     } catch {
       return false
@@ -47,13 +51,24 @@ export async function nodeAvailable(origin = '') {
   }
 
   try {
-    const response = await fetch(`${origin}/peers`, { cache: 'no-store' })
+    const response = await fetch(`${origin}/peers`, { cache: 'no-store', headers: key(secret) })
     if (!response.ok) return false
     return Array.isArray(await response.json())
   } catch {
     return false
   }
 }
+
+/**
+ * The word, on its way to a node.
+ *
+ * A header for anything that can set one. `EventSource` cannot set headers at
+ * all, so the stream carries it in the query instead -- which is worth being
+ * plain about: this travels in the clear over HTTP on your own network. It is a
+ * latch on a door, not a lock, and the word should be one you are happy to say
+ * out loud rather than one you use anywhere else.
+ */
+const key = (secret) => ({ 'X-Jamin-Key': secret })
 
 /**
  * How a session reaches its node.
@@ -63,26 +78,29 @@ export async function nodeAvailable(origin = '') {
  * cannot use `fetch` against a node at all. Same traffic, shorter route, and the
  * session above does not know which it has.
  */
-export function httpTransport(origin = '') {
+export function httpTransport(secret, origin = '') {
   return {
     async doc() {
-      const response = await fetch(`${origin}/doc`, { cache: 'no-store' })
+      const response = await fetch(`${origin}/doc`, { cache: 'no-store', headers: key(secret) })
+      if (response.status === 401) throw new Error('password')
       return response.ok ? response.json() : []
     },
     async peers() {
-      const response = await fetch(`${origin}/peers`, { cache: 'no-store' })
+      const response = await fetch(`${origin}/peers`, { cache: 'no-store', headers: key(secret) })
+      if (response.status === 401) throw new Error('password')
       return response.ok ? response.json() : []
     },
     send(envelope) {
       fetch(`${origin}/ops`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...key(secret) },
         body: JSON.stringify(envelope),
         keepalive: true,
       }).catch(() => {})
     },
     listen(onEnvelope, onOpen, onBroken) {
-      const stream = new EventSource(`${origin}/events`)
+      // In the query, because EventSource cannot set a header.
+      const stream = new EventSource(`${origin}/events?k=${encodeURIComponent(secret)}`)
       stream.onopen = onOpen
       stream.onerror = onBroken
       stream.addEventListener('ops', (event) => {
@@ -98,14 +116,14 @@ export function httpTransport(origin = '') {
 }
 
 /** The same thing, through the plugin, whose page cannot use HTTP. */
-export function hostTransport() {
+export function hostTransport(secret) {
   return {
     async doc() {
       const log = await callHost('jaminNetDoc').catch(() => [])
       return Array.isArray(log) ? log : []
     },
     async peers() {
-      const state = await callHost('jaminNetwork').catch(() => null)
+      const state = await callHost('jaminNetwork', true, secret).catch(() => null)
       return state && Array.isArray(state.peers) ? state.peers : []
     },
     send(envelope) {
@@ -204,6 +222,7 @@ export class Session {
   async catchUp() {
     try {
       const envelopes = await this.transport.doc()
+      this.setState(this.state === 'refused' ? 'joining' : this.state)
       let changed = false
       for (const envelope of envelopes) {
         if (envelope && Array.isArray(envelope.ops)) {
@@ -211,9 +230,11 @@ export class Session {
         }
       }
       if (changed) this.onText(this.text())
-    } catch {
-      // Nothing said so far, or the node went away between one request and the
-      // next. The stream will bring us up to date either way.
+    } catch (error) {
+      // A refused password is worth saying out loud -- it is the one failure
+      // here that a person can do something about. Anything else is a node that
+      // went away between one request and the next, and the stream handles it.
+      if (error && error.message === 'password') this.setState('refused')
     }
   }
 

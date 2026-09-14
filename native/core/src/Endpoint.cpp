@@ -1,6 +1,7 @@
 #include "jamin/Endpoint.h"
 
 #include <algorithm>
+#include <cctype>
 #include <arpa/inet.h>
 #include <cstring>
 #include <fstream>
@@ -60,6 +61,36 @@ void respond (int connection, const char* status, const std::string& type, const
     writeAll (connection, body);
 }
 
+/** One header's value, case-insensitively, or empty. */
+std::string header (const std::string& request, const std::string& name)
+{
+    std::string lowered;
+    lowered.reserve (request.size());
+    for (const char c : request) lowered += (char) std::tolower ((unsigned char) c);
+
+    std::string key = "\r\n";
+    for (const char c : name) key += (char) std::tolower ((unsigned char) c);
+    key += ':';
+
+    const auto at = lowered.find (key);
+    if (at == std::string::npos) return {};
+
+    auto from = at + key.size();
+    while (from < request.size() && (request[from] == ' ' || request[from] == '\t')) ++from;
+    const auto to = request.find ("\r\n", from);
+    return to == std::string::npos ? std::string {} : request.substr (from, to - from);
+}
+
+/** Or from the query, because EventSource cannot set a header at all. */
+std::string queryKey (const std::string& target)
+{
+    const auto at = target.find ("k=");
+    if (at == std::string::npos) return {};
+    const auto from = at + 2;
+    const auto to = target.find_first_of ("&#", from);
+    return target.substr (from, to == std::string::npos ? std::string::npos : to - from);
+}
+
 /** A path that cannot climb out of the directory it is served from. */
 bool safePath (const std::string& path)
 {
@@ -114,8 +145,22 @@ std::string mimeFor (const std::string& path)
     return "application/octet-stream";
 }
 
+bool sameSecret (const std::string& a, const std::string& b)
+{
+    // Length is not secret and cannot be hidden by this anyway; the contents
+    // are compared whole so a wrong guess takes as long whatever it got right.
+    if (a.size() != b.size())
+        return false;
+
+    unsigned char difference = 0;
+    for (size_t i = 0; i < a.size(); ++i)
+        difference |= (unsigned char) (a[i] ^ b[i]);
+
+    return difference == 0;
+}
+
 bool postTo (const std::string& host, int port, const std::string& path,
-             const std::string& body, int timeoutMs)
+             const std::string& body, const std::string& secret, int timeoutMs)
 {
     const int handle = ::socket (AF_INET, SOCK_STREAM, 0);
     if (handle < 0)
@@ -145,6 +190,7 @@ bool postTo (const std::string& host, int port, const std::string& path,
             << "Host: " << host << "\r\n"
             << "Content-Type: application/json\r\n"
             << "Content-Length: " << body.size() << "\r\n"
+            << "X-Jamin-Key: " << secret << "\r\n"
             << "Connection: close\r\n\r\n" << body;
 
     const auto text = request.str();
@@ -185,6 +231,14 @@ bool Endpoint::start (Options options)
     // opt into, not something that happens because the feature was compiled in.
     address.sin_addr.s_addr = htonl (settings.onNetwork ? INADDR_ANY : INADDR_LOOPBACK);
     address.sin_port = htons ((uint16_t) settings.port);
+
+    if (settings.secret.empty())
+    {
+        lastError = "no password set, so nothing will be shared";
+        ::close (listener);
+        listener = -1;
+        return false;
+    }
 
     if (::bind (listener, (sockaddr*) &address, sizeof (address)) < 0)
     {
@@ -314,6 +368,26 @@ void Endpoint::serve (int connection)
 
     const auto query = target.find ('?');
     const auto path = query == std::string::npos ? target : target.substr (0, query);
+
+    // The page is served to anybody -- an application shell is not a secret, and
+    // a browser must load something before it can be asked for anything. The
+    // chart is what is behind the door.
+    const bool guarded = (path == "/ops" || path == "/doc" || path == "/peers" || path == "/events");
+
+    if (guarded && method != "OPTIONS")
+    {
+        auto offered = header (request, "X-Jamin-Key");
+        if (offered.empty() && query != std::string::npos)
+            offered = queryKey (target.substr (query + 1));
+
+        if (! sameSecret (offered, settings.secret))
+        {
+            respond (connection, "401 Unauthorized", "application/json",
+                     R"({"error":"password"})");
+            ::close (connection);
+            return;
+        }
+    }
 
     if (method == "OPTIONS")
     {

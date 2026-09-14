@@ -8,7 +8,11 @@
     plugin is at fault. It is also useful on its own -- a machine with no DAW can
     hold the chart for everybody else.
 
-      jamin-node [--port N] [--files DIR] [--name NAME] [--network] [--quiet]
+      jamin-node --secret WORD [--port N] [--files DIR] [--name NAME]
+                 [--network] [--quiet]
+
+    The word is required and is the one every machine sharing a chart has to
+    agree on. There is no "anybody may join".
 */
 #include <jamin/Node.h>
 
@@ -32,7 +36,7 @@ int main (int argc, char** argv)
 {
     int port = 0;
     bool onNetwork = false, quiet = false;
-    std::string files, name;
+    std::string files, name, secret;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -40,6 +44,7 @@ int main (int argc, char** argv)
         if (arg == "--port" && i + 1 < argc) port = std::atoi (argv[++i]);
         else if (arg == "--files" && i + 1 < argc) files = argv[++i];
         else if (arg == "--name" && i + 1 < argc) name = argv[++i];
+        else if (arg == "--secret" && i + 1 < argc) secret = argv[++i];
         else if (arg == "--network") onNetwork = true;
         else if (arg == "--quiet") quiet = true;
         else { std::printf ("unknown argument: %s\n", arg.c_str()); return 1; }
@@ -51,6 +56,12 @@ int main (int argc, char** argv)
     const std::string id = std::string (hostname) + "-" + std::to_string (::getpid());
     if (name.empty()) name = hostname;
 
+    if (secret.empty())
+    {
+        std::printf ("FAIL --secret is required: every machine sharing a chart agrees on one word\n");
+        return 1;
+    }
+
     jamin::Node node;
 
     jamin::Node::Options options;
@@ -59,6 +70,7 @@ int main (int argc, char** argv)
     options.files = files;
     options.port = port;
     options.onNetwork = onNetwork;
+    options.secret = secret;
 
     if (! node.start (options))
     {

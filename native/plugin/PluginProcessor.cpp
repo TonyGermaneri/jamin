@@ -268,18 +268,25 @@ void JaminProcessor::setSequence (std::unique_ptr<jamin::Sequence> next)
     juce::ignoreUnused (previous);
 }
 
-bool JaminProcessor::setNetworking (bool shouldRun)
+bool JaminProcessor::setNetworking (bool shouldRun, const juce::String& secret)
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
-    if (! shouldRun)
+    if (! shouldRun || secret.isEmpty())
     {
         network.stop();
         return false;
     }
 
-    if (network.isRunning())
+    if (network.isRunning() && networkSecret == secret)
         return true;
+
+    // A changed word is a different network: everything that trusted the old
+    // one has to be let go of.
+    if (network.isRunning())
+        network.stop();
+
+    networkSecret = secret;
 
     jamin::Node::Options options;
     // The instance id is a UUID, which is unique but says nothing. The computer
@@ -288,6 +295,7 @@ bool JaminProcessor::setNetworking (bool shouldRun)
     options.name = (juce::SystemStats::getComputerName() + " — " + JucePlugin_Name).toStdString();
     options.files = jamin::webRoot().getFullPathName().toStdString();
     options.onNetwork = true;
+    options.secret = secret.toStdString();
 
     network.onRemoteOps = [this] (const std::string& envelope)
     {
