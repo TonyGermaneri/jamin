@@ -24,16 +24,16 @@ for more than that, it has failed.
 | **Jamin.component** | macOS, universal | the instrument, for Logic and Reaper |
 | **Jamin MIDI FX.component** | macOS, universal | Logic's MIDI FX slot, where nothing needs routing |
 | **Jamin.app** | macOS, universal | the standalone. No DAW needed. |
+| **Jamin.vst3** | Windows x64 | and a standalone beside it |
 
 Every macOS build is signed with a Developer ID and notarised, so they open with
 no warning and no right-click dance. They are on the
 [releases page](https://github.com/TonyGermaneri/jamin/releases).
 
-**Windows is not released yet, and the reason is specific.** jamin works out what
-to play by running its own JavaScript, and macOS ships the engine that does it.
-Windows ships none, so a plugin there would show the chart and stay silent —
-which is worse than shipping nothing. It is built and checked on every change so
-the code stays portable; embedding QuickJS is what would finish it.
+On Windows everything works except sharing a chart between machines, which is
+POSIX sockets and would be Winsock. The engine that works out what to play is
+carried with us rather than borrowed from the system, so a Windows plugin plays
+exactly what a macOS one does.
 
 ## Running it
 

@@ -49,31 +49,20 @@ function(jamin_add_plugin target)
         # folders is a thing to opt into, not a thing a build does behind their back.
         COPY_PLUGIN_AFTER_BUILD   ${JAMIN_INSTALL_AFTER_BUILD})
 
-    # JavaScriptCore is macOS's, and is what runs jamin's own music code inside
-    # the plugin. Elsewhere the same class refuses and says why, rather than
-    # returning an empty sequence that looks like an empty chart.
-    if(APPLE)
-        set(_compiler Compiler.cpp)
-    else()
-        set(_compiler CompilerUnsupported.cpp)
-    endif()
-
     target_sources(${target} PRIVATE
         PluginProcessor.cpp
         PluginEditor.cpp
         PluginPaths.cpp
-        ${_compiler})
+        Compiler.cpp)
 
     target_compile_definitions(${target} PUBLIC
         JUCE_WEB_BROWSER=1              # the editor is the web app
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0)
 
-    # JavaScriptCore runs jamin's own music code headless, so the plugin keeps no
-    # implementation of the harmony at all. @see Compiler.h
-    if(APPLE)
-        target_link_libraries(${target} PRIVATE "-framework JavaScriptCore")
-    endif()
+    # QuickJS runs jamin's own music code headless, so the plugin keeps no
+    # implementation of the harmony at all. @see Compiler.cpp
+    target_link_libraries(${target} PRIVATE qjs)
 
     target_link_libraries(${target} PRIVATE
         jamin_core

@@ -14,6 +14,9 @@
 
 #include <juce_core/juce_core.h>
 
+#include <algorithm>
+#include <chrono>
+
 namespace
 {
 int failures = 0;
@@ -70,10 +73,27 @@ int main (int argc, char** argv)
     const auto request = "{\"text\":" + juce::JSON::toString (juce::var (chart))
                        + ",\"generation\":42,\"settings\":" + settingsJson() + "}";
 
+    const auto started = std::chrono::steady_clock::now();
     const auto sequence = compiler.compile (request);
+    const auto took = std::chrono::duration<double, std::milli> (
+                          std::chrono::steady_clock::now() - started).count();
+
     check ("it compiled at all", sequence != nullptr, compiler.lastError);
     if (sequence == nullptr)
         return 1;
+
+    // Repeated, because the first compile through an interpreter pays for
+    // parsing the bundle and the ones after it do not -- and it is the ones
+    // after it that somebody typing will feel.
+    double fastest = took;
+    for (int i = 0; i < 5; ++i)
+    {
+        const auto again = std::chrono::steady_clock::now();
+        compiler.compile (request);
+        fastest = std::min (fastest, std::chrono::duration<double, std::milli> (
+                                         std::chrono::steady_clock::now() - again).count());
+    }
+    std::printf ("  time     %.1f ms first, %.1f ms best of five after\n", took, fastest);
 
     std::printf ("  chart    %s\n  notes    %zu events over %d pulses (%d chords)\n",
                  chart.toRawUTF8(), sequence->events.size(),

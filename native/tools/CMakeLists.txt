@@ -9,7 +9,7 @@ if(APPLE)
 endif()
 
 # jamin-compile: the plugin's compiler, without a plugin. Needs juce_core for
-# String/File/JSON and JavaScriptCore for the engine itself -- but nothing of the
+# String/File/JSON and QuickJS for the engine itself -- but nothing of the
 # plugin API, so it builds and runs in a second.
 if(APPLE)
     add_executable(jamin-compile
@@ -20,8 +20,9 @@ if(APPLE)
     target_link_libraries(jamin-compile PRIVATE
         jamin_core
         juce::juce_core
-        juce::juce_recommended_config_flags
-        "-framework JavaScriptCore")
+        juce::juce_recommended_config_flags)
+
+    target_link_libraries(jamin-compile PRIVATE qjs)
     target_compile_definitions(jamin-compile PRIVATE
         JUCE_STANDALONE_APPLICATION=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
 endif()

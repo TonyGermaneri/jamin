@@ -35,11 +35,17 @@ stopping: the sequence outlives the web view that produced it.
 If the plugin ever needs to know what `Abmaj7/C` means, the design has failed.
 
 The compiler is how that holds. `Compiler.cpp` evaluates `jamin-compile.js` — the page's own
-music code, built as a plain script — in a `JSContext`, and asks it for the sequence.
-JavaScriptCore is on every Mac and is the engine the test suite has always used, so this is not
-a new dependency so much as an existing one being admitted to. And because the compiler is not in
-the editor, the editor window can be shut without the music stopping or a chart edit going
-uncompiled.
+music code, built as a plain script — in QuickJS, and asks it for the sequence. And because the
+compiler is not in the editor, the editor window can be shut without the music stopping or a
+chart edit going uncompiled.
+
+**QuickJS everywhere, including on macOS, which has JavaScriptCore already.** JSC is the faster
+of the two — 23 ms against 50 ms over a 288-bar chart, and 0.3 ms against 0.6 ms over a short
+one — and both are far below the quarter-second the page waits before asking for a compile at
+all, on a background thread, nowhere near the audio thread. Speed decides nothing here. What
+decides it is that Windows has no system engine, so using JSC where it exists would mean a second
+implementation running only where nobody can test it. One engine means the code that ships on
+Windows is the code every macOS test has been exercising all along.
 
 ---
 

@@ -10,6 +10,7 @@ A chord chart that plays along with your DAW, and that several machines can shar
 | `Jamin.app` | anywhere. No DAW needed. |
 
 **Windows** — `Jamin.vst3` into `C:\Program Files\Common Files\VST3`, and a Standalone beside it.
+Sharing a chart between machines is macOS-only for now; everything else works.
 
 The AU standard has no MIDI output, so **in Live it has to be the VST3**. In Logic, the MIDI FX
 version needs no routing at all.

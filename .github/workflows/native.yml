@@ -288,17 +288,13 @@ jobs:
           security delete-keychain "$RUNNER_TEMP/jamin-signing.keychain-db" 2>/dev/null || true
 
   # --------------------------------------------------------------------------------------------
-  # Windows builds, and is not released yet.
+  # Windows gets the VST3 and the Standalone. There is no AU there, and no MIDI-effect category
+  # in VST3 — the instrument is the shape that travels.
   #
-  # jamin works out what to play by running its own JavaScript, and macOS ships the engine that
-  # does it. Windows ships none, so the plugin there shows the chart and cannot play it — see
-  # plugin/CompilerUnsupported.cpp, which refuses out loud rather than returning an empty
-  # sequence that would look like an empty chart. Embedding QuickJS is the way in and is the next
-  # piece of work.
-  #
-  # The job stays because it is what keeps the portable half portable: the chart, the timeline
-  # and the sequence reader are built and checked here on every change, so a change that breaks
-  # them is caught on both platforms rather than on the one that happens to run the sockets.
+  # It plays, because the engine that works out what to play is carried with us rather than
+  # borrowed from the system: QuickJS, the same one macOS uses. What is still missing there is the
+  # networking, which is POSIX sockets and would be Winsock — see core/src/Unsupported.cpp, which
+  # refuses out loud rather than pretending.
   # --------------------------------------------------------------------------------------------
   windows:
     name: Windows (x64)
@@ -312,12 +308,12 @@ jobs:
           name: page
           path: dist
 
-      - name: Cache JUCE
+      - name: Cache JUCE and QuickJS
         uses: actions/cache@v4
         with:
           path: native/build/_deps
-          key: juce-windows-${{ hashFiles('native/CMakeLists.txt') }}
-          restore-keys: juce-windows-
+          key: deps-windows-${{ hashFiles('native/CMakeLists.txt') }}
+          restore-keys: deps-windows-
 
       - name: Configure
         shell: bash
@@ -379,9 +375,8 @@ jobs:
               "$GITHUB_WORKSPACE/release/jamin-macos-${GITHUB_REF_NAME}-unsigned.zip")
           fi
 
-          # Windows is deliberately not here. It builds and validates, and it cannot yet play a
-          # note — publishing a plugin with jamin's name on it that shows a chart and stays
-          # silent would be worse than publishing nothing for Windows at all.
+          (cd artifacts/jamin-windows-x64 && zip -qr \
+            "$GITHUB_WORKSPACE/release/jamin-windows-x64-${GITHUB_REF_NAME}.zip" .)
 
           ls -1 release
 

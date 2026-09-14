@@ -140,6 +140,38 @@ if(JAMIN_BUILD_PLUGIN)
     FetchContent_MakeAvailable(JUCE)
 endif()
 
+# ---------------------------------------------------------------------------- QuickJS
+#
+# jamin works out what to play by running its own JavaScript, so the plugin needs
+# an engine. QuickJS is an interpreter with no platform behind it: one
+# dependency, MIT, and the same bundle runs in it unchanged everywhere.
+#
+# Used everywhere, including on macOS, which has JavaScriptCore already. See
+# plugin/Compiler.cpp for why one engine beats a faster one: briefly, the
+# alternative is a second implementation that only runs where nobody can test it.
+if(JAMIN_BUILD_PLUGIN OR JAMIN_BUILD_TOOLS)
+    set(JAMIN_QUICKJS_TAG "v0.10.1" CACHE STRING "quickjs-ng release tag")
+
+    include(FetchContent)
+    FetchContent_Declare(quickjs
+        GIT_REPOSITORY https://github.com/quickjs-ng/quickjs.git
+        GIT_TAG        "${JAMIN_QUICKJS_TAG}"
+        GIT_SHALLOW    TRUE
+        GIT_PROGRESS   TRUE
+        # Its own CMakeLists builds a shell, a compiler and a test runner as well
+        # as the library. None of them are wanted here and all of them would be
+        # built by a plain FetchContent.
+        EXCLUDE_FROM_ALL)
+    FetchContent_MakeAvailable(quickjs)
+
+    # Somebody else's header, held to our warning flags, reports four narrowing
+    # conversions it has every right to. Marked as a system include so the
+    # warnings that matter are the ones from jamin.
+    get_target_property(_qjs_includes qjs INTERFACE_INCLUDE_DIRECTORIES)
+    set_target_properties(qjs PROPERTIES
+        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_qjs_includes}")
+endif()
+
 if(JAMIN_SANITIZE)
     add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
     add_link_options(-fsanitize=address,undefined)

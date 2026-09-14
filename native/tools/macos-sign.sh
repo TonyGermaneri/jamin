@@ -18,9 +18,6 @@
 
 set -euo pipefail
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-entitlements_dir="$here/../packaging"
-
 plugins="${1:-}"
 config="${2:-RelWithDebInfo}"
 if [ -z "$plugins" ] || [ ! -d "$plugins" ]; then
@@ -67,9 +64,11 @@ echo "signing as: $identity"
 #                      signed while it was live. It needs network access, which is why signing
 #                      offline appears to work and then does not.
 #
-# `entitlements` is optional: passed for the Standalone, which runs jamin's own JavaScript in
-# JavaScriptCore and therefore needs permission to make and run machine code, and omitted for the
-# plugins, which inherit their host's.
+# `entitlements` is optional and nothing passes one. jamin compiles the chart with QuickJS, which
+# is an interpreter and never makes executable memory, so the hardened runtime has nothing to
+# object to — and an empty entitlements file would be exactly equivalent to omitting the flag and
+# one more thing for AMFI to refuse to parse. What the bundles do need is the hardened runtime
+# itself, which is a codesign flag rather than an entitlement.
 sign_bundle() {
     bundle="$1"
     entitlements="${2:-}"
@@ -108,7 +107,7 @@ midifx="$plugins/JaminMidiFx_artefacts/$config"
 
 sign_bundle "$instrument/AU/Jamin.component"
 sign_bundle "$instrument/VST3/Jamin.vst3"
-sign_bundle "$instrument/Standalone/Jamin.app" "$entitlements_dir/standalone.entitlements"
+sign_bundle "$instrument/Standalone/Jamin.app"
 sign_bundle "$midifx/AU/Jamin MIDI FX.component"
 
 # ---------------------------------------------------------------------------------- verify

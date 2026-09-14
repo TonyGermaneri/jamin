@@ -1,6 +1,36 @@
+/*
+    The compiler: jamin's own music code, run headless.
+
+    The chart, the phrases and the voice leading are JavaScript and stay
+    JavaScript. This loads the very bundle the page is built from and asks it for
+    the compiled sequence, so there is one implementation of the harmony rather
+    than two that agree until they do not.
+
+    **QuickJS, on every platform, including the one that has an engine already.**
+    macOS ships JavaScriptCore and it is the faster of the two -- measured over a
+    288-bar chart, 23 ms against 50 ms, and a third of a millisecond against two
+    thirds over a short one. Both are far below the quarter-second the page waits
+    before asking for a compile at all, and neither is anywhere near the audio
+    thread, so speed decides nothing here.
+
+    What decides it is that Windows has no system engine. Using JavaScriptCore
+    where it exists would mean a second implementation that only runs where
+    nobody can test it -- on the one platform nobody here can run. One engine
+    means the code that ships on Windows is the code every macOS test has been
+    exercising all along, which is worth more than twenty-seven milliseconds on a
+    chart nobody writes.
+
+    QuickJS is an interpreter with no JIT, which is also why the bundles need no
+    entitlement to make executable memory.
+
+    @see src/core/compile.js
+*/
 #include "Compiler.h"
 
-#include <JavaScriptCore/JavaScriptCore.h>
+#include <quickjs.h>
+
+#include <algorithm>
+#include <cstring>
 
 namespace jamin
 {
@@ -8,53 +38,33 @@ namespace jamin
 namespace
 {
 
-/** JSStringRef is refcounted by hand; this is the only reason it is not. */
-struct ScopedJSString
+/** Whatever QuickJS is holding, as a std::string, freed properly. */
+juce::String toJuce (JSContext* context, JSValueConst value)
 {
-    explicit ScopedJSString (const juce::String& text)
-        : ref (JSStringCreateWithUTF8CString (text.toRawUTF8())) {}
-    explicit ScopedJSString (JSStringRef existing) : ref (existing) {}
-    ~ScopedJSString() { if (ref != nullptr) JSStringRelease (ref); }
-
-    ScopedJSString (const ScopedJSString&) = delete;
-    ScopedJSString& operator= (const ScopedJSString&) = delete;
-
-    operator JSStringRef() const { return ref; }
-    JSStringRef ref;
-};
-
-juce::String toJuce (JSContextRef context, JSValueRef value)
-{
-    if (value == nullptr)
+    const char* text = JS_ToCString (context, value);
+    if (text == nullptr)
         return {};
 
-    const ScopedJSString text { JSValueToStringCopy (context, value, nullptr) };
-    if (text.ref == nullptr)
-        return {};
-
-    // getMaximumUTF8CStringSize already includes the terminator.
-    const auto size = JSStringGetMaximumUTF8CStringSize (text);
-    std::vector<char> buffer (size, '\0');
-    JSStringGetUTF8CString (text, buffer.data(), size);
-    return juce::String::fromUTF8 (buffer.data());
+    juce::String copy = juce::String::fromUTF8 (text);
+    JS_FreeCString (context, text);
+    return copy;
 }
 
-/** A thrown JavaScript error, as something worth printing. */
-juce::String describe (JSContextRef context, JSValueRef exception)
+/** A thrown JavaScript error, with its stack when there is one. */
+juce::String describe (JSContext* context)
 {
-    if (exception == nullptr)
-        return {};
+    const JSValue error = JS_GetException (context);
+    juce::String message = toJuce (context, error);
 
-    auto message = toJuce (context, exception);
-
-    if (auto* object = JSValueToObject (context, exception, nullptr))
+    if (JS_IsError (context, error))
     {
-        const ScopedJSString lineKey { juce::String ("line") };
-        const auto line = JSObjectGetProperty (context, object, lineKey, nullptr);
-        if (line != nullptr && JSValueIsNumber (context, line))
-            message << " (line " << juce::String ((int) JSValueToNumber (context, line, nullptr)) << ")";
+        const JSValue stack = JS_GetPropertyStr (context, error, "stack");
+        if (! JS_IsUndefined (stack))
+            message << "\n" << toJuce (context, stack);
+        JS_FreeValue (context, stack);
     }
 
+    JS_FreeValue (context, error);
     return message;
 }
 
@@ -62,12 +72,15 @@ juce::String describe (JSContextRef context, JSValueRef exception)
 
 struct Compiler::Impl
 {
-    JSGlobalContextRef context { nullptr };
+    JSRuntime* runtime { nullptr };
+    JSContext* context { nullptr };
 
-    ~Impl()
+    ~Impl() { release(); }
+
+    void release()
     {
-        if (context != nullptr)
-            JSGlobalContextRelease (context);
+        if (context != nullptr) { JS_FreeContext (context); context = nullptr; }
+        if (runtime != nullptr) { JS_FreeRuntime (runtime); runtime = nullptr; }
     }
 };
 
@@ -78,6 +91,7 @@ bool Compiler::load (const juce::File& bundle)
 {
     loaded = false;
     lastError.clear();
+    impl->release();
 
     if (! bundle.existsAsFile())
     {
@@ -85,31 +99,43 @@ bool Compiler::load (const juce::File& bundle)
         return false;
     }
 
-    if (impl->context != nullptr)
+    impl->runtime = JS_NewRuntime();
+    if (impl->runtime == nullptr)
     {
-        JSGlobalContextRelease (impl->context);
-        impl->context = nullptr;
+        lastError = "QuickJS would not give us a runtime";
+        return false;
     }
 
-    impl->context = JSGlobalContextCreate (nullptr);
+    // A ceiling, so a runaway script inside a plugin cannot take the host's
+    // memory with it. Sixty-four megabytes is far more than a chart needs and
+    // far less than a problem.
+    JS_SetMemoryLimit (impl->runtime, 64u * 1024u * 1024u);
+
+    impl->context = JS_NewContext (impl->runtime);
     if (impl->context == nullptr)
     {
-        lastError = "JavaScriptCore would not give us a context";
+        lastError = "QuickJS would not give us a context";
+        impl->release();
         return false;
     }
 
-    const ScopedJSString source { bundle.loadFileAsString() };
-    const ScopedJSString url { bundle.getFullPathName() };
+    const auto source = bundle.loadFileAsString();
+    const auto utf8 = source.toRawUTF8();
 
-    JSValueRef exception = nullptr;
-    JSEvaluateScript (impl->context, source, nullptr, url, 1, &exception);
+    // JS_EVAL_TYPE_GLOBAL, so the bundle's `var jamin = ...` lands as a global
+    // property rather than in a module scope nothing else can see.
+    const JSValue result = JS_Eval (impl->context, utf8, std::strlen (utf8),
+                                    bundle.getFileName().toRawUTF8(), JS_EVAL_TYPE_GLOBAL);
 
-    if (exception != nullptr)
+    if (JS_IsException (result))
     {
-        lastError = "The compiler bundle would not run: " + describe (impl->context, exception);
+        lastError = "The compiler bundle would not run: " + describe (impl->context);
+        JS_FreeValue (impl->context, result);
+        impl->release();
         return false;
     }
 
+    JS_FreeValue (impl->context, result);
     loaded = true;
     return true;
 }
@@ -125,50 +151,49 @@ std::unique_ptr<Sequence> Compiler::compile (const juce::String& requestJson)
     }
 
     auto* context = impl->context;
-    auto* global = JSContextGetGlobalObject (context);
 
-    JSValueRef exception = nullptr;
+    const JSValue global = JS_GetGlobalObject (context);
+    const JSValue jaminObject = JS_GetPropertyStr (context, global, "jamin");
 
-    // jamin.compileJson(request) -- the one door in, as built by
-    // vite.compile.config.js.
-    const ScopedJSString namespaceKey { juce::String ("jamin") };
-    const auto namespaceValue = JSObjectGetProperty (context, global, namespaceKey, &exception);
-    if (exception != nullptr || namespaceValue == nullptr || ! JSValueIsObject (context, namespaceValue))
+    if (! JS_IsObject (jaminObject))
     {
         lastError = "The bundle did not define `jamin`";
+        JS_FreeValue (context, jaminObject);
+        JS_FreeValue (context, global);
         return nullptr;
     }
 
-    auto* namespaceObject = JSValueToObject (context, namespaceValue, &exception);
-    const ScopedJSString functionKey { juce::String ("compileJson") };
-    const auto functionValue = JSObjectGetProperty (context, namespaceObject, functionKey, &exception);
-
-    if (exception != nullptr || functionValue == nullptr || ! JSValueIsObject (context, functionValue))
+    const JSValue function = JS_GetPropertyStr (context, jaminObject, "compileJson");
+    if (! JS_IsFunction (context, function))
     {
         lastError = "The bundle has no compileJson";
+        JS_FreeValue (context, function);
+        JS_FreeValue (context, jaminObject);
+        JS_FreeValue (context, global);
         return nullptr;
     }
 
-    auto* function = JSValueToObject (context, functionValue, &exception);
-    if (! JSObjectIsFunction (context, function))
-    {
-        lastError = "compileJson is not a function";
-        return nullptr;
-    }
+    const auto utf8 = requestJson.toRawUTF8();
+    JSValue argument = JS_NewStringLen (context, utf8, std::strlen (utf8));
+    const JSValue answered = JS_Call (context, function, jaminObject, 1, &argument);
 
-    const ScopedJSString argument { requestJson };
-    JSValueRef arguments[1] { JSValueMakeString (context, argument) };
-    const auto result = JSObjectCallAsFunction (context, function, nullptr, 1, arguments, &exception);
+    JS_FreeValue (context, argument);
+    JS_FreeValue (context, function);
+    JS_FreeValue (context, jaminObject);
+    JS_FreeValue (context, global);
 
-    if (exception != nullptr)
+    if (JS_IsException (answered))
     {
         // compileJson catches its own failures and reports them in the answer,
         // so reaching here means something further out went wrong.
-        lastError = "compileJson threw: " + describe (context, exception);
+        lastError = "compileJson threw: " + describe (context);
+        JS_FreeValue (context, answered);
         return nullptr;
     }
 
-    const auto answer = toJuce (context, result);
+    const auto answer = toJuce (context, answered);
+    JS_FreeValue (context, answered);
+
     const auto parsed = juce::JSON::parse (answer);
 
     if (const auto reported = parsed.getProperty ("error", {}); ! reported.isVoid())
@@ -199,9 +224,7 @@ std::unique_ptr<Sequence> Compiler::compile (const juce::String& requestJson)
         }
     }
 
-    // The reader binary-searches, so order is not a preference. The compiler
-    // emits in order already; this is here because a sequence that is not sorted
-    // fails silently and intermittently, which is the worst way to find out.
+    // The reader binary-searches, so order is not a preference.
     std::stable_sort (sequence->events.begin(), sequence->events.end(),
                       [] (const Sequence::Event& a, const Sequence::Event& b) { return a.pulse < b.pulse; });
 
