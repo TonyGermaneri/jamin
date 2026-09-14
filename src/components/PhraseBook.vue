@@ -29,7 +29,7 @@ import {
   favourite,
   toggleFavourite,
 } from '../store.js'
-import { summarize } from '../core/phrases.js'
+import { keyPitchClass, phraseCategory, phraseKey, summarize } from '../core/phrases.js'
 import { describeLick } from '../core/licks.js'
 
 const search = ref('')
@@ -52,6 +52,7 @@ const isAccent = (entry) => !!entry && state.accentPhrase === (entry.id || entry
 const accent = computed(() => matches.value.find((entry) => entry.id === state.accentPhrase) ||
   catalogue().find((entry) => entry.id === state.accentPhrase) || null)
 const category = ref('any')
+const musicalKey = ref('any')
 const kind = ref('any')
 const source = ref('any')
 const length = ref('any')
@@ -92,7 +93,56 @@ const kinds = computed(() => facet((entry) => entry.kind, 'Any kind'))
 const sourceOf = (entry) => String(entry.origin || 'captured here').split(' #')[0]
 const sources = computed(() => facet(sourceOf, 'Any source'))
 
-const categories = computed(() => facet((entry) => entry.category, 'Any category'))
+/**
+ * What sort of part it is.
+ *
+ * Read from the phrase's own name first -- "F# comp 19" is a comp, and POP909's
+ * 8,168 parts say so in their names and nowhere else; the `category` they carry
+ * is a chord-quality name, which says nothing about how the part behaves. The
+ * collection's own label is used when the name is not that shape, so
+ * Impro-Visor's "blues" and "dominant-altered" are untouched.
+ * @see phraseCategory
+ */
+const categoryOf = (entry) => phraseCategory(entry) || entry.category
+const categories = computed(() => facet(categoryOf, 'Any category'))
+
+/**
+ * The key it was played in, from the chord it was played over.
+ *
+ * Ordered by pitch rather than by count, because a key list that runs C, C#, D
+ * is one you can point at, and one that runs G, D, F, A is a puzzle. It is
+ * provenance rather than a constraint: a phrase is stored as degrees and plays
+ * over any chord in any key, so this narrows the list to a collection's F#
+ * recordings -- it does not stop a C phrase from being used over F#.
+ */
+const keyOf = (entry) => keyPitchClass(phraseKey(entry))
+const sharpFirst = (spellings) =>
+  [...spellings].sort((a, b) => Number(b.includes('#')) - Number(a.includes('#')) || a.localeCompare(b))
+const keys = computed(() => {
+  // Counted by pitch, labelled by every spelling that pitch turned up under, so
+  // the two collections' F# and Gb are one row reading "F#/Gb".
+  const counts = new Map()
+  const spellings = new Map()
+  for (const entry of catalogue()) {
+    const pc = keyOf(entry)
+    if (pc === null) continue
+    counts.set(pc, (counts.get(pc) || 0) + 1)
+    if (!spellings.has(pc)) spellings.set(pc, new Set())
+    spellings.get(pc).add(phraseKey(entry))
+  }
+  return [
+    { title: 'Any key', value: 'any' },
+    ...[...counts.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([pc, count]) => ({
+        // Sharp first, then flat, always: sorting the spellings alphabetically
+        // gives "Db/C#" but "G#/Ab", and a column that changes convention
+        // halfway down reads as a mistake.
+        title: `${sharpFirst(spellings.get(pc)).join('/')} (${count.toLocaleString()})`,
+        value: String(pc),
+      })),
+  ]
+})
 
 /**
  * Length, in beats -- every length the catalogue actually has, not bands.
@@ -129,7 +179,8 @@ const matches = computed(() => {
   const starred = state.favourites.length
 
   return visibleLicks(search.value).filter((entry) => {
-    if (category.value !== 'any' && entry.category !== category.value) return false
+    if (category.value !== 'any' && categoryOf(entry) !== category.value) return false
+    if (musicalKey.value !== 'any' && String(keyOf(entry)) !== musicalKey.value) return false
     if (kind.value !== 'any' && entry.kind !== kind.value) return false
     if (source.value !== 'any' && sourceOf(entry) !== source.value) return false
     if (onlyFavourites.value && (!starred || !favourite(entry))) return false
@@ -141,14 +192,16 @@ const matches = computed(() => {
 /** How many filters are narrowing the list -- shown on the folded panel, so a
     list that is mysteriously short explains itself without being opened. */
 const activeFilters = computed(() =>
-  [category.value !== 'any', kind.value !== 'any', source.value !== 'any',
-   length.value !== 'any', state.ui.lickTexture !== 'any', onlyFavourites.value].filter(Boolean).length)
+  [category.value !== 'any', musicalKey.value !== 'any', kind.value !== 'any',
+   source.value !== 'any', length.value !== 'any', state.ui.lickTexture !== 'any',
+   onlyFavourites.value].filter(Boolean).length)
 
 const filtered = computed(() => Boolean(search.value) || activeFilters.value > 0)
 
 function clearFilters() {
   search.value = ''
   category.value = 'any'
+  musicalKey.value = 'any'
   kind.value = 'any'
   source.value = 'any'
   length.value = 'any'
@@ -429,12 +482,30 @@ const assigningTo = computed(() => {
                       <span class="text-medium-emphasis mr-2">{{ matches.length.toLocaleString() }}</span>
                     </v-expansion-panel-title>
                     <v-expansion-panel-text>
+                      <!-- Six of them, two to a row. Three to a row fits, and
+                           then "minor pentatonic (1)" is an ellipsis and the
+                           filter you are looking for is the one you cannot
+                           read. The panel folds away, so the height is only
+                           spent while somebody is using it. -->
                       <v-row dense>
-                        <v-col cols="7">
+                        <v-col cols="6">
                           <v-select v-model="category" :items="categories" label="Category"
                                     density="compact" hide-details />
                         </v-col>
-                        <v-col cols="5">
+                        <v-col cols="6">
+                          <v-select v-model="musicalKey" :items="keys" label="Key"
+                                    density="compact" hide-details />
+                        </v-col>
+                        <v-col cols="6">
+                          <v-select v-model="source" :items="sources" label="Source" density="compact" hide-details />
+                        </v-col>
+                        <v-col cols="6">
+                          <v-select v-model="kind" :items="kinds" label="Kind" density="compact" hide-details />
+                        </v-col>
+                        <v-col cols="6">
+                          <v-select v-model="length" :items="lengths" label="Length" density="compact" hide-details />
+                        </v-col>
+                        <v-col cols="6">
                           <v-select
                             v-model="state.ui.lickTexture"
                             :items="[
@@ -446,15 +517,6 @@ const assigningTo = computed(() => {
                             density="compact"
                             hide-details
                           />
-                        </v-col>
-                        <v-col cols="4">
-                          <v-select v-model="source" :items="sources" label="Source" density="compact" hide-details />
-                        </v-col>
-                        <v-col cols="4">
-                          <v-select v-model="kind" :items="kinds" label="Kind" density="compact" hide-details />
-                        </v-col>
-                        <v-col cols="4">
-                          <v-select v-model="length" :items="lengths" label="Length" density="compact" hide-details />
                         </v-col>
                         <v-col cols="12">
                           <v-switch

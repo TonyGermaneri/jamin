@@ -63,6 +63,10 @@ SUITES = [
         "src/core/voiceLeading.js", "src/core/phrases.js",
     ], "tests/phrase-keys.test.js"),
     ([
+        "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",
+        "src/core/voiceLeading.js", "src/core/phrases.js",
+    ], "tests/phrase-names.test.js"),
+    ([
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
         "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js", "src/core/player.js",
     ], "tests/player.test.js"),
