@@ -30,11 +30,61 @@ $ curl -o /dev/null -w '%{http_code}' http://Mac-Studio-9.local:7788/
 200
 ```
 
-**A browser cannot discover anything.** This is not a gap in effort; it is the shape of the
-platform. A page has no UDP, no multicast, no mDNS API, and cannot listen for connections. It
-also cannot scan: Chrome's Private Network Access rules exist specifically to stop a page probing
-the machines around it. Any design that expects the browser to find its peers is a design that
-cannot be built.
+**A browser page cannot discover peers on macOS — but the web platform can, elsewhere.** The
+flat version of this claim is wrong and the precise version matters, so:
+
+*The capability exists.* The **Direct Sockets API** gives a page `TCPSocket`, `UDPSocket` and
+`TCPServerSocket`, and multicast was added to it for exactly this purpose — local device
+discovery. It is restricted to **Isolated Web Apps**, which are signed, installed bundles, and
+IWAs are available to end users on **ChromeOS only**. Checked in Chrome 151 on this machine:
+
+```
+Direct Sockets: TCPSocket          undefined
+Direct Sockets: UDPSocket          undefined
+Direct Sockets: TCPServerSocket    undefined
+```
+
+*Reaching a local address is a separate question, and it now has a permission.* Chrome shipped
+**Local Network Access** in 142, and it is queryable:
+
+```
+permission: local-network-access   prompt
+```
+
+LNA gates a page *reaching* a private address; it does not tell the page which addresses exist.
+Discovery and access are different problems and only the second one has an API.
+
+*The macOS prompt is Chrome, not a page.* "Allow Chrome to discover devices on your local
+network" is the operating system asking the **application**, and Chrome's own manifest says what
+for:
+
+```
+$ PlistBuddy -c "Print :NSBonjourServices" "/Applications/Google Chrome.app/Contents/Info.plist"
+Array { _googlecast._tcp }
+```
+
+One service, Google Cast. Chrome does mDNS to find Chromecasts. A page cannot ask it to look for
+anything else.
+
+**A page served by one node can reach all the others directly.** This is the finding that changed
+the design, and it went the opposite way to the guess. LNA gates *public → private*; a page whose
+own origin is already a local address is not gated going to another one. Measured, cross-origin,
+with nothing but ordinary CORS headers:
+
+```
+origin         http://mac-studio-9.local:7801
+same node      200 {"node":"7801"}
+another node   200 {"node":"7802"}
+by raw LAN ip  200 {"node":"7802"}
+```
+
+So the browser does not have to relay everything through whichever node served it. It holds a
+connection to every machine.
+
+**WebTransport is not the answer here.** It needs a secure context, which on a network of `.local`
+names means certificates for names that no certificate authority will vouch for. Verified
+`undefined` on a plain-HTTP LAN origin. Server-sent events over HTTP need none of that machinery
+and carry the same traffic.
 
 **JUCE has the pieces for the native half and none for the browser half.** `DatagramSocket` does
 multicast — `joinMulticast`, `setMulticastLoopbackEnabled`, `setEnablePortReuse` — and
@@ -49,9 +99,10 @@ ours to write.
 find the other machines, and an HTTP endpoint to talk to browsers. No broker, no cloud, no daemon
 to install, nothing to launch.
 
-It has to be there because of the third finding above. Discovery is done by the **nodes**, which
-are native and can; the browser is then *handed* the list rather than finding it. Which means the
-browser's experience is still automatic, as long as it gets to a node once:
+It has to be there because discovery has no browser API on this platform. Discovery is done by
+the **nodes**, which are native and can; the browser is then *handed* the list rather than
+finding it, and talks to every machine on it directly. Which means the browser's experience is
+still automatic, as long as it reaches a node once:
 
 ```
         multicast 239.x : nodes find each other, automatically
@@ -61,8 +112,8 @@ browser's experience is still automatic, as long as it gets to a node once:
    └────┬─────┘   └──────────┘   └──────────┘
         │ http + server-sent events
         ▼
-   a browser, anywhere on the network — which is handed
-   the peer list by whichever node served it the page
+   a browser, anywhere on the network — handed the peer list by
+   whichever node served it, then talking to all of them directly
 ```
 
 Open `http://mac-studio-9.local:7777` once and bookmark it. That page is jamin, it is already
@@ -159,7 +210,9 @@ anything trusts it.
 
 **Phase N3 — joining the two.** The page talks to its own node the same way whether it is inside
 the plugin or in a browser, because it is the same page; `src/core/host.js` grows a second
-transport rather than the application growing a second mode.
+transport rather than the application growing a second mode. A page in a browser additionally
+opens a stream to every peer it was told about, which costs nothing and removes the node that
+served it from the middle of every conversation.
 
 **Phase N4 — what people need to see.** Who else is here, who is typing, and what happens when
 somebody drops off. A shared chart with no sense of who is sharing it is unnerving to use.
