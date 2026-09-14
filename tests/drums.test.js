@@ -95,4 +95,69 @@ for (const voice of reachable) {
 
 check('an unknown kit is General MIDI rather than silence', kitById('nope').id, 'gm')
 
+
+/* ---------------- laying a groove over a span --------------------------- */
+// A groove loops; it is never stretched. A two-bar groove under eight bars
+// plays four times, because a drum groove slowed to twice its length is not
+// that groove played slower, it is a different and much worse groove.
+const bar = 96
+const twoBar = {
+  lengthPulses: bar * 2,
+  notes: [
+    { at: 0, note: 36, duration: 6, velocity: 110 },
+    { at: 24, note: 38, duration: 6, velocity: 100 },
+    { at: bar, note: 36, duration: 6, velocity: 105 },
+  ],
+}
+
+const overEight = layOutGroove(twoBar, bar * 8, gm)
+check('two bars under eight plays four times', overEight.length, 12)
+check('and starts where the section does', overEight[0].at, 0)
+check('and the last pass starts on bar seven', overEight[overEight.length - 1].at, bar * 7)
+check('nothing lands past the end', overEight.every((n) => n.at < bar * 8), true)
+check('it comes out in time order',
+      overEight.every((n, i) => i === 0 || n.at >= overEight[i - 1].at), true)
+
+// A groove that does not divide the span is cut off, which is what a drummer
+// does when the section changes under them.
+const overThree = layOutGroove(twoBar, bar * 3, gm)
+check('an odd span cuts the last pass short', overThree.length, 5)
+check('and still nothing lands past the end', overThree.every((n) => n.at < bar * 3), true)
+
+check('no span, no groove', layOutGroove(twoBar, 0, gm).length, 0)
+check('no groove, no notes', layOutGroove(null, bar * 4, gm).length, 0)
+
+// The notes come out on the kit, not on the corpus's own numbers.
+const tomGroove = { lengthPulses: bar, notes: [{ at: 0, note: 48, duration: 6, velocity: 90 }] }
+check('a TD-11 high tom reaches the GM high tom',
+      layOutGroove(tomGroove, bar, gm)[0].note, 50)
+check('and the V-Drums one is left alone',
+      layOutGroove(tomGroove, bar, kitById('vdrums').map)[0].note, 48)
+
+/* ---------------- and placing a fill ------------------------------------ */
+// The easy thing to get backwards: a fill leads *into* the change, so it ends
+// where the section ends rather than starting there.
+const oneBarFill = {
+  lengthPulses: bar,
+  notes: [
+    { at: 0, note: 43, duration: 6, velocity: 100 },
+    { at: 48, note: 38, duration: 6, velocity: 110 },
+  ],
+}
+
+const placed = placeFill(oneBarFill, bar * 4, gm)
+check('a one-bar fill occupies the last bar', placed[0].at, bar * 3)
+check('and ends where the section does', placed[placed.length - 1].at, bar * 3 + 48)
+check('not at the beginning', placed[0].at !== 0, true)
+
+const twoBarFill = { ...oneBarFill, lengthPulses: bar * 2 }
+check('a two-bar fill takes the last two', placeFill(twoBarFill, bar * 4, gm)[0].at, bar * 2)
+
+// Half a fill is a mistake; playing the groove instead is not.
+check('a fill that will not fit is refused', placeFill(twoBarFill, bar, gm).length, 0)
+check('one that exactly fits is not', placeFill(oneBarFill, bar, gm).length, 2)
+check('and it starts at nought when it does', placeFill(oneBarFill, bar, gm)[0].at, 0)
+
+check('no fill, no notes', placeFill(null, bar * 4, gm).length, 0)
+
 console.log(failed ? `drums: ${failed} FAILED` : 'drums: all checks passed')

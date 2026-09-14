@@ -529,6 +529,13 @@ Licence before download, every time.
   redistributed here. (The GitHub repo's Apache-2.0 covers the code, not the
   data.) jamin therefore ships the *converter*, not the data: download it
   yourself and paste it into the importer. Your own use stays within CC-BY-NC.
+- **The Groove MIDI Dataset** (`src/data/grooveDrums.json`, 1.3MB of drum
+  grooves) is **CC-BY-4.0**, which is one-way compatible with GPLv3 — so it is
+  the one corpus here that can be bundled outright, and it is. What ships is a
+  derived work: 1,150 human performances cut into loopable excerpts, with the
+  fills kept whole and the timing rounded to jamin's 24 pulses per quarter. The
+  attribution and the method are in `src/data/grooveDrums.LICENSE`, and
+  `scripts/extract_groove.mjs` rebuilds it from the original.
 - Several jazz corpora that fit the notation almost perfectly state **no licence
   at all** and are transcriptions of copyrighted songs. Import-only, never
   bundled.

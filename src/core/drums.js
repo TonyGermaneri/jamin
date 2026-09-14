@@ -1,0 +1,151 @@
+/**
+ * The drum catalogue.
+ *
+ * Two and a half thousand grooves cut from human performances: a beat that
+ * loops for as long as a section lasts, and a fill that goes in the bar before
+ * the next one. That division is the corpus's own -- every performance in the
+ * Groove MIDI Dataset is labelled `beat` or `fill` -- and it is also how a drum
+ * chart has worked since long before there were corpora to draw on.
+ *
+ * **A groove is not a phrase.** A phrase is stored as degrees and re-pointed at
+ * whatever chord it lands on; a drum note is an instrument, not a pitch, and
+ * transposing one turns a snare into a tom. Nothing here goes near the voice
+ * leading. What it does need is translating from the kit it was played on to
+ * the kit that will play it, which is @see drumKits.js.
+ *
+ * @see src/data/grooveDrums.LICENSE for the attribution CC BY 4.0 requires.
+ */
+
+import { resourceOk } from './fetchResource.js'
+import { mapDrumNotes } from './drumKits.js'
+
+const PULSES_PER_BAR_4_4 = 96
+
+let cache = null
+let pending = null
+let report = { grooves: 0, error: null }
+
+/** One entry of the shipped file, as the application uses it. */
+function toGroove(entry, index) {
+  if (!entry || !Array.isArray(entry.v)) return null
+
+  const [numerator = 4, denominator = 4] = String(entry.t || '4-4').split('-').map(Number)
+
+  return {
+    id: `g${index}`,
+    name: entry.n || `groove ${index}`,
+    // beat | fill. The only two things a drummer is doing at this level.
+    kind: entry.k === 'fill' ? 'fill' : 'beat',
+    genre: entry.g || '',
+    substyle: entry.u || '',
+    bpm: Number(entry.b) || 0,
+    timeSignature: entry.t || '4-4',
+    beatsPerBar: numerator,
+    beatUnit: denominator,
+    bars: Number(entry.r) || 1,
+    lengthPulses: Number(entry.d) || PULSES_PER_BAR_4_4,
+    // Left in the kit they were played on. Translating here would bake one
+    // kit into the catalogue; it happens at playback, where the answer is known.
+    notes: entry.v.map(([at, note, duration, velocity]) => ({ at, note, duration, velocity })),
+    origin: 'Groove MIDI Dataset',
+    builtin: true,
+  }
+}
+
+export async function loadDrums() {
+  if (cache) return cache
+  if (!pending) {
+    pending = fetch(new URL('../data/grooveDrums.json', import.meta.url))
+      .then((response) => (resourceOk(response) ? response.json() : Promise.reject(new Error(response.status))))
+      .then((payload) => {
+        cache = (payload.grooves || []).map(toGroove).filter(Boolean)
+        report = { grooves: cache.length, error: null }
+        return cache
+      })
+      .catch((error) => {
+        cache = []
+        report = { grooves: 0, error: String((error && error.message) || error) }
+        return cache
+      })
+  }
+  return pending
+}
+
+export function loadedDrums() {
+  return cache || []
+}
+
+export function drumReport() {
+  return report
+}
+
+/** Free-text search over the name, genre and substyle. */
+export function searchDrums(list, query) {
+  const needle = String(query || '').trim().toLowerCase()
+  if (!needle) return list
+  return list.filter(
+    (groove) =>
+      groove.name.toLowerCase().includes(needle) ||
+      groove.genre.toLowerCase().includes(needle) ||
+      groove.substyle.toLowerCase().includes(needle) ||
+      groove.kind.includes(needle)
+  )
+}
+
+/** A line for the list: what it is, how long, and how fast it was played. */
+export function summarizeGroove(groove) {
+  if (!groove) return 'empty'
+  const bars = `${groove.bars} bar${groove.bars === 1 ? '' : 's'}`
+  const style = groove.substyle ? `${groove.genre} · ${groove.substyle}` : groove.genre
+  return `${groove.kind} · ${bars} · ${groove.notes.length} hits · ${style} · played at ${groove.bpm}`
+}
+
+/**
+ * The groove, as this kit plays it, laid out over a span of chart.
+ *
+ * Looped rather than stretched. A two-bar groove under an eight-bar verse plays
+ * four times; it is not slowed down to last eight, because a drum groove
+ * stretched to twice its length is not that groove played slower, it is a
+ * different and much worse groove. A groove that does not divide the span
+ * evenly is cut off at the end, which is what a drummer does when the section
+ * changes under them.
+ */
+export function layOutGroove(groove, spanPulses, map) {
+  if (!groove || !groove.notes.length || spanPulses <= 0) return []
+
+  const length = Math.max(1, groove.lengthPulses)
+  const played = mapDrumNotes(groove.notes, map)
+  const out = []
+
+  for (let start = 0; start < spanPulses; start += length) {
+    for (const note of played) {
+      const at = start + note.at
+      if (at >= spanPulses) continue
+      out.push({ ...note, at })
+    }
+  }
+
+  return out.sort((a, b) => a.at - b.at || a.note - b.note)
+}
+
+/**
+ * A fill, placed so it *ends* where the section does.
+ *
+ * This is the whole point of a fill and the easy thing to get backwards. It
+ * leads into the change, so a one-bar fill occupies the last bar and a two-bar
+ * fill the last two -- it is not started at the section's end and allowed to
+ * run over, and it is not started at the beginning. A fill longer than the span
+ * it has to live in is refused rather than truncated: half a fill is a mistake,
+ * and playing the groove instead is not.
+ */
+export function placeFill(fill, spanPulses, map) {
+  if (!fill || !fill.notes.length) return []
+
+  const length = Math.max(1, fill.lengthPulses)
+  if (length > spanPulses) return []
+
+  const offset = spanPulses - length
+  return mapDrumNotes(fill.notes, map)
+    .map((note) => ({ ...note, at: offset + note.at }))
+    .sort((a, b) => a.at - b.at || a.note - b.note)
+}
