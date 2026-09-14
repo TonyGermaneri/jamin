@@ -4,6 +4,7 @@ add_executable(jamin-tests
     SequenceTest.cpp
     SongBusTest.cpp
     DiscoveryTest.cpp
+    EndpointTest.cpp
     main.cpp)
 
 target_link_libraries(jamin-tests PRIVATE jamin_core)

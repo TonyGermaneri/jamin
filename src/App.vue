@@ -75,6 +75,30 @@ const accentTitle = computed(() => {
   return `Accent: ${accent.value.name} — plays instead of the next chord's phrase${binding}`
 })
 
+/*
+ * Who else has this chart.
+ *
+ * The count is machines, not people -- a machine with three browsers open is
+ * one machine -- because that is what discovery knows and claiming otherwise
+ * would be inventing a number.
+ */
+const netIcon = computed(() => {
+  if (state.net.state === 'joining') return 'mdi-lan-pending'
+  return state.net.peers.length ? 'mdi-lan-connect' : 'mdi-lan-disconnect'
+})
+
+const netColour = computed(() => {
+  if (state.net.state === 'joining') return 'warning'
+  return state.net.peers.length ? 'success' : undefined
+})
+
+const netTitle = computed(() => {
+  if (state.net.state === 'joining') return 'Looking for the other machines…'
+  if (!state.net.peers.length) return 'Sharing this chart — nobody else is here yet'
+  const names = state.net.peers.map((peer) => peer.name || peer.host).join(', ')
+  return `Sharing this chart with ${state.net.peers.length} other machine${state.net.peers.length === 1 ? '' : 's'}: ${names}`
+})
+
 const readoutColor = computed(() => state.settings.theme.fg)
 
 function openMidi() {
@@ -133,6 +157,17 @@ function toggleArm() {
           :color="state.ui.armed ? 'error' : undefined"
           title="Mr. Accompany Me — capture a phrase over the next chord"
           @click="toggleArm"
+        />
+        <!-- Only when there is a network to be on. A chart shared with nobody
+             should not carry an indicator saying so. -->
+        <v-btn
+          v-if="state.net.state !== 'offline'"
+          :icon="netIcon"
+          size="small"
+          variant="text"
+          :color="netColour"
+          :title="netTitle"
+          @click="state.ui.settingsTab = 'midi'; state.ui.settings = true"
         />
         <v-btn icon="mdi-book-music-outline" size="small" variant="text" title="Phrase book" @click="state.ui.phrases = true" />
         <v-btn icon="mdi-bookshelf" size="small" variant="text" title="Progression library" @click="state.ui.progressions = true" />

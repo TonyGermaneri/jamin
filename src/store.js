@@ -11,6 +11,7 @@
 import { reactive, watch } from 'vue'
 import { MidiEngine } from './core/midi.js'
 import { hosted, hostData, callHost, onHost, HostClock } from './core/host.js'
+import { nodeAvailable, Session } from './core/net.js'
 import { Player } from './core/player.js'
 import { parseScore } from './core/score.js'
 import {
@@ -82,6 +83,9 @@ export const state = reactive({
   midi: { state: 'idle', error: null, inputs: [], outputs: [] },
   // Set once at startup and never again: whether this page is the plugin's
   // editor rather than a browser tab, and who it is if so.
+  // Several machines holding the same chart. Empty until this page turns out
+  // to have been served by a node. @see src/core/net.js
+  net: { joined: false, state: 'offline', peers: [], site: null },
   host: {
     active: false,
     instanceId: null,
@@ -259,6 +263,8 @@ export async function initApp() {
   if (hosted()) await adoptHost()
   else await openWebMidi()
 
+  await joinNetwork()
+
   setInterval(syncStatus, 120)
 
   // Build the lick catalogue once the chart is up. It is a few tens of
@@ -377,6 +383,64 @@ function pushToHost() {
   compileTimer = setTimeout(() => {
     callHost('jaminCompile', compileRequest()).catch(() => {})
   }, 250)
+}
+
+/* ------------------------------------------------------------------ *
+ * The network
+ * ------------------------------------------------------------------ */
+
+let session = null
+/** Set while the session is writing, so its own text does not come straight
+    back out as a local edit and round the loop again. */
+let applyingRemote = false
+
+/**
+ * Join the other machines, if this page was served by one of them.
+ *
+ * Asked rather than configured: a node answers /peers, and a dev server or the
+ * plugin's own bundle does not. Nothing is switched on, nothing is typed, and a
+ * page that is not on a node carries on exactly as before.
+ */
+async function joinNetwork() {
+  if (hosted()) return                       // the plugin's own networking is its own
+  if (typeof EventSource !== 'function') return
+  if (!(await nodeAvailable())) return
+
+  const site = `${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`
+  state.net.site = site
+
+  session = new Session({
+    site,
+    onText: (text) => {
+      if (text === state.text) return
+      applyingRemote = true
+      try {
+        setText(text)
+      } finally {
+        applyingRemote = false
+      }
+    },
+    onPeers: (peers) => { state.net.peers = peers },
+    onState: (net) => {
+      state.net.state = net
+      state.net.joined = net === 'joined'
+    },
+  })
+
+  await session.start()
+
+  // An empty session takes whatever this page already had -- somebody has to
+  // go first, and the one that arrives with a chart is a better candidate than
+  // the one that arrives with nothing.
+  if (!session.text() && state.text) session.change(state.text)
+  else if (session.text()) session.onText(session.text())
+
+  state.net.joined = true
+}
+
+/** Tell the others about an edit made here. */
+function publishEdit(text) {
+  if (session && !applyingRemote) session.change(text)
 }
 
 function readStored(key) {
@@ -589,6 +653,9 @@ watch(
 // The chart and the phrase bound to it are the other two things that decide
 // what comes out. Everything else the plugin is told is derived from these.
 watch(() => [state.text, state.songPhrase], () => pushToHost())
+
+// And everybody else holding this chart hears about it.
+watch(() => state.text, (text) => publishEdit(text))
 
 watch(
   () => [

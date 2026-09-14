@@ -63,3 +63,12 @@ if(APPLE)
     set_target_properties(jamin-multicast PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 endif()
+
+# jamin-node: the plugin's networking with the plugin taken away. What to run
+# when something is not syncing and the question is whether the network or the
+# plugin is at fault -- and useful on its own, since a machine with no DAW can
+# hold the chart for everybody else.
+add_executable(jamin-node node_main.cpp)
+set_target_properties(jamin-node PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+target_link_libraries(jamin-node PRIVATE jamin_core)

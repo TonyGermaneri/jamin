@@ -214,14 +214,49 @@ nodes -- so the socket is shareable and a node ignores its own beacon by id. Tha
 rather than assumed, along with a third node arriving, one leaving and being forgotten, and a
 node with no id being refused rather than started.
 
-**Phase N2 — the endpoint.** HTTP in the plugin: the built page, `GET /events` as a stream, `POST
-/ops`, `GET /peers`. Same files the editor already serves, so there is one page.
+**Phase N2 — the endpoint. *Done; see `native/core/src/Endpoint.cpp`.*** The built page, `GET
+/events` as a stream that never closes, `POST /ops`, `GET /peers`, and `GET /doc` -- everything
+said so far, so a browser arriving late can be brought up to date. Every response allows any
+origin, which is what lets one page talk to every machine.
 
-**Phase N3 — joining the two.** The page talks to its own node the same way whether it is inside
-the plugin or in a browser, because it is the same page; `src/core/host.js` grows a second
-transport rather than the application growing a second mode. A page in a browser additionally
-opens a stream to every peer it was told about, which costs nothing and removes the node that
-served it from the middle of every conversation.
+Bound to the loopback unless asked otherwise. A port on the network is something to opt into, not
+something that happens because the feature was compiled in.
 
-**Phase N4 — what people need to see.** Who else is here, who is typing, and what happens when
-somebody drops off. A shared chart with no sense of who is sharing it is unnerving to use.
+**Phase N3 — joining the two. *Done; see `src/core/net.js` and `native/tools/node_main.cpp`.***
+A page served by a node joins on its own: it asks `/peers`, and a node answers where a dev server
+and the plugin's bundle do not, so there is nothing to switch on. `jamin-node` relays -- every
+edit goes to everybody attached here and on to every other node, with an envelope id stopping it
+going round for ever.
+
+**Phase N4 — what people need to see. *Done.*** An indicator in the toolbar when there is a
+network to be on at all, and the machines listed by name and address in settings, each a link to
+open that machine's own copy. It says plainly that anyone who can reach the port can edit the
+chart, because that is true and is better read than discovered.
+
+The count is machines rather than people -- a machine with three browsers open is one machine --
+because that is what discovery knows, and any other number would be invented.
+
+---
+
+## Proving it
+
+`npm run test:network` is the one that matters. It starts real `jamin-node` processes, points a
+real browser at each, types into one and waits for the other to agree. Nothing is mocked: the
+nodes find each other by multicast, the pages come over HTTP, the edits travel as server-sent
+events, and what is asserted is that two independently rendered chord charts end up saying the
+same thing.
+
+```
+ok   the node found its peer   (1 peers)
+ok   an edit on one machine reaches the other
+ok   and it works in both directions
+ok   simultaneous edits converge
+ok   and neither edit was lost
+ok   a browser that joins late is caught up
+ok   a node that leaves is forgotten   (0 peers)
+ok   and the rest keep working
+ok   no page errors anywhere
+```
+
+The fourth and fifth are the ones a last-writer-wins scheme fails: two edits made before either
+machine has heard the other. Both survive, and both machines agree on the result.

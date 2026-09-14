@@ -89,6 +89,31 @@ async function retryMidi() {
         <v-window v-model="state.ui.settingsTab">
           <!-- MIDI ------------------------------------------------------- -->
           <v-window-item value="midi">
+            <v-alert
+              v-if="state.net.state !== 'offline'"
+              :type="state.net.peers.length ? 'success' : 'info'"
+              variant="tonal" density="compact" class="mb-4"
+            >
+              <div class="text-caption font-weight-medium mb-1">
+                Sharing this chart
+                <span v-if="state.net.state === 'joining'">— looking for the others…</span>
+              </div>
+              <div v-if="!state.net.peers.length" class="text-caption">
+                Nobody else is here yet. Any machine running jamin on this network will find this
+                one on its own; there is nothing to configure and no address to type.
+              </div>
+              <table v-else class="text-caption jamin-hostinfo">
+                <tr v-for="peer in state.net.peers" :key="peer.id">
+                  <td>{{ peer.name || 'a machine' }}</td>
+                  <td><a :href="`http://${peer.host}:${peer.port}/`" target="_blank"
+                         rel="noreferrer">{{ peer.host }}:{{ peer.port }}</a></td>
+                </tr>
+              </table>
+              <div class="text-caption mt-2 text-medium-emphasis">
+                Anyone who can reach this machine can edit the chart. There is no password.
+              </div>
+            </v-alert>
+
             <template v-if="state.host.active">
               <v-alert type="success" variant="tonal" density="compact" class="mb-3">
                 Running as a plugin. The host supplies the transport and takes the notes, so there

@@ -14,7 +14,8 @@
     "test": "python3 scripts/test.py",
     "test:browser": "python3 scripts/browser_test.py tests/browser/modules.html tests/browser/app.html tests/browser/midi.html",
     "build:page": "vite build",
-    "build:compile": "vite build -c vite.compile.config.js"
+    "build:compile": "vite build -c vite.compile.config.js",
+    "test:network": "python3 scripts/network_test.py"
   },
   "dependencies": {
     "@mdi/font": "^7.4.47",
