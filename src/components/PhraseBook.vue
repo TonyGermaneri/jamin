@@ -31,6 +31,7 @@ import {
 } from '../store.js'
 import { keyPitchClass, phraseCategory, phraseKey, summarize } from '../core/phrases.js'
 import { describeLick } from '../core/licks.js'
+import InfoTip from './InfoTip.vue'
 
 const search = ref('')
 const name = ref('')
@@ -704,17 +705,22 @@ const assigningTo = computed(() => {
 
               <v-col cols="12">
                 <v-divider class="mb-3" />
-                <v-switch v-model="accompany.pedal" label="Hold pedal for chord" />
-                <div class="text-caption text-medium-emphasis mb-2">
-                  Sustain (CC 64) goes down as each chord starts and lifts on the change, so a
-                  chord rings for its full length without smearing into the next one. It follows
-                  whatever is sounding — the chord channel, and the accompaniment channel when a
-                  phrase is playing.
-                  <br />
-                  Write <code>[p]</code> in the chart to hold it from that point on and
-                  <code>[np]</code> to lift it again — <code>[n.p]</code> and <code>[n.p.]</code>
-                  mean the same. A mark beats this switch from where it appears; this switch is
-                  what applies before the first one.
+                <div class="d-flex align-center">
+                  <v-switch v-model="accompany.pedal" label="Hold pedal for chord" hide-details />
+                  <InfoTip>
+                    Sustain (CC 64) goes down as each chord starts and lifts on the change, so a
+                    chord rings for its full length without smearing into the next one. It follows
+                    whatever is sounding — the chord channel, and the accompaniment channel when a
+                    phrase is playing.
+                    <br /><br />
+                    <code>[n.p]</code> and <code>[n.p.]</code> mean the same as <code>[np]</code>.
+                    A mark beats this switch from where it appears; this switch is what applies
+                    before the first one.
+                  </InfoTip>
+                </div>
+                <div class="text-caption text-medium-emphasis mb-2 mt-1">
+                  Or write <code>[p]</code> in the chart to hold it from there,
+                  <code>[np]</code> to lift it.
                 </div>
               </v-col>
 
@@ -722,14 +728,15 @@ const assigningTo = computed(() => {
                 <v-divider class="my-3" />
                 <div class="text-body-2 mb-1">Accent</div>
                 <div class="text-caption text-medium-emphasis mb-2">
-                  <span v-if="accent">
-                    <strong>{{ accent.name }}</strong> — right-click any phrase in the catalogue to
-                    change it.
-                  </span>
+                  <span v-if="accent"><strong>{{ accent.name }}</strong> — right-click any phrase
+                    in the catalogue to change it.</span>
                   <span v-else>None yet. Right-click a phrase in the catalogue to choose one.</span>
-                  It replaces the phrase on the next chord rather than playing over the top of it,
-                  and waits for the chord change to do it — so pressing this half a bar early means
-                  the same thing as pressing it a beat early. Press it again to cancel.
+                  <InfoTip>
+                    It replaces the phrase on the next chord rather than playing over the top of
+                    it, and waits for the chord change to do it — so pressing this half a bar
+                    early means the same thing as pressing it a beat early. Press it again to
+                    cancel.
+                  </InfoTip>
                 </div>
                 <div class="d-flex align-center flex-wrap mb-2" style="gap: 8px">
                   <v-btn size="small" :prepend-icon="state.ui.accentArmed ? 'mdi-flash' : 'mdi-flash-outline'"

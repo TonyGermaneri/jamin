@@ -27,6 +27,7 @@ import {
 } from '../store.js'
 import { summarizeProgression } from '../core/progressions.js'
 import { parseScore } from '../core/score.js'
+import InfoTip from './InfoTip.vue'
 import { pcName } from '../core/chordParser.js'
 import { openOutside } from '../core/host.js'
 
@@ -367,16 +368,22 @@ function runExport() {
             <v-alert density="compact" variant="tonal" class="mb-4 text-caption">
               <div class="mb-2">
                 <strong>Chordonomicon</strong> — {{ CHORDONOMICON.rows.toLocaleString() }} progressions with
-                genre and decade, CC-BY-NC-4.0. It is a {{ Math.round(264198044 / 1e6) }}MB CSV, which is
-                too much to ask a server for on your behalf and far too much to keep in a browser's
-                ordinary storage. So: download it, then hand the file back here. It is read as a stream
-                and kept in the browser's database, so the whole set fits and none of it sits in memory.
+                genre and decade, CC-BY-NC-4.0. Download the CSV, then hand the file back here.
+                <InfoTip>
+                  It is a {{ Math.round(264198044 / 1e6) }}MB CSV, which is too much to ask a
+                  server for on your behalf and far too much to keep in a browser's ordinary
+                  storage. It is read as a stream and kept in the browser's database, so the whole
+                  set fits and none of it sits in memory.
+                </InfoTip>
               </div>
               <div v-if="state.host.active" class="mb-2">
-                A plugin window cannot download a file — so the button below opens the link in your
-                browser instead. Download it there, then come back and choose it here. Reading a file
-                you pick <em>does</em> work, and the database is shared by every instance, so this is
-                once per machine rather than once per track.
+                A plugin window cannot download a file, so the button below opens the link in your
+                browser.
+                <InfoTip>
+                  Download it there, then come back and choose it here. Reading a file you pick
+                  <em>does</em> work, and the database is shared by every instance, so this is once
+                  per machine rather than once per track.
+                </InfoTip>
               </div>
               <div class="d-flex align-center flex-wrap" style="gap: 8px">
                 <v-btn size="small" :href="state.host.active ? undefined : CHORDONOMICON_CSV"

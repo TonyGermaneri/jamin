@@ -4,6 +4,7 @@
  * use, and how it looks.
  */
 import { computed, ref, watch } from 'vue'
+import InfoTip from './InfoTip.vue'
 import { state, engine, applyTheme, resetSettings, applyPortBindings } from '../store.js'
 import { THEMES, SHADER_DEFAULTS } from '../core/themes.js'
 import { loadChordDictionary, searchChords } from '../core/chordDictionary.js'
@@ -115,15 +116,17 @@ async function retryMidi() {
                 Nothing is shared until you choose a word.
               </strong>
               <template v-else>
-                Every machine running jamin here finds the others on its own, and the ones that
-                know this word hold the same chart — type on any of them. Open
+                Every machine that knows this word holds the same chart. Open
                 <code v-if="state.net.address">{{ state.net.address }}</code>
                 <code v-else>http://&lt;this machine&gt;.local:7777</code>
                 on a phone or a laptop and that is jamin too.
               </template>
-              It travels in the clear on your own network, so pick a word you would say out loud
-              rather than one you use anywhere else. Changing it takes effect next time the plugin
-              loads.
+              <InfoTip>
+                Every machine running jamin here finds the others on its own — there is nothing to
+                configure and no address to type. The word travels in the clear on your own
+                network, so pick one you would say out loud rather than one you use anywhere else.
+                Changing it takes effect next time the plugin loads.
+              </InfoTip>
             </div>
 
             <v-alert
@@ -143,8 +146,12 @@ async function retryMidi() {
                 <span v-if="state.net.state === 'joining'">— looking for the others…</span>
               </div>
               <div v-if="!state.net.peers.length" class="text-caption">
-                Nobody else is here yet. Any machine running jamin on this network will find this
-                one on its own; there is nothing to configure and no address to type.
+                Nobody else is here yet.
+                <InfoTip>
+                  Any machine running jamin on this network will find this one on its own; there
+                  is nothing to configure and no address to type. Every machine has to be using
+                  the same word.
+                </InfoTip>
               </div>
               <table v-else class="text-caption jamin-hostinfo">
                 <tr v-for="peer in state.net.peers" :key="peer.id">
@@ -160,8 +167,11 @@ async function retryMidi() {
 
             <template v-if="state.host.active">
               <v-alert type="success" variant="tonal" density="compact" class="mb-3">
-                Running as a plugin. The host supplies the transport and takes the notes, so there
-                is nothing here to bind — this tab is the browser build's.
+                Running as a plugin — nothing here to bind.
+                <InfoTip>
+                  The host supplies the transport and takes the notes, so the port and channel
+                  settings on this tab are the browser build's. What the host is saying is below.
+                </InfoTip>
               </v-alert>
 
               <!-- What the host is actually saying. Every question that starts
@@ -423,11 +433,14 @@ async function retryMidi() {
           <!-- Accompany -------------------------------------------------- -->
           <v-window-item value="accompany">
             <div class="text-caption text-medium-emphasis mb-3">
-              Mr. Accompany Me. Bind your keyboard as the accompaniment input, arm the red
-              button, and play one chord's worth of music. The phrase lands in the phrase
-              book; choose it and it plays over the whole song, re-pointed at each chord by
-              voice leading. Turn on per-chord articulations below if you want different
-              phrases on different chords.
+              Mr. Accompany Me — play one chord's worth of music and it becomes a phrase that
+              plays over the whole song.
+              <InfoTip>
+                Bind your keyboard as the accompaniment input, arm the red button, and play one
+                chord's worth of music. The phrase lands in the phrase book; choose it and it
+                plays over the whole song, re-pointed at each chord by voice leading. Turn on
+                per-chord articulations below if you want different phrases on different chords.
+              </InfoTip>
             </div>
             <v-row dense>
               <v-col cols="12" md="6">

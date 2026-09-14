@@ -245,6 +245,28 @@ int main(int argc, const char **argv) {
               @"        panel.click(); await wait(400);"
               @"        check(title + ' folds them again', card.querySelectorAll('.jamin-book-filters .v-select').length === 0);"
               @"      }"
+              /* Every tab, not just the one the book opens on. The card body is
+                 overflow:hidden on purpose -- the catalogue tab scrolls its list
+                 and its detail pane separately -- and for a long time that meant
+                 every *other* tab was silently cut off at the bottom of the card
+                 with no scrollbar and no way to reach the rest of it. */
+              @"      for (const tab of [...card.querySelectorAll('.v-tab')]) {"
+              @"        const label = (tab.textContent || '').trim().slice(0, 24);"
+              @"        tab.click(); await wait(350);"
+              @"        const pane = card.querySelector('.v-window-item--active');"
+              @"        if (!pane) continue;"
+              @"        const body = card.querySelector('.v-card-text');"
+              @"        const over = (el) => el && el.scrollHeight > el.clientHeight + 2;"
+              @"        const scrolls = (el) => {"
+              @"          if (!el) return false;"
+              @"          const y = getComputedStyle(el).overflowY;"
+              @"          return y === 'auto' || y === 'scroll';"
+              @"        };"
+              @"        const spills = over(pane);"
+              @"        const reachable = !spills || scrolls(pane) || (over(body) && scrolls(body));"
+              @"        if (spills) lines.push('  ' + label + ': ' + pane.scrollHeight + 'px in ' + pane.clientHeight + 'px, overflowY=' + getComputedStyle(pane).overflowY);"
+              @"        check(title + ' tab \"' + label + '\" can be read to the end', reachable);"
+              @"      }"
               @"      const sources = [...card.querySelectorAll('.v-tab')].find(t => /sources/i.test(t.textContent));"
               @"      if (sources) {"
               @"        sources.click(); await wait(500);"

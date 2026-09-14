@@ -192,6 +192,28 @@ body,
   flex-direction: column;
 }
 
+/*
+ * And the tab itself scrolls.
+ *
+ * The card body above is overflow:hidden on purpose -- the catalogue tab is a
+ * list and a detail pane that scroll independently, and letting the whole card
+ * scroll puts the pagination below the fold. But that tab is not the only tab.
+ * Playback, Sources and How it works are ordinary prose and controls with
+ * nothing inside them that scrolls, so they inherited the hidden overflow and
+ * were simply cut off at the bottom of the card -- no scrollbar, no indication,
+ * the rest of the panel unreachable. Only above 960px, because below it the
+ * card body scrolls as a whole and hid the fault.
+ *
+ * Putting it here rather than on each tab means a tab added later scrolls
+ * because it is a tab, not because somebody remembered. The catalogue tab sizes
+ * its own row to the container, so it never has anything to scroll and this
+ * costs it nothing.
+ */
+.jamin-book .v-window-item--active {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 /* The row of columns, and each column, are columns themselves. */
 /* A v-row carries a -12px margin that its columns' padding cancels out. Inside
    a box that is exactly the height of the window, that margin is 24px of
@@ -289,4 +311,40 @@ body,
 
 .jamin-book .v-list-item__prepend > .jamin-heart {
   min-width: 24px;
+}
+
+/*
+ * The `?` that carries the long explanation. @see components/InfoTip.vue
+ *
+ * Quiet enough to ignore and close enough to the label to be obviously about
+ * it. `vertical-align` rather than a flex wrapper so it can sit inside a
+ * sentence as well as after a heading.
+ */
+.jamin-tip-icon {
+  opacity: 0.45;
+  cursor: help;
+  vertical-align: baseline;
+  margin-left: 2px;
+  transition: opacity 120ms ease;
+}
+
+.jamin-tip-icon:hover,
+.jamin-tip-icon:focus-visible {
+  opacity: 0.9;
+}
+
+/* A tooltip holding a paragraph is not a label: it needs the line height of
+   running text, and room for the code spans the notation explanations use. */
+.jamin-tip .jamin-tip-body {
+  line-height: 1.5;
+  white-space: normal;
+  padding: 2px 0;
+}
+
+.jamin-tip code {
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 0.92em;
+  padding: 0 2px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
 }
