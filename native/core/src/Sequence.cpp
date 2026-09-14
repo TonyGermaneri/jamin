@@ -15,6 +15,14 @@ void SequencePlayer::collect (const Sequence& seq,
     if (seq.events.empty() || numSamples <= 0 || ! (ppqPerSample > 0.0))
         return;
 
+    // The contract is that this never reallocates: the audio thread's vector is
+    // reserved once in prepareToPlay and only appended to from then on. A caller
+    // that has not reserved gets one allocation here rather than silently
+    // getting nothing, which is a trap -- an untouched vector would come back
+    // empty and look exactly like a sequence with no events in it.
+    if (out.capacity() == 0)
+        out.reserve (256);
+
     const double pulsesPerSample = ppqPerSample * Sequence::pulsesPerQuarter;
     const double blockStart = ppqStart * Sequence::pulsesPerQuarter;
     double remaining = pulsesPerSample * numSamples;
@@ -50,6 +58,11 @@ void SequencePlayer::collect (const Sequence& seq,
             const auto pulse = static_cast<double> (it->pulse);
             if (pulse >= from + segment)
                 break;
+
+            // Never grow: the caller reserves, and this is running on an audio
+            // thread where an allocation is a worse outcome than a lost note.
+            if (out.size() >= out.capacity())
+                return;
 
             const double offset = (consumed + (pulse - from)) / pulsesPerSample;
             const int sample = std::clamp (static_cast<int> (offset), 0, numSamples - 1);

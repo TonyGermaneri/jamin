@@ -26,12 +26,16 @@ void sequenceTests()
 {
     const auto song = twoBars();
     std::vector<SequencePlayer::Emitted> out;
+    out.reserve (1024);   // as the audio thread does, once, in prepareToPlay
 
     // A block at the very top of the song picks up the downbeat, at sample 0.
     SequencePlayer::collect (song, 0.0, ppqPerSample, 512, out);
     check ("downbeat count", out.size(), 1u);
-    check ("downbeat note", (int) out[0].data1, 60);
-    check ("downbeat offset", out[0].sampleOffset, 0);
+    if (out.size() == 1)
+    {
+        check ("downbeat note", (int) out[0].data1, 60);
+        check ("downbeat offset", out[0].sampleOffset, 0);
+    }
 
     // A block that does not contain an event emits nothing.
     out.clear();
@@ -44,24 +48,31 @@ void sequenceTests()
     out.clear();
     SequencePlayer::collect (song, 3.99, ppqPerSample, 512, out);
     check ("second bar found", out.size(), 1u);
-    check ("second bar note", (int) out[0].data1, 65);
-    check ("offset is proportional", out[0].sampleOffset >= 238 && out[0].sampleOffset <= 242);
+    if (out.size() == 1)
+    {
+        check ("second bar note", (int) out[0].data1, 65);
+        check ("offset is proportional", out[0].sampleOffset >= 238 && out[0].sampleOffset <= 242);
+    }
 
     // Looping: ppq 8.0 is the top of the second pass, and must sound the
     // downbeat again rather than falling off the end.
     out.clear();
     SequencePlayer::collect (song, 8.0, ppqPerSample, 512, out);
     check ("loops back to the top", out.size(), 1u);
-    check ("and it is the downbeat", (int) out[0].data1, 60);
+    if (out.size() == 1)
+        check ("and it is the downbeat", (int) out[0].data1, 60);
 
     // A block straddling the loop point must carry the last event of the pass
     // and the first of the next, in that order. Pulse 186 is ppq 7.75.
     out.clear();
     SequencePlayer::collect (song, 7.74, ppqPerSample, 24000, out);
     check ("straddle emits both", out.size(), 2u);
-    check ("tail first", (int) out[0].data1, 65);
-    check ("then the new downbeat", (int) out[1].data1, 60);
-    check ("in ascending sample order", out[0].sampleOffset <= out[1].sampleOffset);
+    if (out.size() == 2)
+    {
+        check ("tail first", (int) out[0].data1, 65);
+        check ("then the new downbeat", (int) out[1].data1, 60);
+        check ("in ascending sample order", out[0].sampleOffset <= out[1].sampleOffset);
+    }
 
     // A song shorter than the block wraps more than once rather than dropping
     // everything after the first pass. Sixteen quarter notes of block is two
@@ -91,6 +102,16 @@ void sequenceTests()
     out.clear();
     SequencePlayer::collect (song, -2.0, ppqPerSample, 512, out);
     check ("a count-in does not crash", out.size() <= 1u);
+
+    // The reader never grows its output: the audio thread reserves once and a
+    // block that would overflow that loses notes rather than reaching malloc.
+    {
+        std::vector<SequencePlayer::Emitted> bounded;
+        bounded.reserve (3);
+        SequencePlayer::collect (song, 0.0, ppqPerSample, 24000 * 64, bounded);
+        check ("it never grows past its reservation", bounded.size() <= 3u);
+        check ("and does not reallocate", bounded.capacity(), 3u);
+    }
 
     // Every emitted offset is inside the block. This is the one that keeps a
     // host from asserting on a badly placed event.

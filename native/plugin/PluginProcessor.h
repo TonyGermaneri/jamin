@@ -7,6 +7,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <atomic>
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -116,10 +117,23 @@ public:
         itself with, and what tells two windows apart. */
     const juce::String instanceId;
 
-    /** Incoming MIDI, forwarded to the editor for phrase capture and MIDI learn.
-        Written by the audio thread, drained by the message thread. */
+    /**
+        Incoming MIDI, kept for the editor's phrase capture and MIDI learn.
+
+        Three bytes and a length, not a juce::MidiMessage: assigning a
+        MidiMessage destroys the one it replaces and can allocate for the one it
+        copies, and neither belongs on an audio thread. Anything longer than
+        three bytes is a system message this has no use for, so it is dropped
+        rather than stored.
+    */
+    struct RawMidi
+    {
+        uint8_t bytes[3] {};
+        uint8_t length {};
+    };
+
     juce::AbstractFifo captureFifo { 512 };
-    std::vector<juce::MidiMessage> captureRing { 512 };
+    std::array<RawMidi, 512> captureRing {};
 
 private:
     class CompileThread;

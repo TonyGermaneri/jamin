@@ -122,6 +122,13 @@ void JaminProcessor::prepareToPlay (double sampleRate, int)
     currentSampleRate = sampleRate > 0.0 ? sampleRate : 44100.0;
     std::memset (sounding, 0, sizeof (sounding));
     wasPlaying = false;
+
+    // Room to collect a block's worth of events without the audio thread ever
+    // reaching the allocator. A block holding this many note events would be a
+    // song of several thousand chords a second; collect() stops at the ceiling
+    // rather than growing past it, because a dropped note is recoverable and a
+    // malloc in an audio callback is not.
+    scratch.reserve (4096);
 }
 
 void JaminProcessor::allNotesOff (juce::MidiBuffer& out, int sampleOffset)
@@ -147,12 +154,17 @@ void JaminProcessor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBu
     // the editor's phrase capture on the way past.
     for (const auto metadata : midi)
     {
-        if (captureFifo.getFreeSpace() > 0)
-        {
-            const auto scope = captureFifo.write (1);
-            if (scope.blockSize1 > 0)
-                captureRing[(size_t) scope.startIndex1] = metadata.getMessage();
-        }
+        if (metadata.numBytes > 3 || captureFifo.getFreeSpace() <= 0)
+            continue;
+
+        const auto scope = captureFifo.write (1);
+        if (scope.blockSize1 <= 0)
+            continue;
+
+        auto& slot = captureRing[(size_t) scope.startIndex1];
+        slot.length = (uint8_t) metadata.numBytes;
+        for (int i = 0; i < metadata.numBytes; ++i)
+            slot.bytes[i] = metadata.data[i];
     }
 
     const auto* sequence = live.load (std::memory_order_acquire);
@@ -210,8 +222,14 @@ void JaminProcessor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBu
     if (sequence == nullptr || sequence->empty())
         return;
 
-    const int numSamples = audio.getNumSamples() > 0 ? audio.getNumSamples()
-                                                     : getBlockSize();
+    // A MIDI effect has no audio buffer to take a length from, so the host's
+    // block size stands in. If neither says anything there is no block to place
+    // events in, and clamping an offset into an empty range is undefined rather
+    // than merely useless.
+    const int numSamples = audio.getNumSamples() > 0 ? audio.getNumSamples() : getBlockSize();
+    if (numSamples <= 0)
+        return;
+
     const double ppqPerSample = bpm / (60.0 * currentSampleRate);
 
     scratch.clear();
