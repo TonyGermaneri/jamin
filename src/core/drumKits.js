@@ -191,13 +191,22 @@ export function mapDrumNote(note, map) {
   return Number.isInteger(out) && out >= 0 && out <= 127 ? out : null
 }
 
-/** A whole groove, once. Notes the kit cannot play are left behind. */
+/**
+ * A whole groove, once. Notes the kit cannot play are left behind.
+ *
+ * Each note keeps the voice it came from. Once it is mapped, its number belongs
+ * to the kit and says nothing about what was struck -- 38 might be a snare or
+ * might be whatever somebody typed into the Kit tab -- so reading it backwards
+ * to light up a drum would be reading the wrong end. The voice is the fact; the
+ * number is the destination.
+ */
 export function mapDrumNotes(notes, map) {
   const out = []
   for (const note of notes || []) {
+    const voice = TD11_TO_VOICE[note.note]
     const pitch = mapDrumNote(note.note, map)
     if (pitch === null) continue
-    out.push({ ...note, note: pitch })
+    out.push({ ...note, note: pitch, voice })
   }
   return out
 }

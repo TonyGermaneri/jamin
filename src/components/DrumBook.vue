@@ -141,6 +141,12 @@ function choose(groove) {
   if (autoSelect.value) assignEverywhere(groove)
 }
 
+/** The part the playhead is in, so its pill can say so. @see store.syncDrumsPlaying */
+const playingSection = computed(() => state.playing.section)
+
+/** The drums struck since the last frame, for the kit table. */
+const playingVoices = computed(() => new Set(state.playing.voices))
+
 /**
  * A part's name, short enough for a pill, with the key that reaches it.
  *
@@ -414,6 +420,7 @@ function resetMap() {
                         :color="boundTo(row.name, groove)
                           ? (groove.kind === 'fill' ? 'warning' : 'primary')
                           : undefined"
+                        :class="{ 'is-playing': row.name === playingSection }"
                         :title="`${groove.name} ${boundTo(row.name, groove) ? 'plays' : 'does not play'} `
                               + `${row.wholeSong ? 'the whole song' : row.name}`
                               + (index < 10 ? ` — press ${(index + 1) % 10}` : '')"
@@ -592,8 +599,12 @@ function resetMap() {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="voice in DRUM_VOICES" :key="voice.id">
-                  <td class="text-body-2">{{ voice.name }}</td>
+                <tr v-for="voice in DRUM_VOICES" :key="voice.id"
+                    :class="{ 'is-struck': playingVoices.has(voice.id) }">
+                  <td class="text-body-2">
+                    <v-icon size="12" class="jamin-kit-dot">mdi-circle</v-icon>
+                    {{ voice.name }}
+                  </td>
                   <td style="width: 120px">
                     <v-text-field
                       :model-value="noteFor(voice.id)" type="number" min="0" max="127"

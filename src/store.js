@@ -96,6 +96,11 @@ export const state = reactive({
   drums: [],
   drumBindings: {},
   drumAccent: null,
+  // What is being heard right now: the section the playhead is in, and the drums
+  // struck since the last frame. Both are worked out from the chart and the
+  // position rather than reported by anything -- inside the plugin the notes are
+  // played by native code the page never hears. @see syncDrumsPlaying
+  playing: { section: null, voices: [] },
   drumReport: { grooves: 0, error: null },
 
   // Every instance of jamin in this host: which track each is on, what it is
@@ -1053,6 +1058,65 @@ function syncStatus() {
   status.bar = Math.floor(live.position / pulsesPerBar) + 1
   status.beat = Math.floor((live.position % pulsesPerBar) / 24) + 1
   state.ui.armed = player.capture.armed
+  syncDrumsPlaying()
+}
+
+/**
+ * What the drums are doing this instant, for the book to light up.
+ *
+ * Worked out from the part and the playhead rather than reported by anything.
+ * It has to be: inside the plugin the notes are played by native code from a
+ * compiled sequence, and the page never hears them -- so a callback from the
+ * player would light up in a browser tab and stay dark where it matters.
+ *
+ * Everything struck *since the last look* rather than everything at this exact
+ * pulse. This runs about eight times a second and a sixteenth at 120bpm is
+ * closer to eight; sampling an instant would show perhaps one hit in three and
+ * make a busy groove look sparse.
+ */
+let lastDrumPulse = -1
+
+function syncDrumsPlaying() {
+  const playing = state.playing
+
+  if (!live.running) {
+    if (playing.section || playing.voices.length) {
+      playing.section = null
+      playing.voices = []
+    }
+    lastDrumPulse = -1
+    return
+  }
+
+  // Which part of the song we are in. The event carries it, having been given
+  // it by the parser. @see core/score.js
+  const event = state.score.events[live.eventIndex]
+  const section = event ? (event.sectionName ?? WHOLE_SONG) : null
+  if (playing.section !== section) playing.section = section
+
+  const track = player.drumTrack
+  if (!track || !track.length) {
+    if (playing.voices.length) playing.voices = []
+    return
+  }
+
+  const now = live.position
+  // A jump backwards -- a loop, or somebody moving the playhead -- is a fresh
+  // start rather than a window running the length of the song.
+  const from = lastDrumPulse >= 0 && lastDrumPulse <= now ? lastDrumPulse : now - 1
+  lastDrumPulse = now
+
+  const struck = new Set()
+  for (const hit of track) {
+    if (hit.at <= from) continue
+    if (hit.at > now) break                 // the track is sorted by pulse
+    if (hit.voice) struck.add(hit.voice)
+  }
+
+  const next = [...struck]
+  if (next.length !== playing.voices.length || next.some((v, i) => v !== playing.voices[i])) {
+    playing.voices = next
+  }
 }
 
 /** What the parser made of the chord under the caret. */

@@ -476,3 +476,37 @@ body,
     display: none;
   }
 }
+
+/*
+ * What is being heard, in the drum book.
+ *
+ * The part the playhead is in, and the drums struck since the last frame. Both
+ * are worked out from the chart and the position rather than reported by
+ * anything -- inside the plugin the notes come from native code the page never
+ * hears, so a light wired to the browser's own engine would work in a tab and
+ * stay dark where it matters.
+ */
+
+/* The pill of the part currently playing: an outline that does not depend on
+   the pill's own colour, so it reads the same whether the part is bound or not. */
+.jamin-drum-pills .v-chip.is-playing {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+
+/* A drum being struck. The dot is always there and only lights up, so nothing
+   moves when it does -- a row that changes width on every sixteenth note is a
+   row nobody can read. */
+.jamin-kit-dot {
+  opacity: 0.12;
+  margin-right: 6px;
+  transition: opacity 90ms ease-out;
+}
+
+.jamin-drums tr.is-struck .jamin-kit-dot {
+  opacity: 1;
+  color: rgb(var(--v-theme-primary));
+  /* No transition on the way in: a hit is an attack, and easing into it makes
+     a snare look like a swell. The fade above is the decay. */
+  transition: none;
+}

@@ -330,4 +330,15 @@ check('no beat, no answer', matchingFill(null, pool), null)
 check('and nothing in that signature is null rather than wrong',
       matchingFill({ ...rockBeat, timeSignature: '7-8' }, pool), null)
 
+// A mapped note keeps the voice it came from. Its number now belongs to the kit
+// and says nothing about what was struck -- 38 might be a snare or might be
+// whatever somebody typed into the Kit tab -- so reading it backwards to light
+// up a drum would be reading the wrong end.
+const carried = mapDrumNotes([{ at: 0, note: 48, duration: 6, velocity: 90 }], gm)
+check('a mapped note says which voice it is', carried[0].voice, 'tomHigh')
+check('and its number is the kit\'s', carried[0].note, 50)
+check('even when the kit moved it somewhere odd',
+      mapDrumNotes([{ at: 0, note: 48, duration: 6, velocity: 90 }],
+                   { ...gm, tomHigh: 71 })[0].voice, 'tomHigh')
+
 console.log(failed ? `drums: ${failed} FAILED` : 'drums: all checks passed')
