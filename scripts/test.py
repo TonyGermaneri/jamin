@@ -33,6 +33,7 @@ SUITES = [
     (["src/core/drumKits.js"], "tests/drumMap.test.js"),
     (["src/core/drumKits.js"], "tests/kitClassify.test.js"),
     (["src/core/midiFile.js", "src/core/drumImport.js"], "tests/drumImport.test.js"),
+    (["src/core/chordParser.js", "src/core/chordDetect.js"], "tests/chordDetect.test.js"),
     # The shipped corpus itself, checked as data. @see materialise
     (["src/data/grooveDrums.json"], "tests/grooveData.test.js"),
     ([
