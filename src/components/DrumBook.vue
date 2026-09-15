@@ -321,24 +321,27 @@ function resetMap() {
                       {{ groove.timeSignature }} · {{ groove.bpm }}bpm
                       <span v-if="groove.substyle">· {{ groove.substyle }}</span>
                     </v-list-item-subtitle>
+                    <!-- One pill per part, on their own line: a song with eight
+                         sections is eight pills, and squeezed onto the end of
+                         the name they crowd out the name. Lit is bound; a beat
+                         goes in the groove slot and a fill in the fill slot,
+                         because that is what they are. -->
+                    <div v-if="liveRows.length" class="jamin-drum-pills">
+                      <v-chip
+                        v-for="row in liveRows" :key="row.name"
+                        size="x-small" label
+                        :variant="boundTo(row.name, groove) ? 'flat' : 'outlined'"
+                        :color="boundTo(row.name, groove)
+                          ? (groove.kind === 'fill' ? 'warning' : 'primary')
+                          : undefined"
+                        :title="`${groove.name} ${boundTo(row.name, groove) ? 'plays' : 'does not play'} `
+                              + `${row.wholeSong ? 'the whole song' : row.name}`"
+                        @click.stop="toggleGrooveOn(row.name, groove)"
+                      >{{ pillLabel(row) }}</v-chip>
+                    </div>
+
                     <template #append>
-                      <!-- One pill per part. Lit is bound; a beat goes in the
-                           groove slot and a fill in the fill slot, because
-                           that is what they are. -->
-                      <span class="jamin-drum-pills">
-                        <v-chip
-                          v-for="row in liveRows" :key="row.name"
-                          size="x-small" label
-                          :variant="boundTo(row.name, groove) ? 'flat' : 'outlined'"
-                          :color="boundTo(row.name, groove)
-                            ? (groove.kind === 'fill' ? 'warning' : 'primary')
-                            : undefined"
-                          :title="`${groove.name} ${boundTo(row.name, groove) ? 'plays' : 'does not play'} `
-                                + `${row.wholeSong ? 'the whole song' : row.name}`"
-                          @click.stop="toggleGrooveOn(row.name, groove)"
-                        >{{ pillLabel(row) }}</v-chip>
-                      </span>
-                      <v-btn icon size="x-small" variant="text" class="ml-1"
+                      <v-btn icon size="x-small" variant="text"
                              :color="favourite(groove) ? 'error' : undefined"
                              :aria-label="`Favourite ${groove.name}`"
                              @click.stop="toggleFavourite(groove)">

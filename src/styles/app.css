@@ -414,14 +414,17 @@ body,
   max-width: none;
 }
 
-/* The pills. Wrapped rather than scrolled: a song with ten sections should show
-   all ten, and a row that scrolls sideways hides the part you were looking for. */
+/* The pills, on their own line under the groove's name.
+ *
+ * Alongside the name they had to be capped at a share of the row, which meant a
+ * song with eight sections either crowded the name out or hid pills behind an
+ * ellipsis -- and the pills are the control. A line of their own costs one row
+ * of height and holds as many parts as the song has. */
 .jamin-drum-pills {
-  display: inline-flex;
+  display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
   gap: 3px;
-  max-width: 60%;
+  margin-top: 4px;
 }
 
 .jamin-drum-pills .v-chip {
@@ -437,8 +440,16 @@ body,
   font-weight: 600;
 }
 
-/* A list row now holds two lines of text and a wrapping set of pills, so it
-   cannot be the single-line height Vuetify gives it. */
+/* A list row now holds a name, a line of detail and a wrapping line of pills,
+   so it cannot be the single-line height Vuetify gives it. */
 .jamin-drums .jamin-book-scroll .v-list-item {
-  min-height: 46px;
+  min-height: 62px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+/* The favourite sits with the name rather than centred against three lines. */
+.jamin-drums .jamin-book-scroll .v-list-item__append {
+  align-self: flex-start;
+  padding-top: 2px;
 }
