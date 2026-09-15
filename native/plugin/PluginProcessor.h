@@ -85,6 +85,13 @@ public:
         Negative when the answer is "now". */
     double nextBoundaryPpq() const;
 
+    /** Play one note, now, from the editor.
+
+        For auditioning a drum: "what does this kit actually have on 42" is a
+        question with one honest answer, which is to hit it. Safe from the
+        message thread; the note reaches the next block. */
+    void tapNote (int note, int velocity, int channel);
+
     /** Mute or solo any instance in this host, quantised as the settings say. */
     void setInstanceMuted (const juce::String& id, bool muted);
     void setInstanceSoloed (const juce::String& id, bool soloed);
@@ -208,6 +215,13 @@ public:
 
     juce::AbstractFifo captureFifo { 512 };
     std::array<RawMidi, 512> captureRing {};
+
+    /** Notes the editor has asked to hear, on their way to the next block.
+        Auditioning a drum from a plugin window has nowhere else to go: the page
+        has no MIDI output of its own, and the only way out of this process is
+        the buffer the host is about to collect. @see tapNote */
+    juce::AbstractFifo tapFifo { 64 };
+    std::array<RawMidi, 64> tapRing {};
 
 private:
     class CompileThread;

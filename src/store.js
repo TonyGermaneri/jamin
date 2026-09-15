@@ -793,6 +793,36 @@ function buildDrumSpansForRequest() {
   return spans
 }
 
+/**
+ * Hit one drum, now.
+ *
+ * "What does this kit actually have on 42" has one honest answer, which is to
+ * hit it -- and a table of numbers is exactly the thing that cannot answer it.
+ *
+ * Two routes, because a plugin's page has no MIDI output of its own: in a
+ * browser it goes straight out of the engine, and inside the plugin it is
+ * handed to the processor, which puts it in the next block the host collects.
+ */
+export function tapDrum(note, velocity = 100) {
+  if (!Number.isInteger(note) || note < 0 || note > 127) return
+
+  const midi = state.settings.midi
+  const channel = midi.drumChannel ?? 9
+
+  if (hosted()) {
+    callHost('jaminTapDrum', note, channel, velocity).catch(() => {})
+    return
+  }
+
+  const outputId = midi.drumOutputId || midi.chordOutputId
+  if (!engine.noteOn(outputId, channel, note, velocity)) {
+    toast('No drum output bound yet')
+    return
+  }
+  // Struck, not held.
+  setTimeout(() => engine.noteOff(outputId, channel, note), 120)
+}
+
 /** Is this groove bound to this part? Drives the pills in the catalogue. */
 export function boundTo(name, groove) {
   if (!name || !groove) return false

@@ -177,6 +177,22 @@ double JaminProcessor::nextBoundaryPpq() const
     return std::floor ((ppq + slack) / step + 1.0) * step;
 }
 
+void JaminProcessor::tapNote (int note, int velocity, int channel)
+{
+    if (note < 0 || note > 127 || tapFifo.getFreeSpace() <= 0)
+        return;
+
+    const auto scope = tapFifo.write (1);
+    if (scope.blockSize1 <= 0)
+        return;
+
+    auto& slot = tapRing[(size_t) scope.startIndex1];
+    slot.length = 3;
+    slot.bytes[0] = (uint8_t) (0x90 | (channel & 0x0f));
+    slot.bytes[1] = (uint8_t) note;
+    slot.bytes[2] = (uint8_t) juce::jlimit (1, 127, velocity);
+}
+
 void JaminProcessor::setInstanceMuted (const juce::String& id, bool muted)
 {
     jamin::Roster::instance().setMuted (id.toStdString(), muted, nextBoundaryPpq());
@@ -246,6 +262,30 @@ void JaminProcessor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBu
         slot.length = (uint8_t) metadata.numBytes;
         for (int i = 0; i < metadata.numBytes; ++i)
             slot.bytes[i] = metadata.data[i];
+    }
+
+    // Anything the editor asked to hear, before any of the early returns below:
+    // auditioning a drum has to work with the transport stopped, which is when
+    // somebody is most likely to be doing it.
+    if (const auto ready = tapFifo.getNumReady(); ready > 0)
+    {
+        const auto scope = tapFifo.read (ready);
+        const auto emit = [&] (int start, int size)
+        {
+            for (int i = 0; i < size; ++i)
+            {
+                const auto& slot = tapRing[(size_t) (start + i)];
+                const int channel = (slot.bytes[0] & 0x0f) + 1;
+                midi.addEvent (juce::MidiMessage::noteOn (channel, slot.bytes[1],
+                                                          (juce::uint8) slot.bytes[2]), 0);
+                // Struck, not held: the note-off goes at the end of the same
+                // block so nothing is left sounding if the editor closes.
+                midi.addEvent (juce::MidiMessage::noteOff (channel, slot.bytes[1]),
+                               juce::jmax (1, getBlockSize() - 1));
+            }
+        };
+        emit (scope.startIndex1, scope.blockSize1);
+        emit (scope.startIndex2, scope.blockSize2);
     }
 
     auto* playHead = getPlayHead();

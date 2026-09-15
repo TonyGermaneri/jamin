@@ -29,6 +29,7 @@ import {
   toggleGrooveOn,
   assignEverywhere,
   autoFillFrom,
+  tapDrum,
 } from '../store.js'
 import { searchDrums, summarizeGroove } from '../core/drums.js'
 import { DRUM_KITS, DRUM_VOICES, kitById, gmName } from '../core/drumKits.js'
@@ -593,6 +594,7 @@ function resetMap() {
             <v-table density="compact">
               <thead>
                 <tr>
+                  <th />
                   <th class="text-caption">Voice</th>
                   <th class="text-caption">Note</th>
                   <th class="text-caption">General MIDI calls it</th>
@@ -602,6 +604,16 @@ function resetMap() {
               <tbody>
                 <tr v-for="voice in DRUM_VOICES" :key="voice.id"
                     :class="{ 'is-struck': playingVoices.has(voice.id) }">
+                  <td style="width: 34px">
+                    <!-- Hit it. A table of numbers cannot answer "what is
+                         actually on 42"; hitting it can, and it works with the
+                         transport stopped, which is when somebody is checking. -->
+                    <v-btn icon size="x-small" variant="text"
+                           :aria-label="`Hear the ${voice.name.toLowerCase()}`"
+                           @click="tapDrum(noteFor(voice.id))">
+                      <v-icon size="16">mdi-play-circle-outline</v-icon>
+                    </v-btn>
+                  </td>
                   <td class="text-body-2">
                     <v-icon size="12" class="jamin-kit-dot">mdi-circle</v-icon>
                     {{ voice.name }}

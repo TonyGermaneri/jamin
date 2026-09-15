@@ -141,6 +141,19 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                        {
                            complete (juce::JSON::parse (plugin.network.docJson()));
                        })
+                   .withNativeFunction ("jaminTapDrum",
+                       [this] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // "What does this kit actually have on 42" has one
+                           // honest answer, which is to hit it. The page cannot
+                           // send MIDI from inside a plugin, so this is the only
+                           // way out of the process.
+                           if (args.size() >= 2)
+                               plugin.tapNote ((int) args[0],
+                                               args.size() >= 3 ? (int) args[2] : 100,
+                                               (int) args[1]);
+                           complete (juce::var (true));
+                       })
                    .withNativeFunction ("jaminRoster",
                        [this] (const juce::Array<juce::var>&, auto complete)
                        {
