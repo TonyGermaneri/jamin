@@ -31,7 +31,7 @@ function toGroove(entry, index) {
 
   const [numerator = 4, denominator = 4] = String(entry.t || '4-4').split('-').map(Number)
 
-  return {
+  const groove = {
     id: `g${index}`,
     name: entry.n || `groove ${index}`,
     // beat | fill | song. A beat is short enough to loop, a song is a
@@ -45,15 +45,42 @@ function toGroove(entry, index) {
     beatUnit: denominator,
     bars: Number(entry.r) || 1,
     lengthPulses: Number(entry.d) || PULSES_PER_BAR_4_4,
-    // Left in the kit they were played on. Translating here would bake one
-    // kit into the catalogue; it happens at playback, where the answer is known.
-    notes: entry.v.map(([at, note, duration, velocity]) => ({ at, note, duration, velocity })),
+    // How many hits, for the list line, without touching the notes.
+    hits: entry.v.length,
     // Whose take it is. These are performances rather than patterns, and a
     // performance has somebody playing it.
     drummer: entry.w || '',
     origin: 'Groove MIDI Dataset',
     builtin: true,
   }
+
+  /*
+   * The notes are built when something asks for them, and not before.
+   *
+   * These are whole performances -- one is 639 bars -- so building every note
+   * object for all eleven hundred of them is millions of allocations, and it
+   * was happening on every page load. Measured on an editor open: twenty-one
+   * seconds of it, out of twenty-one and a half.
+   *
+   * Almost none of them are ever played. The list needs a name, a length and a
+   * hit count; the player needs the notes, for the four or five a chart binds.
+   * So the raw arrays are kept as they arrived and turned into notes once, on
+   * first use. Left in the kit they were played on either way -- translating
+   * here would bake one kit into the catalogue, and that happens at playback
+   * where the answer is known.
+   */
+  let notes = null
+  Object.defineProperty(groove, 'notes', {
+    enumerable: true,
+    get() {
+      if (!notes) {
+        notes = entry.v.map(([at, note, duration, velocity]) => ({ at, note, duration, velocity }))
+      }
+      return notes
+    },
+  })
+
+  return groove
 }
 
 export async function loadDrums() {

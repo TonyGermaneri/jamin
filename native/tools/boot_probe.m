@@ -376,7 +376,9 @@ int main(int argc, const char **argv) {
               @"  check('the plugin joined the network', (window.__netOps || []).length > 0);"
               @"  let sent = null;"
               @"  try { sent = JSON.parse((window.__netOps || [])[0]); } catch (e) {}"
-              @"  check('and what it sent is an envelope of edits', !!(sent && sent.m && Array.isArray(sent.ops)));"
+              /* One Yjs update in base64, where this used to be an array of
+                 causal-tree operations. @see src/core/crdt.js */
+              @"  check('and what it sent is an envelope of edits', !!(sent && sent.m && typeof sent.ops === 'string'));"
               @"  check('carrying the chart it already had', !!(sent && sent.ops.length > 0));"
               @"  lines.push('failures=' + failures);"
               @"  lines.push('errors=' + window.__errors.length);"
