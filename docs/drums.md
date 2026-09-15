@@ -135,44 +135,23 @@ The [Groove MIDI Dataset](https://magenta.tensorflow.org/datasets/groove) is
 1,150 human performances, CC BY 4.0 — one-way compatible with GPLv3, which makes
 it the only corpus here that can be bundled rather than imported.
 
-What ships is those performances cut into loops. A beat in the corpus is a
-performance, not a loop: the median is 24 bars and the longest is 639. A fill
-needs no cutting — the median is exactly one bar, which is the size of the thing
-that goes before a section change.
+**Nothing is cut.** Each of the 1,150 performances ships as it was played.
 
 | | | |
 | --- | --- | --- |
-| beat | 1 bar | 477 |
-| beat | 2 bars | 855 |
-| beat | 4 bars | 420 |
-| fill | 1 bar | 509 |
-| fill | 2 bars | 138 |
+| song | 391 | median 43 bars, longest 639 — the takes |
+| beat | 112 | eight bars or fewer, short enough to loop |
+| fill | 647 | median one bar |
 
-The first bar of each beat is skipped. Drummers were counted in and tend to
-announce themselves, so bar one is an entry rather than the groove — and a loop
-that starts with a crash is a loop that crashes every two bars.
+An earlier version sliced the takes into one, two and four bar loops. That was a
+decision about somebody else's material taken without asking, and it was done
+badly on top of that: cutting on the bar line puts the *anticipated* downbeat at
+the end of the previous loop, because drummers play ahead of the click — that is
+most of what feel is. It left **32% of the corpus flamming once a bar** and
+another **28% with no downbeat at all**. It is gone.
 
-**Where the loop is cut.** Drummers play ahead of the click — that is most of
-what "feel" is — so a downbeat routinely lands a pulse or two *before* the bar
-it belongs to. Cutting on the exact bar line puts that note at the end of the
-previous loop instead of the start of this one, and the result is brutal: the
-first version of this extraction left **32% of beats flamming on every bar
-line** (a hit at the end and another on the downbeat, forty milliseconds apart,
-for ever) and another **28% with no downbeat at all**. Sixty per cent of the
-corpus was broken by the cut rather than by the drummer.
-
-The window is shifted back by two pulses at both ends, which is taken from the
-data rather than from taste: hits within two pulses either side of a bar line
-are one cluster — 4,864 at −1 and 4,675 at 0 — with a clear valley at three and
-four before the count rises again at six, which is the sixteenth before the
-beat. Three pulses would start eating that sixteenth; one would leave a third of
-the anticipations behind.
-
-An anticipated downbeat becomes the downbeat, losing a pulse or two of its own
-push. That is the price of a loop that does not flam, and the push *inside* the
-bar — which is the rest of the feel — is untouched. Now 85% of beats start on
-the downbeat and nothing at all lands within forty milliseconds of the loop
-point.
+A song bound to a section plays through and loops when it runs out. Whose take
+it is travels with it, and the length filter is how you find the ones that fit.
 
 **How much of the groove survives.** This corpus is worth having because it is
 human and unquantised, and jamin counts in 24 pulses per quarter, which is
@@ -180,6 +159,19 @@ coarser than a drummer's hands. Measured across 19,752 notes: the mean deviation
 from a sixteenth-note grid is 23.5ms, and rounding to jamin's pulse throws away
 a mean of 6.2ms of it. About three quarters of the groove survives, and none of
 it is re-quantised onto a sixteenth, which would throw away all of it.
+
+## Only what fits
+
+Both books have it. A pattern fits if it goes into one of the song's parts a
+whole number of times: a two-bar groove fits an eight-bar verse four times over,
+and a three-bar one does not fit at all — it would be cut off mid-phrase every
+time round, which is what makes a loop sound like a mistake rather than a part.
+Anything longer than the span never fits, because half a phrase is not the
+phrase.
+
+The drum version says which parts each surviving pattern fits. The progression
+version is honest about what it can know: the harmony may still be nothing like
+yours, and this is only about length, which is the part that can be checked.
 
 A groove is **looped, never stretched**. A two-bar groove under an eight-bar
 verse plays four times; it is not slowed down to last eight, because a drum
