@@ -30,9 +30,14 @@ import {
   assignEverywhere,
   autoFillFrom,
   tapDrum,
+  refreshDrumSets,
+  importDrumFolder,
+  cancelDrumImport,
+  forgetDrumSet,
+  setDrumSetKit,
 } from '../store.js'
 import { searchDrums, summarizeGroove } from '../core/drums.js'
-import { DRUM_KITS, DRUM_VOICES, kitById, gmName, TD11_TO_VOICE } from '../core/drumKits.js'
+import { DRUM_KITS, DRUM_VOICES, kitById, gmName, mapDrumNote, TD11_TO_VOICE } from '../core/drumKits.js'
 import InfoTip from './InfoTip.vue'
 
 const search = ref('')
@@ -186,6 +191,47 @@ const preview = computed(() => {
   return { steps, rows, beats: groove.beatsPerBar * groove.bars }
 })
 
+const folderInput = ref(null)
+
+/** Everything the sampling found, minus the pitch list, which is machinery
+    rather than something to read. */
+function setFacts(set) {
+  const { pitches, ...rest } = set.facts || {}
+  return rest
+}
+
+/**
+ * How much of a library the kit it is set to cannot play.
+ *
+ * A pack written for one sampler and played through another loses notes in
+ * silence: nothing errors, the pattern is simply thinner than it should be. The
+ * pitches the sampling saw are kept for exactly this, so the number is live
+ * against whichever kit the library is set to.
+ */
+function unplayable(set) {
+  const pitches = (set.facts && set.facts.pitches) || []
+  if (!pitches.length) return null
+
+  const map = set.kit ? kitById(set.kit).map : chosenKit.value.map
+  const lost = pitches.filter((pitch) => mapDrumNote(pitch, map) === null)
+  return { lost: lost.length, total: pitches.length,
+           percent: Math.round(100 * lost.length / pitches.length) }
+}
+
+function pickFolder() {
+  if (folderInput.value) folderInput.value.click()
+}
+
+async function onFolderPicked(event) {
+  const files = event.target.files
+  if (!files || !files.length) return
+  // The folder's own name, from the first file's path -- a directory picker
+  // gives no other way to know what was chosen.
+  const first = files[0].webkitRelativePath || files[0].name
+  await importDrumFolder(files, first.split('/')[0] || 'library')
+  event.target.value = ''
+}
+
 /** The part the playhead is in, so its pill can say so. @see store.syncDrumsPlaying */
 const playingSection = computed(() => state.playing.section)
 
@@ -338,6 +384,9 @@ function resetMap() {
       <v-tabs v-model="state.ui.drumsTab">
         <v-tab value="grooves">Grooves ({{ drums.length.toLocaleString() }})</v-tab>
         <v-tab value="parts">Parts</v-tab>
+        <v-tab value="sets">
+          Libraries<span v-if="state.drumSets.length"> ({{ state.drumSets.length }})</span>
+        </v-tab>
         <v-tab value="kit">Kit</v-tab>
       </v-tabs>
 
@@ -641,6 +690,97 @@ function resetMap() {
             <div v-if="!rows.length" class="text-caption text-medium-emphasis pa-4">
               No parts yet. Write <code>[Intro]</code>, <code>[Verse]</code>, <code>[Chorus]</code>
               on their own in the chart and they appear here.
+            </div>
+          </v-window-item>
+
+          <!-- Libraries: somebody's own MIDI, read from where it lives ---- -->
+          <v-window-item value="sets">
+            <div class="text-caption text-medium-emphasis mb-3">
+              Point jamin at a folder of drum MIDI and it reads what is in it.
+              <InfoTip>
+                Nothing imported is ever redistributed: it is read from where it already is on
+                this machine, kept in this browser's own database, and never leaves. The bundled
+                corpus is the only one that can legally travel with the program — a library you
+                bought is yours to use and not ours to ship.
+                <br /><br />
+                Files are read whole. A pattern is whatever the file is, because a library of
+                authored loops is already a whole number of bars and cutting it up would only
+                make it worse.
+              </InfoTip>
+            </div>
+
+            <div class="d-flex align-center flex-wrap mb-4" style="gap: 8px">
+              <v-btn size="small" variant="tonal" prepend-icon="mdi-folder-open-outline"
+                     :disabled="state.drumImport.running" @click="pickFolder">
+                Add a folder
+              </v-btn>
+              <input ref="folderInput" type="file" webkitdirectory directory multiple
+                     style="display: none" @change="onFolderPicked" />
+
+              <template v-if="state.drumImport.running">
+                <v-progress-circular indeterminate size="18" width="2" />
+                <span class="text-caption">
+                  {{ state.drumImport.name }} —
+                  {{ state.drumImport.read.toLocaleString() }} of
+                  {{ state.drumImport.total.toLocaleString() }}
+                  <span v-if="state.drumImport.skipped">
+                    · {{ state.drumImport.skipped.toLocaleString() }} skipped
+                  </span>
+                </span>
+                <v-btn size="x-small" variant="text" @click="cancelDrumImport">Stop</v-btn>
+              </template>
+            </div>
+
+            <v-table v-if="state.drumSets.length" density="compact">
+              <thead>
+                <tr>
+                  <th class="text-caption">Library</th>
+                  <th class="text-caption">Patterns</th>
+                  <th class="text-caption">Kit its notes were written for</th>
+                  <th class="text-caption">What it says about itself</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="set in state.drumSets" :key="set.id">
+                  <td class="text-body-2">{{ set.name }}</td>
+                  <td class="text-caption">{{ (set.count || 0).toLocaleString() }}</td>
+                  <td style="min-width: 190px">
+                    <v-select
+                      :model-value="set.kit || ''"
+                      :items="[{ title: `Whatever the Kit tab says (${chosenKit.name})`, value: '' },
+                               ...DRUM_KITS.map((k) => ({ title: k.name, value: k.id }))]"
+                      density="compact" hide-details variant="plain"
+                      @update:model-value="setDrumSetKit(set.id, $event)"
+                    />
+                  </td>
+                  <td class="text-caption text-medium-emphasis">
+                    <!-- The number that says whether the kit above is right.
+                         A library played through the wrong map loses notes in
+                         silence; nothing else would tell you. -->
+                    <div v-if="unplayable(set)" class="mb-1">
+                      <span :class="unplayable(set).percent > 10 ? 'text-warning' : ''">
+                        {{ unplayable(set).lost }} of {{ unplayable(set).total }} sounds
+                        have nowhere to go on this kit
+                        <span v-if="unplayable(set).percent > 10">— try another map</span>
+                      </span>
+                    </div>
+                    <span v-for="(value, key) in setFacts(set)" :key="key" class="mr-2">
+                      <strong>{{ key }}</strong> {{ value }}
+                    </span>
+                  </td>
+                  <td class="text-right">
+                    <v-btn icon size="x-small" variant="text" color="error"
+                           :aria-label="`Remove ${set.name}`" @click="forgetDrumSet(set.id)">
+                      <v-icon size="16">mdi-delete-outline</v-icon>
+                    </v-btn>
+                  </td>
+                </tr>
+              </tbody>
+            </v-table>
+
+            <div v-else class="text-caption text-medium-emphasis pa-4">
+              No libraries yet. The bundled corpus is on the Grooves tab and works without any.
             </div>
           </v-window-item>
 

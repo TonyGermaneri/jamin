@@ -203,7 +203,11 @@ function drumSpans(score) {
  * @param {object} options
  * @param {function} options.groove  name or section -> a groove, or null
  * @param {function} [options.fill]  a section -> the fill to lead out of it
- * @param {object} options.map       the kit in use @see drumKits.js
+ * @param {object|function} options.map  the kit in use, or a function from a
+ *                                   groove to one -- an imported library is
+ *                                   written for its own instrument, and a chart
+ *                                   can use one library for the verse and
+ *                                   another for the chorus @see drumKits.js
  * @param {boolean} [options.fillOnEveryBoundary]
  */
 export function buildDrumTrack(score, options = {}) {
@@ -229,13 +233,15 @@ export function buildDrumTrack(score, options = {}) {
     const leavesSection = next && next.section !== span.section
     const wantFill = fillOnEveryBoundary && leavesSection && !span.noFill
 
+    const mapFor = (groove) => (typeof map === 'function' ? map(groove) : map)
+
     const fill = wantFill && typeof pickFill === 'function' ? pickFill(span) : null
-    const placed = fill ? placeFill(fill, length, map) : []
+    const placed = fill ? placeFill(fill, length, mapFor(fill)) : []
 
     // The groove stops where the fill starts. Both playing at once is two
     // drummers, which is not what a fill is.
     const grooveSpan = placed.length ? length - fill.lengthPulses : length
-    for (const note of layOutGroove(chosen, grooveSpan, map)) {
+    for (const note of layOutGroove(chosen, grooveSpan, mapFor(chosen))) {
       out.push({ ...note, at: span.startPulse + note.at })
     }
     for (const note of placed) {

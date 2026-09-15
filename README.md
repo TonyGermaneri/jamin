@@ -555,6 +555,11 @@ Licence before download, every time.
   fills kept whole and the timing rounded to jamin's 24 pulses per quarter. The
   attribution and the method are in `src/data/grooveDrums.LICENSE`, and
   `scripts/extract_groove.mjs` rebuilds it from the original.
+- **Your own drum library** is imported, never bundled. Point jamin at a folder
+  and it reads what is there into this browser's own database; nothing is
+  copied into the project and nothing leaves the machine. Commercial MIDI packs
+  and internet scrapes are both squarely in this category — a library you
+  bought is yours to use and not ours to ship.
 - Several jazz corpora that fit the notation almost perfectly state **no licence
   at all** and are transcriptions of copyrighted songs. Import-only, never
   bundled.

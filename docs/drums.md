@@ -100,6 +100,35 @@ delete, and it would be back before the dialog had finished redrawing.
 
 Put the marker back and the binding comes with it.
 
+## Your own library
+
+Point jamin at a folder of drum MIDI — **Libraries** in the drum book — and it
+reads what is in it. Nothing is cut up: a file is a pattern, because a library
+of authored loops is already a whole number of bars and slicing it would only
+make it worse.
+
+**Nothing imported is ever redistributed.** It is read from where it already is,
+kept in this browser's own database, and never leaves. A library you bought is
+yours to use and not jamin's to ship.
+
+What it works out for itself:
+
+| | |
+| --- | --- |
+| **Kind** | from the path, which libraries label far better than the files — `Straight Fills/1 Bar Fills/03.mid` is a fill and nothing about `03` says so. Length settles the rest: longer than eight bars is a song. |
+| **Songs are kept** | they are drums. Bound to a section, a long one plays through and loops. |
+| **Metadata** | the words a library writes into its files — track name, copyright, instrument — sampled across the tree and kept as filterable facts. "EZ Drummer" and "GrooveMonkee" turn up this way, and they say which kit the notes were written for. |
+| **Kit per library** | because a pack is written for one instrument and the next one is not. The setting on a library overrides the global one. |
+
+**The number that matters** is on each library's row: *how many of its sounds
+have nowhere to go on the kit it is set to*. A pack played through the wrong map
+loses notes in silence — nothing errors, the pattern is just thinner than it
+should be. If that number is high, the map is wrong.
+
+The sampling is spread across the tree rather than taken from the top of it. A
+sorted tree's first hundred files are the first hundred files of *one shelf*:
+sampled that way, a pack of every genre looked like a pack of guiro patterns.
+
 ## What the corpus is, and what shipping it cost
 
 The [Groove MIDI Dataset](https://magenta.tensorflow.org/datasets/groove) is

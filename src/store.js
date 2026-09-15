@@ -13,6 +13,12 @@ import { MidiEngine } from './core/midi.js'
 import { hosted, hostData, callHost, onHost, HostClock } from './core/host.js'
 import { nodeAvailable, Session, httpTransport, hostTransport, localTransport } from './core/net.js'
 import { loadDrums, loadedDrums, drumReport, buildDrumTrack, matchingFill } from './core/drums.js'
+import { kitById, cleanKitMap } from './core/drumKits.js'
+import { readGrooveFile, describeSet, packGroove, unpackGroove, spread } from './core/drumImport.js'
+import {
+  listSets, putSet, deleteSet, putGrooves, countGrooves,
+  searchGrooves, grooveFacets, getGrooves,
+} from './core/drumStore.js'
 import {
   loadDrumBindings, saveDrumBindings, reconcileBindings, bindGroove,
   forgetBinding, WHOLE_SONG,
@@ -94,6 +100,14 @@ export const state = reactive({
   net: { joined: false, state: 'offline', peers: [], site: null, address: null },
   // The drum catalogue, and which groove plays where. @see core/drums.js
   drums: [],
+  // Libraries somebody imported, and what a search of them last found. The
+  // catalogue itself is not held in memory -- it can be three quarters of a
+  // million patterns. @see core/drumStore.js
+  drumSets: [],
+  drumHits: [],
+  drumSearch: { scanned: 0, partial: false },
+  drumFilters: { set: '', kind: '', bars: 0, signature: '', text: '', folder: '' },
+  drumImport: { running: false, read: 0, total: 0, skipped: 0, name: '', cancel: false },
   drumBindings: {},
   drumAccent: null,
   // What is being heard right now: the section the playhead is in, and the drums
@@ -297,6 +311,7 @@ export async function initApp() {
   // milliseconds off the critical path, so it is ready before anyone opens the
   // tab, and nothing waits on it if they never do.
   state.drumBindings = loadDrumBindings()
+  refreshDrumSets()
   state.drumAccent = readStored(DRUM_ACCENT_KEY)
   loadDrums().then((list) => {
     state.drums = list
@@ -758,6 +773,7 @@ export function forgetDrumBinding(name) {
 function refreshDrums() {
   player.getGroove = (span) => grooveForSpan(span, 'groove')
   player.getFill = (span) => grooveForSpan(span, 'fill')
+  player.getKitMap = (groove) => kitMapFor(groove)
   player.rebuildDrums()
   // pushToHost is the compile: it debounces and sends the whole request, which
   // now carries the grooves this chart uses.
@@ -791,6 +807,163 @@ function buildDrumSpansForRequest() {
     }
   }
   return spans
+}
+
+/* ------------------------------------------------------------------ *
+ * Somebody's own drum library
+ *
+ * Imported rather than shipped, and never redistributed: it is read from where
+ * it already is, kept in this browser, and never leaves. The bundled corpus is
+ * the only one that can legally travel with the program.
+ * @see README.md "On bundling other people's collections"
+ * ------------------------------------------------------------------ */
+
+export async function refreshDrumSets() {
+  state.drumSets = await listSets()
+  return state.drumSets
+}
+
+/** A library, read. `files` is whatever a directory picker handed over. */
+export async function importDrumFolder(files, name) {
+  const list = [...files].filter((file) => /\.midi?$/i.test(file.name))
+  if (!list.length) {
+    toast('No MIDI files in there')
+    return null
+  }
+
+  const progress = state.drumImport
+  Object.assign(progress, {
+    running: true, read: 0, skipped: 0, total: list.length,
+    name: name || 'library', cancel: false,
+  })
+
+  const setId = `s${Date.now().toString(36)}`
+  const relative = (file) => file.webkitRelativePath || file.name
+
+  // What the library is, before reading all of it: a hundred files spread
+  // across the tree say as much as the whole thing about which pack this is,
+  // and it means the set has something to show while the rest arrives.
+  const samples = []
+  for (const file of spread(list, Math.min(120, list.length))) {
+    const groove = await readOne(file, relative(file))
+    if (groove) samples.push(groove)
+  }
+
+  const facts = samples.length ? describeSet(samples) : {}
+  await putSet({
+    id: setId,
+    name: name || 'library',
+    // A library is written for one instrument, and the next one is not written
+    // for the same one -- so the kit belongs to the set. Empty means "whatever
+    // the global setting says".
+    kit: '',
+    customMap: {},
+    facts,
+    count: 0,
+    addedAt: Date.now(),
+  })
+  await refreshDrumSets()
+
+  let index = 0
+  let batch = []
+
+  for (const file of list) {
+    if (progress.cancel) break
+
+    const groove = await readOne(file, relative(file))
+    if (groove) {
+      batch.push(packGroove(groove, setId, index++))
+      progress.read++
+    } else {
+      progress.skipped++
+    }
+
+    // Written in batches so a library of several hundred thousand can be
+    // interrupted, and so the page is not held for a minute at a time.
+    if (batch.length >= 400) {
+      await putGrooves(batch)
+      batch = []
+      await new Promise((resume) => setTimeout(resume, 0))
+    }
+  }
+
+  if (batch.length) await putGrooves(batch)
+
+  const count = await countGrooves(setId)
+  await putSet({
+    id: setId, name: name || 'library', kit: '', customMap: {},
+    facts, count, addedAt: Date.now(),
+  })
+  await refreshDrumSets()
+
+  progress.running = false
+  toast(progress.cancel
+    ? `Stopped — ${count.toLocaleString()} kept`
+    : `${count.toLocaleString()} patterns from ${name || 'the folder'}`)
+
+  await searchDrums()
+  return setId
+}
+
+async function readOne(file, path) {
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    return readGrooveFile(bytes, path)
+  } catch {
+    return null
+  }
+}
+
+export function cancelDrumImport() {
+  state.drumImport.cancel = true
+}
+
+export async function forgetDrumSet(id) {
+  await deleteSet(id)
+  await refreshDrumSets()
+  await searchDrums()
+  toast('Library removed')
+}
+
+/** The kit a library's notes were written for. */
+export async function setDrumSetKit(id, kit, customMap = null) {
+  const set = state.drumSets.find((row) => row.id === id)
+  if (!set) return
+  const next = { ...set, kit: kit || '', customMap: customMap || set.customMap || {} }
+  await putSet(next)
+  await refreshDrumSets()
+  refreshDrums()
+}
+
+/** What the filters are showing, out of the imported catalogue. */
+export async function searchDrums(filters = null) {
+  if (filters) state.drumFilters = { ...state.drumFilters, ...filters }
+  const found = await searchGrooves(state.drumFilters)
+  state.drumHits = found.rows.map(unpackGroove)
+  state.drumSearch = { scanned: found.scanned, partial: found.partial }
+  return state.drumHits
+}
+
+export async function drumFacetsFor(setId) {
+  return grooveFacets(setId || null)
+}
+
+/**
+ * The kit map a groove should be played through.
+ *
+ * A library's own, when it has one, and the global setting otherwise. This is
+ * the whole reason the kit lives on the set: one folder is General MIDI and the
+ * next uses pitches General MIDI has no name for, and nothing global can be
+ * right for both.
+ */
+export function kitMapFor(groove) {
+  const drums = state.settings.drums
+  const global = { ...kitById(drums.kit).map, ...cleanKitMap(drums.customMap) }
+  if (!groove || !groove.setId) return global
+
+  const set = state.drumSets.find((row) => row.id === groove.setId)
+  if (!set || !set.kit) return global
+  return { ...kitById(set.kit).map, ...cleanKitMap(set.customMap) }
 }
 
 /**

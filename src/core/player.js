@@ -84,6 +84,10 @@ export class Player {
         phrase catalogue is, so the application supplies it. */
     this.getGroove = () => null
     this.getFill = () => null
+    /** The kit a given groove should be played through -- its library's, or the
+        global one. @see store.kitMapFor */
+    this.getKitMap = () => ({ ...kitById(this.settings.drums.kit).map,
+                              ...cleanKitMap(this.settings.drums.customMap) })
     this.onEventChange = null
     this.onCapture = null
     this.onNotes = null
@@ -322,13 +326,16 @@ export class Player {
     const accent = this.drumAccent
     let spent = false
 
+    // The map is asked for per groove rather than fixed for the track: an
+    // imported library is written for its own instrument, and a chart can use
+    // one section from one library and the next from another.
     this.drumTrack = buildDrumTrack(this.score, {
       groove: (span) => {
         if (accent && !spent) { spent = true; return accent }
         return this.getGroove(span)
       },
       fill: (span) => this.getFill(span),
-      map: { ...kitById(drums.kit).map, ...cleanKitMap(drums.customMap) },
+      map: (groove) => this.getKitMap(groove),
       fillOnEveryBoundary: drums.fillOnEveryBoundary !== false,
     })
   }

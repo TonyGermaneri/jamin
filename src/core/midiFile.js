@@ -84,8 +84,24 @@ export function parseMidiFile(bytes) {
   return { ppq, format, tracks, tempos, timeSignature }
 }
 
+/**
+ * The meta events that carry words.
+ *
+ * A commercial drum library writes its name, its copyright and often the kit it
+ * was made for into every file. A folder of several hundred thousand of them is
+ * only searchable by what is written inside, so all of it is kept.
+ */
+const META_TEXT = {
+  0x01: 'text',
+  0x02: 'copyright',
+  0x04: 'instrument',
+  0x06: 'marker',
+  0x08: 'program',
+}
+
 function readTrack(reader, end, tempos, onTimeSignature) {
   const notes = []
+  const meta = []
   const open = new Map()
   let tick = 0
   let status = 0
@@ -107,7 +123,13 @@ function readTrack(reader, end, tempos, onTimeSignature) {
       const type = reader.byte()
       const length = reader.varint()
       const start = reader.at
+      // The text a library writes into its files. Copyright and instrument
+      // name are where a commercial pack says which kit it was made for, and a
+      // marker is often the pattern's own name -- all of it worth keeping,
+      // because a folder of eight hundred thousand files is only searchable by
+      // what is written in it.
       if (type === 0x03 && !name) name = reader.ascii(length)
+      else if (META_TEXT[type]) meta.push({ tick, kind: META_TEXT[type], text: reader.ascii(length) })
       else if (type === 0x51 && length === 3) tempos.push({ tick, usPerQuarter: reader.uint(3) })
       else if (type === 0x58 && length >= 2) {
         onTimeSignature({ numerator: reader.byte(), denominator: 1 << reader.byte() })
@@ -144,7 +166,7 @@ function readTrack(reader, end, tempos, onTimeSignature) {
 
   for (const key of [...open.keys()]) closeNote(open, key, notes, tick)
   notes.sort((a, b) => a.tick - b.tick || a.note - b.note)
-  return { name: name.trim(), notes }
+  return { name: name.trim(), notes, meta }
 }
 
 function closeNote(open, key, notes, tick) {
