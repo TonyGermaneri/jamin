@@ -27,7 +27,7 @@ const grooves = GROOVE_DRUMS.grooves
 const beats = grooves.filter((g) => g.k === 'beat')
 const fills = grooves.filter((g) => g.k === 'fill')
 
-check('the corpus is here', grooves.length > 2000, true)
+check('the corpus is here', grooves.length > 1000, true)
 check('with beats and fills', beats.length > 0 && fills.length > 0, true)
 check('attributed', GROOVE_DRUMS.licence, 'CC BY 4.0')
 check('and in the kit it was played on', GROOVE_DRUMS.kit, 'roland-td11')
@@ -37,26 +37,27 @@ check('counted in jamin pulses', GROOVE_DRUMS.ppqn, 24)
 const spill = grooves.filter((g) => g.v.some(([at]) => at < 0 || at >= g.d))
 check('no note lands outside the loop it belongs to', spill.length, 0)
 
-/* ---------------- and the loop point does not flam ----------------------- */
-// The whole point. A hit two pulses before the loop point and another on the
-// downbeat are forty milliseconds apart at 120bpm, which is a flam -- and it
-// repeats every single bar.
-const flamming = beats.filter((g) => {
-  const ats = g.v.map(([at]) => at)
-  return ats.some((at) => at >= g.d - 2) && ats.some((at) => at <= 1)
-})
-check('no beat flams at its loop point', flamming.length, 0)
+/* ---------------- they are whole performances --------------------------- */
+// Nothing is cut. An earlier version sliced these into one, two and four bar
+// loops -- a decision about somebody else's material taken without asking, and
+// done badly on top of it: cutting on the bar line put the anticipated downbeat
+// at the end of the previous loop and left most of the corpus flamming once a
+// bar. Each take ships as it was played.
+const kinds = new Set(grooves.map((g) => g.k))
+check('three kinds and no others', [...kinds].sort(), ['beat', 'fill', 'song'])
 
-// And most of them start where a loop should start.
-const onDownbeat = beats.filter((g) => g.v.some(([at]) => at === 0))
-atLeast('four in five beats start on the downbeat',
-        Math.round(100 * onDownbeat.length / beats.length), 80)
+const songs = grooves.filter((g) => g.k === 'song')
+const short = grooves.filter((g) => g.k === 'beat')
+atLeast('the long takes are here as takes', songs.length, 300)
+check('and are longer than a pattern', songs.every((g) => g.r > 8), true)
+check('while a beat is short enough to loop', short.every((g) => g.r <= 8), true)
 
-// A beat whose downbeat was pushed off the end entirely is the other half of
-// the same fault, and is rarer still.
-const headless = beats.filter((g) => !g.v.some(([at]) => at <= 2))
-atMost('almost none has lost its downbeat',
-       Math.round(100 * headless.length / beats.length), 5)
+// One artefact per performance: 1,150 files in, 1,150 out.
+check('one groove per performance', grooves.length, 1150)
+
+// Whose take it is, which a slice had no room for.
+const anonymous = grooves.filter((g) => !g.w)
+check('every take has a drummer', anonymous.length, 0)
 
 /* ---------------- the loops are whole bars ------------------------------- */
 const ragged = grooves.filter((g) => {

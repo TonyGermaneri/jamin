@@ -35,6 +35,8 @@ import {
   cancelDrumImport,
   forgetDrumSet,
   setDrumSetKit,
+  sectionBars,
+  partsItFits,
 } from '../store.js'
 import { searchDrums, summarizeGroove } from '../core/drums.js'
 import { DRUM_KITS, DRUM_VOICES, kitById, gmName, mapDrumNote, TD11_TO_VOICE } from '../core/drumKits.js'
@@ -46,6 +48,8 @@ const genre = ref('any')
 const bars = ref('any')
 const signature = ref('any')
 const onlyFavourites = ref(false)
+/** Only patterns that go into one of the song's parts a whole number of times. */
+const onlyFitting = ref(false)
 const filtersOpen = ref(undefined)
 const selected = ref(null)
 const page = ref(1)
@@ -109,13 +113,18 @@ const matches = computed(() => {
     if (bars.value !== 'any' && String(groove.bars) !== bars.value) return false
     if (signature.value !== 'any' && groove.timeSignature !== signature.value) return false
     if (onlyFavourites.value && (!starred || !favourite(groove))) return false
+    if (onlyFitting.value && !partsItFits(groove).length) return false
     return true
   })
 })
 
 const activeFilters = computed(() =>
   [kind.value !== 'any', genre.value !== 'any', bars.value !== 'any',
-   signature.value !== 'any', onlyFavourites.value].filter(Boolean).length)
+   signature.value !== 'any', onlyFavourites.value, onlyFitting.value].filter(Boolean).length)
+
+/** The song's parts and how long each is, for the fitting switch to explain
+    itself -- "fits the song" is meaningless without saying what the song is. */
+const parts = computed(() => sectionBars())
 
 const filtered = computed(() => Boolean(search.value) || activeFilters.value > 0)
 
@@ -126,6 +135,7 @@ function clearFilters() {
   bars.value = 'any'
   signature.value = 'any'
   onlyFavourites.value = false
+  onlyFitting.value = false
 }
 
 const pageCount = computed(() => Math.max(1, Math.ceil(matches.value.length / PER_PAGE)))
@@ -461,6 +471,27 @@ function resetMap() {
                         <v-col cols="12">
                           <v-switch v-model="onlyFavourites" density="compact" hide-details color="error"
                                     :label="`Favourites only (${state.favourites.length})`" />
+                          <div class="d-flex align-center">
+                            <v-switch v-model="onlyFitting" density="compact" hide-details color="primary"
+                                      :disabled="!parts.length"
+                                      label="Only what fits the song" />
+                            <InfoTip>
+                              Keeps the patterns that go into one of this song's parts a whole
+                              number of times. A two-bar groove fits an eight-bar verse four times;
+                              a three-bar one does not fit at all and would be cut off mid-phrase
+                              every time round, which is what makes a loop sound like a mistake
+                              rather than a part.
+                              <br /><br />
+                              <span v-if="parts.length">
+                                This song:
+                                <span v-for="part in parts" :key="part.name" class="mr-2">
+                                  {{ part.name === ' song' ? 'the whole song' : part.name }}
+                                  {{ part.bars }} bars
+                                </span>
+                              </span>
+                              <span v-else>There is nothing in the chart to fit yet.</span>
+                            </InfoTip>
+                          </div>
                         </v-col>
                         <v-col v-if="activeFilters" cols="12" class="text-right">
                           <v-btn size="x-small" variant="text" @click="clearFilters">Clear them</v-btn>
@@ -500,6 +531,10 @@ function resetMap() {
                       {{ groove.bars }} bar{{ groove.bars === 1 ? '' : 's' }} ·
                       {{ groove.timeSignature }} · {{ groove.bpm }}bpm
                       <span v-if="groove.substyle">· {{ groove.substyle }}</span>
+                      <span v-if="groove.drummer">· {{ groove.drummer }}</span>
+                      <span v-if="onlyFitting && partsItFits(groove).length" class="text-primary">
+                        · fits {{ partsItFits(groove).map((p) => p.name === ' song' ? 'the song' : p.name).join(', ') }}
+                      </span>
                     </v-list-item-subtitle>
                     <!-- One pill per part, on their own line: a song with eight
                          sections is eight pills, and squeezed onto the end of

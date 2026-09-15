@@ -73,9 +73,28 @@ const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PER_PAGE)))
  */
 const genre = ref('')
 const decade = ref('')
+/** Only progressions the same length as the chart, or that go into it evenly. */
+const onlyFitting = ref(false)
 const facets = ref({ genres: [], decades: [] })
 const filtersOpen = ref(undefined)
-const activeFilters = computed(() => [genre.value, decade.value].filter(Boolean).length)
+const activeFilters = computed(() =>
+  [genre.value, decade.value, onlyFitting.value].filter(Boolean).length)
+
+/**
+ * How long the chart is, for the fitting switch.
+ *
+ * A progression fits if it is the same length as the song or goes into it a
+ * whole number of times -- a four-bar turnaround under sixteen bars is the same
+ * shape four times over, and a five-bar one is a different song.
+ */
+const songBars = computed(() => Math.round(state.score.bars || 0))
+
+function fitsSong(row) {
+  const bars = Math.round(barsOf(row))
+  const total = songBars.value
+  if (!bars || !total) return false
+  return bars === total || total % bars === 0
+}
 
 const genreItems = computed(() => [
   { title: 'Any genre', value: '' },
@@ -104,7 +123,8 @@ async function load() {
   loading.value = true
   try {
     const result = await progressionPage((page.value - 1) * PER_PAGE, PER_PAGE, search.value,
-                                         { genre: genre.value, decade: decade.value })
+                                         { genre: genre.value, decade: decade.value,
+                                           fits: onlyFitting.value ? songBars.value : 0 })
     rows.value = result.rows
     total.value = result.total
     partial.value = result.partial
@@ -117,9 +137,10 @@ async function load() {
 }
 
 watch(() => [state.ui.progressions, page.value, search.value, genre.value, decade.value,
+             onlyFitting.value, songBars.value,
              state.progressions.length, state.bulk.count],
   ([open]) => { if (open) load() }, { immediate: true })
-watch([search, genre, decade], () => { page.value = 1 })
+watch([search, genre, decade, onlyFitting], () => { page.value = 1 })
 
 // The facets are a scan, so they are read once the dialog opens and once the
 // count changes, rather than on every keystroke.
@@ -286,6 +307,22 @@ function runExport() {
                         </v-col>
                         <v-col cols="5">
                           <v-select v-model="decade" :items="decadeItems" label="Decade" density="compact" hide-details />
+                        </v-col>
+                        <v-col cols="12">
+                          <div class="d-flex align-center">
+                            <v-switch v-model="onlyFitting" density="compact" hide-details color="primary"
+                                      :disabled="!songBars"
+                                      :label="songBars ? `Only what fits ${songBars} bars` : 'Only what fits the song'" />
+                            <InfoTip>
+                              Keeps the progressions that are the same length as this chart, or
+                              that go into it a whole number of times — a four-bar turnaround under
+                              sixteen bars is the same shape four times over, and a five-bar one is
+                              a different song.
+                              <br /><br />
+                              The harmony may still be nothing like yours. This is only about
+                              length, which is the part that can be checked.
+                            </InfoTip>
+                          </div>
                         </v-col>
                       </v-row>
                     </v-expansion-panel-text>

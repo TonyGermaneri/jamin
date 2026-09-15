@@ -34,8 +34,9 @@ function toGroove(entry, index) {
   return {
     id: `g${index}`,
     name: entry.n || `groove ${index}`,
-    // beat | fill. The only two things a drummer is doing at this level.
-    kind: entry.k === 'fill' ? 'fill' : 'beat',
+    // beat | fill | song. A beat is short enough to loop, a song is a
+    // performance you play through, and the corpus itself says which are fills.
+    kind: entry.k === 'fill' ? 'fill' : entry.k === 'song' ? 'song' : 'beat',
     genre: entry.g || '',
     substyle: entry.u || '',
     bpm: Number(entry.b) || 0,
@@ -47,6 +48,9 @@ function toGroove(entry, index) {
     // Left in the kit they were played on. Translating here would bake one
     // kit into the catalogue; it happens at playback, where the answer is known.
     notes: entry.v.map(([at, note, duration, velocity]) => ({ at, note, duration, velocity })),
+    // Whose take it is. These are performances rather than patterns, and a
+    // performance has somebody playing it.
+    drummer: entry.w || '',
     origin: 'Groove MIDI Dataset',
     builtin: true,
   }
@@ -97,7 +101,25 @@ export function summarizeGroove(groove) {
   if (!groove) return 'empty'
   const bars = `${groove.bars} bar${groove.bars === 1 ? '' : 's'}`
   const style = groove.substyle ? `${groove.genre} · ${groove.substyle}` : groove.genre
-  return `${groove.kind} · ${bars} · ${groove.notes.length} hits · ${style} · played at ${groove.bpm}`
+  const who = groove.drummer ? ` · ${groove.drummer}` : ''
+  return `${groove.kind} · ${bars} · ${groove.notes.length} hits · ${style} · played at ${groove.bpm}${who}`
+}
+
+/**
+ * Does this pattern fit that many bars exactly?
+ *
+ * Either it is the same length or it goes in a whole number of times. A two-bar
+ * groove fits an eight-bar verse four times over and a three-bar one does not
+ * fit at all -- it would be cut off mid-phrase every time round, which is the
+ * thing that makes a loop sound like a mistake rather than a part.
+ *
+ * A pattern longer than the span never fits: it would be truncated, and half a
+ * phrase is not the phrase.
+ */
+export function fitsBars(groove, bars) {
+  if (!groove || !bars || bars <= 0) return false
+  if (groove.bars > bars) return false
+  return bars % groove.bars === 0
 }
 
 /**

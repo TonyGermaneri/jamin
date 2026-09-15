@@ -12,7 +12,7 @@ import { reactive, watch } from 'vue'
 import { MidiEngine } from './core/midi.js'
 import { hosted, hostData, callHost, onHost, HostClock } from './core/host.js'
 import { nodeAvailable, Session, httpTransport, hostTransport, localTransport } from './core/net.js'
-import { loadDrums, loadedDrums, drumReport, buildDrumTrack, matchingFill } from './core/drums.js'
+import { loadDrums, loadedDrums, drumReport, buildDrumTrack, matchingFill, fitsBars } from './core/drums.js'
 import { kitById, cleanKitMap } from './core/drumKits.js'
 import { readGrooveFile, describeSet, packGroove, unpackGroove, spread } from './core/drumImport.js'
 import {
@@ -994,6 +994,37 @@ export function tapDrum(note, velocity = 100) {
   }
   // Struck, not held.
   setTimeout(() => engine.noteOff(outputId, channel, note), 120)
+}
+
+/**
+ * The lengths the chart actually has, in bars.
+ *
+ * What "fits" means: a pattern fits if it goes a whole number of times into one
+ * of the song's parts. A two-bar groove fits an eight-bar verse four times and
+ * a three-bar one does not fit at all -- it would be cut off mid-phrase every
+ * time round, which is what makes a loop sound like a mistake rather than a
+ * part.
+ */
+export function sectionBars() {
+  const perBar = state.score.pulsesPerBar || 96
+  const sections = state.score.sections || []
+
+  if (!sections.length) {
+    const whole = Math.round((state.score.totalPulses || 0) / perBar)
+    return whole > 0 ? [{ name: WHOLE_SONG, bars: whole }] : []
+  }
+
+  return sections
+    .map((section) => ({
+      name: section.name,
+      bars: Math.round((section.endPulse - section.startPulse) / perBar),
+    }))
+    .filter((section) => section.bars > 0)
+}
+
+/** Which of the song's parts this pattern would sit in cleanly, if any. */
+export function partsItFits(groove) {
+  return sectionBars().filter((section) => fitsBars(groove, section.bars))
 }
 
 /** Is this groove bound to this part? Drives the pills in the catalogue. */
@@ -2030,10 +2061,18 @@ export async function progressionPage(offset, limit, query = '', filters = {}) {
     // they genuinely are not from the 1970s.
     if (filters.genre && String(item.genre || '') !== filters.genre) return false
     if (filters.decade && String(item.decade || '') !== filters.decade) return false
+    // Same length as the song, or going into it evenly. The built-in
+    // progressions have no stored bar count, so it is read from the text.
+    if (filters.fits) {
+      const bars = Math.round(parseScore(item.text, {
+        beatsPerBar: state.settings.transport.beatsPerBar,
+      }).bars)
+      if (!bars || filters.fits % bars !== 0) return false
+    }
     return true
   })
 
-  const narrowed = Boolean(filters.genre || filters.decade)
+  const narrowed = Boolean(filters.genre || filters.decade || filters.fits)
 
   if (!query && !narrowed) {
     const rows = small.slice(offset, offset + limit)

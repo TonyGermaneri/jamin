@@ -48,34 +48,25 @@ const rows = csv.slice(1).map((line) => {
  * loop that starts with a crash is a loop that crashes every two bars.
  */
 /**
- * How far ahead of the bar line a drummer is allowed to be.
+ * Nothing is cut.
  *
- * They play ahead of the click -- that is most of what "feel" is -- so a
- * downbeat routinely lands a pulse or two *before* the bar it belongs to.
- * Slicing on the exact bar line puts that note at the end of the previous loop
- * instead of the start of this one, and the result is brutal: measured across
- * the corpus, 32% of loops flammed on every bar line (a hit at the end and
- * another at the downbeat, forty milliseconds apart, for ever) and another 28%
- * lost their downbeat altogether. Sixty per cent of the beats were broken by
- * the cut, not by the drummer.
+ * An earlier version of this sliced the performances into one, two and four bar
+ * loops. That was a decision about somebody else's material taken without
+ * asking, and it was also done badly -- cutting on the bar line put the
+ * anticipated downbeat at the end of the previous loop and left most of the
+ * corpus flamming once a bar.
  *
- * Two pulses, from the data rather than from taste. The hits within two pulses
- * either side of a bar line are one cluster -- 4,864 at -1 and 4,675 at 0 --
- * and there is a clear valley at three and four before the count rises again at
- * six, which is the sixteenth before the beat. Three would start eating that
- * sixteenth; one would leave a third of the anticipations behind.
+ * So each performance ships whole, as it was played. A take that runs
+ * twenty-four bars is twenty-four bars of drumming, which is a *song*: bind it
+ * to a section and it plays through. A fill is a fill. Nothing is invented,
+ * nothing is removed, and the only thing this file decides is what to call
+ * things.
  */
-const ANTICIPATION = 2
 
-const WINDOWS = [
-  { bars: 1, from: 1 },
-  { bars: 2, from: 1 },
-  { bars: 4, from: 1 },
-  { bars: 2, from: 5 },          // a later variation, when there is one
-]
+/** Longer than this and it is a performance rather than a pattern. */
+const SONG_BARS = 8
 
 const grooves = []
-const seen = new Set()
 let skipped = 0
 
 for (const row of rows) {
@@ -107,50 +98,29 @@ for (const row of rows) {
 
   if (!notes.length) { skipped++; continue }
 
-  const lastPulse = notes[notes.length - 1].at
-  const totalBars = Math.max(1, Math.ceil((lastPulse + 1) / barPulses))
+  const last = notes[notes.length - 1].at
+  const bars = Math.max(1, Math.ceil((last + 1) / barPulses))
   const [genre, substyle = ''] = row.style.split('/')
 
-  const windows = row.beat_type === 'fill'
-    ? [{ bars: Math.min(2, totalBars), from: 0 }]     // a fill is already a fill
-    : WINDOWS
+  // The corpus says beat or fill. Length says whether a beat is a pattern you
+  // would loop or a performance you would play through -- both are useful and
+  // they are not used the same way.
+  const kind = row.beat_type === 'fill' ? 'fill' : bars > SONG_BARS ? 'song' : 'beat'
 
-  for (const window of windows) {
-    const start = window.from * barPulses
-    const end = start + window.bars * barPulses
-    if (end > totalBars * barPulses) continue
-
-    // The window is shifted back by the anticipation at both ends: a note just
-    // before this bar belongs to it, and a note just before the *next* bar
-    // belongs to that one and must be left for it. @see ANTICIPATION
-    const inside = notes
-      .filter((note) => note.at >= start - ANTICIPATION && note.at < end - ANTICIPATION)
-      // An anticipated downbeat is the downbeat. It loses a pulse or two of its
-      // own push, which is the price of a loop that does not flam -- and the
-      // push inside the bar, which is the rest of the feel, is untouched.
-      .map((note) => ({ ...note, at: Math.max(0, note.at - start) }))
-
-    // A window with almost nothing in it is a bar the drummer left, not a
-    // groove somebody would choose.
-    if (inside.length < window.bars * 2) continue
-
-    const key = `${row.beat_type}|${window.bars}|` +
-      inside.map((n) => `${n.at}:${n.note}`).join(',')
-    if (seen.has(key)) continue
-    seen.add(key)
-
-    grooves.push({
-      n: `${genre} ${row.bpm} ${row.beat_type}`,
-      g: genre,
-      u: substyle,
-      b: Number(row.bpm),
-      t: row.time_signature,
-      k: row.beat_type,
-      r: window.bars,
-      d: window.bars * barPulses,
-      v: inside.map((note) => [note.at, note.note, note.duration, note.velocity]),
-    })
-  }
+  grooves.push({
+    n: `${genre} ${row.bpm} ${kind}`,
+    g: genre,
+    u: substyle,
+    b: Number(row.bpm),
+    t: row.time_signature,
+    k: kind,
+    r: bars,
+    d: bars * barPulses,
+    // Whose take this is, which the slicing had no room for and which is the
+    // honest label for an artefact somebody actually played.
+    w: row.drummer,
+    v: notes.map((note) => [note.at, note.note, note.duration, note.velocity]),
+  })
 }
 
 /* --------------------------------------------------- names people can tell apart */

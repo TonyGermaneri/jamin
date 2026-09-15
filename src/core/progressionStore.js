@@ -96,7 +96,10 @@ export async function searchProgressions(query, limit = 200, scanLimit = 60000, 
   const needle = String(query || '').trim().toLowerCase()
   const genre = String(filters.genre || '').trim().toLowerCase()
   const decade = String(filters.decade || '').trim()
-  if (!needle && !genre && !decade) return { rows: [], scanned: 0, complete: true }
+  // How many bars the chart is, when only progressions that fit it are wanted.
+  // Zero means the filter is off.
+  const fits = Math.round(Number(filters.fits) || 0)
+  if (!needle && !genre && !decade && !fits) return { rows: [], scanned: 0, complete: true }
 
   const db = await open()
   const store = db.transaction(STORE, 'readonly').objectStore(STORE)
@@ -125,8 +128,13 @@ export async function searchProgressions(query, limit = 200, scanLimit = 60000, 
       // a list of what is actually in the data, not typed.
       const byGenre = !genre || String(row.genre || '').toLowerCase() === genre
       const byDecade = !decade || String(row.decade || '') === decade
+      // The same length as the song, or going into it a whole number of times:
+      // a four-bar turnaround under sixteen bars is the same shape four times
+      // over, and a five-bar one is a different song. Rows carry their own bar
+      // count from the import, so this costs nothing to test.
+      const byLength = !fits || (row.bars > 0 && fits % Math.round(row.bars) === 0)
 
-      if (text && byGenre && byDecade) {
+      if (text && byGenre && byDecade && byLength) {
         rows.push(row)
       }
       cursor.continue()
