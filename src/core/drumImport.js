@@ -284,35 +284,79 @@ export function slashes(path) {
  * A folder with no folders in it is simply itself -- one library, as before. The
  * rule needs no configuring and no knowledge of this particular collection.
  */
-export function planPacks(chosen, treeIn) {
+export function planPacks(chosen, folders) {
   const root = slashes(chosen.path)
-  const tree = (treeIn || []).map(slashes)
-  const under = (prefix) =>
-    tree.filter((dir) => dir && dir.startsWith(prefix)).map((dir) => dir.slice(prefix.length))
+  const names = (folders || []).map(slashes).filter(Boolean)
 
-  const top = tree.filter((dir) => dir && !dir.includes('/'))
-  if (!top.length) {
-    return [{ id: idForPath(root), name: chosen.name || 'library', root, shelves: tree }]
+  // Nothing inside: the chosen folder is itself one library, walked whole.
+  if (!names.length) {
+    return [{ id: idForPath(root), name: chosen.name || 'library', root, deep: true }]
   }
 
-  const packs = top.map((name) => ({
-    id: idForPath(`${root}/${name}`),
-    name,
-    root: `${root}/${name}`,
-    shelves: ['', ...under(`${name}/`)],
-  }))
+  return [
+    // Files lying loose in the chosen folder, alongside the packs. Its own rung
+    // and no deeper: everything below it belongs to one of the packs, and
+    // walking it would import the entire collection a second time. Usually it
+    // finds nothing, and then no library is written for it.
+    { id: idForPath(root), name: chosen.name || 'loose', root, deep: false },
+    ...names.map((name) => ({
+      id: idForPath(`${root}/${name}`),
+      name,
+      root: `${root}/${name}`,
+      deep: true,
+    })),
+  ]
+}
 
-  // Files loose in the chosen folder, alongside the packs. Rare, and cheap to
-  // allow for: the shelf is scanned, and if there is nothing on it no library is
-  // written. @see importOnePack
-  packs.unshift({
-    id: idForPath(root),
-    name: chosen.name || 'loose',
-    root,
-    shelves: [''],
-  })
+/** How many files are read in one crossing of the bridge. These are
+    two-kilobyte files and the crossing costs more than the read, so they go in
+    handfuls -- but a handful small enough that the interface gets a turn. */
+export const READ_BATCH = 64
 
-  return packs
+/**
+ * A library's files, a handful at a time.
+ *
+ * Breadth first, one rung of the tree per step. The whole tree used to come
+ * back as a single answer, and for a real collection that is twenty-five
+ * thousand paths -- which JUCE turns into a megabyte and a half of JavaScript
+ * source for one `evaluateJavaScript` call. When that failed there was nothing
+ * to see: an empty list is indistinguishable from a folder with no drums in it.
+ * Now every crossing is one folder's worth.
+ *
+ * `reader` is the three things this needs from a filesystem, so the walk can be
+ * driven by a real one or a pretend one. @see tests/drumImport.test.js
+ *
+ * Yields once per batch of files, and once for a shelf that has none, so a
+ * caller can count the folders it has been through.
+ */
+export async function* walkLibrary(pack, reader, batchSize = READ_BATCH) {
+  const queue = ['']
+
+  while (queue.length) {
+    const shelf = queue.shift()
+    const where = shelf ? `${pack.root}/${shelf}` : pack.root
+
+    // The loose shelf at the top of a collection is walked one rung and no
+    // deeper -- everything below it is somebody else's library. @see planPacks
+    if (pack.deep) {
+      for (const child of (await reader.listFolders(where)) || []) {
+        const name = slashes(child)
+        queue.push(shelf ? `${shelf}/${name}` : name)
+      }
+    }
+
+    const files = ((await reader.scanFiles(where)) || []).map(slashes)
+    if (!files.length) {
+      yield { shelf, where, names: [], blobs: [], opensShelf: true }
+      continue
+    }
+
+    for (let at = 0; at < files.length; at += batchSize) {
+      const names = files.slice(at, at + batchSize)
+      const blobs = (await reader.readFiles(where, names)) || []
+      yield { shelf, where, names, blobs, opensShelf: at === 0 }
+    }
+  }
 }
 
 /** A stable name for a folder, so a job that stops can pick up where it left

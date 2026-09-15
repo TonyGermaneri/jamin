@@ -563,14 +563,22 @@ Licence before download, every time.
   bought is yours to use and not ours to ship.
 
   In the browser, pointing at a folder copies what is in it into that browser's
-  own database. In the plugin it does not copy at all: the tree is walked, an
-  index is built, and the files play from where they already live. Point at one
-  pack and it becomes one library; point at a folder of fifty packs and each
-  becomes its own, because a note map belongs to a vendor rather than to a
-  collection. A collection of 774,000 files across 25,000 shelves indexes to
-  about 160MB and takes a while, so it is a batch job: stopping leaves the packs
-  that finished alone, and starting again finishes the one it stopped in.
-  Nothing is copied into the project and nothing leaves the machine.
+  own database. In the plugin it does not copy at all: an index is built and the
+  files play from where they already live. Point at one pack and it becomes one
+  library; point at a folder of fifty packs and each becomes its own, because a
+  note map belongs to a vendor rather than to a collection. A collection of
+  774,000 files across 25,000 folders indexes to about 160MB and takes a while,
+  so it is a batch job: stopping leaves the libraries that finished alone, and
+  starting again finishes the one it stopped in. Nothing is copied into the
+  project and nothing leaves the machine.
+
+  The tree is walked a rung at a time rather than asked for in one answer.
+  JUCE returns a native function's result by inlining it into a JavaScript
+  source string for `evaluateJavaScript`, so a whole tree — twenty-five thousand
+  paths — is a megabyte and a half of source for a single call, and when that
+  fails the page sees an empty list, which is indistinguishable from a folder
+  with no drums in it. One folder at a time is at most a couple of hundred
+  names. @see `walkLibrary`, and the fake filesystem it is tested against.
 - Several jazz corpora that fit the notation almost perfectly state **no licence
   at all** and are transcriptions of copyrighted songs. Import-only, never
   bundled.

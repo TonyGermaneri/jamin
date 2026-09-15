@@ -10,12 +10,12 @@
 
 import { reactive, watch } from 'vue'
 import { MidiEngine } from './core/midi.js'
-import { hosted, hostData, callHost, onHost, HostClock } from './core/host.js'
+import { hosted, hostData, callHost, callHostSlowly, onHost, HostClock } from './core/host.js'
 import { nodeAvailable, Session, httpTransport, hostTransport, localTransport } from './core/net.js'
 import { loadDrums, loadedDrums, drumReport, buildDrumTrack, matchingFill, fitsBars } from './core/drums.js'
 import { kitById, cleanKitMap, classifyKit } from './core/drumKits.js'
 import {
-  readGrooveFile, describeSet, packGroove, unpackGroove, spread, planPacks, slashes, reservoir,
+  readGrooveFile, describeSet, packGroove, unpackGroove, spread, planPacks, slashes, reservoir, walkLibrary,
 } from './core/drumImport.js'
 import {
   listSets, putSet, deleteSet, putGrooves, countGrooves,
@@ -36,6 +36,7 @@ import {
   SONG_PHRASE_KEY,
   ACCENT_KEY,
   DRUM_ACCENT_KEY,
+  DRUM_LIBRARY_KEY,
   FAVOURITES_KEY,
   SAMPLE_CHART,
 } from './core/settings.js'
@@ -120,6 +121,10 @@ export const state = reactive({
   },
   // What the catalogue is taking on disk, when the browser will say.
   drumStorage: { usage: 0, quota: 0 },
+  // Imported grooves the chart has bound, fetched out of the database and kept
+  // here. The catalogue itself is far too big to hold, but the four or five a
+  // song actually uses have to be findable by id like any other groove.
+  drumBound: {},
   drumBindings: {},
   drumAccent: null,
   // What is being heard right now: the section the playhead is in, and the drums
@@ -323,7 +328,15 @@ export async function initApp() {
   // milliseconds off the critical path, so it is ready before anyone opens the
   // tab, and nothing waits on it if they never do.
   state.drumBindings = loadDrumBindings()
-  refreshDrumSets()
+  refreshDrumSets().then((sets) => {
+    // Back to whichever library was being used, if it is still here.
+    const last = readStored(DRUM_LIBRARY_KEY)
+    if (last && sets.some((set) => set.id === last)) {
+      state.drumFilters.set = last
+      searchDrums()
+    }
+    return rememberBoundGrooves().then(refreshDrums)
+  })
   state.drumAccent = readStored(DRUM_ACCENT_KEY)
   loadDrums().then((list) => {
     state.drums = list
@@ -741,10 +754,44 @@ export function randomSongPhrase(pool = null) {
  * beat the pedal switch. @see core/drums.js
  * ------------------------------------------------------------------ */
 
-/** A groove by id, from the catalogue. */
+/**
+ * A groove by id, from wherever it is.
+ *
+ * Three places, and all three are needed. The bundled corpus is in memory. An
+ * imported catalogue is not -- it can be three quarters of a million patterns
+ * -- so what is on screen is whatever the last search found, and what the chart
+ * has bound is fetched once and kept. A binding that could not be resolved
+ * would be a part that silently plays nothing.
+ */
 export function grooveById(id) {
   if (!id) return null
-  return state.drums.find((groove) => groove.id === id) || null
+  return state.drums.find((groove) => groove.id === id)
+      || state.drumBound[id]
+      || state.drumHits.find((groove) => groove.id === id)
+      || null
+}
+
+/**
+ * Fetch the imported grooves this chart binds, so they can be found by id.
+ *
+ * Called whenever the bindings change or a library arrives. A handful of rows
+ * out of a database of several hundred thousand; the notes come later and only
+ * if something plays. @see notesFor
+ */
+export async function rememberBoundGrooves() {
+  const wanted = new Set()
+  for (const row of Object.values(state.drumBindings || {})) {
+    for (const id of [row.groove, row.fill]) {
+      if (!id || state.drums.some((groove) => groove.id === id)) continue
+      if (!state.drumBound[id]) wanted.add(id)
+    }
+  }
+  if (!wanted.size) return
+
+  const rows = await getGrooves([...wanted])
+  const next = { ...state.drumBound }
+  for (const row of rows) next[row.id] = unpackGroove(row)
+  state.drumBound = next
 }
 
 /** The rows the drum book shows: every section, plus anything left over. */
@@ -770,6 +817,9 @@ function grooveForSpan(span, what) {
 export function setGrooveFor(name, grooveId, what = 'groove') {
   state.drumBindings = bindGroove(state.drumBindings, name, grooveId, what)
   saveDrumBindings(state.drumBindings)
+  // An imported groove is bound by id and lives in the database, so it has to
+  // be fetched before anything can play it.
+  rememberBoundGrooves().then(refreshDrums)
   refreshDrums()
 }
 
@@ -862,10 +912,12 @@ export async function refreshDrumSets() {
  *
  * Inside a plugin the filesystem is right there and the page has no business
  * copying half a gigabyte of somebody else's MIDI into a browser database to
- * play it. So the tree is walked natively, each file is read once to work out
- * what it is, and only the *index* is kept -- what it is called, how long it is,
- * what shelf it sits on, what the file said about itself. The notes stay in the
- * file and are read at the moment something needs to play them.
+ * play it. So the tree is walked natively -- a rung at a time, because a whole
+ * tree in one answer is a megabyte and a half of JavaScript source for a single
+ * call and fails as silence (@see walkLibrary) -- each file is read once to work
+ * out what it is, and only the *index* is kept: what it is called, how long it
+ * is, what shelf it sits on, what the file said about itself. The notes stay in
+ * the file and are read at the moment something needs to play them.
  *
  * **One click, many libraries.** What somebody actually points at is usually a
  * collection of collections: fifty vendors' packs side by side, two of them
@@ -880,25 +932,45 @@ export async function refreshDrumSets() {
  * so there it keeps the notes and this is never reached.
  */
 export async function importDrumFolderByReference() {
-  const chosen = await callHost('jaminChooseFolder').catch(() => null)
-  if (!chosen || !chosen.path) return null
-
-  const tree = (await callHost('jaminListTree', chosen.path).catch(() => [])) || []
-  const packs = planPacks(chosen, tree)
-  if (!packs.length) {
-    toast('Nothing that looks like a drum library in there')
-    return null
-  }
-
   const progress = state.drumImport
   Object.assign(progress, {
-    running: true, read: 0, skipped: 0, total: 0, cancel: false,
-    readBase: 0, skippedBase: 0,
-    name: chosen.name || 'library',
-    packs: packs.length, packsDone: 0, packsKept: 0, packsMade: 0, pack: '',
-    shelves: packs.reduce((sum, pack) => sum + pack.shelves.length, 0), shelvesDone: 0,
-    trouble: '',
+    running: false, read: 0, skipped: 0, total: 0, cancel: false,
+    readBase: 0, skippedBase: 0, name: '', trouble: '',
+    packs: 0, packsDone: 0, packsKept: 0, packsMade: 0, pack: '',
+    shelves: 0, shelvesDone: 0,
   })
+
+  try {
+    return await runImport(progress)
+  } catch (error) {
+    // Every failure in here used to become an empty list and a silent return,
+    // which looked exactly like a folder with no drums in it. Whatever went
+    // wrong, it says so.
+    progress.running = false
+    progress.pack = ''
+    progress.trouble = String((error && error.message) || error)
+    toast(progress.trouble)
+    return null
+  }
+}
+
+async function runImport(progress) {
+  // The dialog waits on a person and the disk walk waits on a disk. Neither
+  // belongs under the fifteen seconds that suits a question answered from
+  // memory. @see callHostSlowly
+  const chosen = await callHostSlowly('jaminChooseFolder')
+  if (!chosen || !chosen.path) return null
+
+  progress.name = chosen.name || 'library'
+  progress.running = true
+
+  // One rung of the tree, which is all the pack plan needs: the folders
+  // directly inside the chosen one are the libraries. Everything below each is
+  // walked while it is being read, so no single answer is ever large.
+  const top = (await callHostSlowly('jaminListFolders', chosen.path)) || []
+  const packs = planPacks(chosen, top.map(slashes))
+
+  progress.packs = packs.length
 
   // What is already here and whole. A pack that was stopped part way is not:
   // skipping it would mean an interrupted job could never be finished, only
@@ -909,13 +981,9 @@ export async function importDrumFolderByReference() {
   for (const pack of packs) {
     if (progress.cancel) break
 
-    // Already here. Re-reading three hundred thousand files to arrive at rows
-    // that are already in the database would make an interrupted job start over
-    // rather than carry on.
     if (already.has(pack.id)) {
       progress.packsDone++
       progress.packsKept++
-      progress.shelvesDone += pack.shelves.length
       continue
     }
 
@@ -924,6 +992,7 @@ export async function importDrumFolderByReference() {
     // they are numbered from the start of the pack, and a shorter second pass
     // would leave the tail of the first one orphaned.
     if (unfinished.has(pack.id)) await deleteSet(pack.id)
+
     const ok = await importOnePack(pack, progress)
     progress.packsDone++
     if (!ok) break
@@ -932,34 +1001,50 @@ export async function importDrumFolderByReference() {
   progress.running = false
   progress.pack = ''
   await refreshDrumSets()
+  await rememberBoundGrooves()
+
+  // Show what just arrived. Importing fifty libraries and being left looking at
+  // the built-in corpus reads as nothing having happened, which is exactly what
+  // it looked like.
+  const arrived = state.drumSets
+    .filter((set) => !already.has(set.id))
+    .sort((a, b) => (b.count || 0) - (a.count || 0))[0]
+  if (arrived) {
+    state.drumFilters.set = arrived.id
+    state.drumFilters.folder = ''
+  }
   await searchDrums()
 
   const made = progress.packsMade
-  toast(progress.trouble
-    ? progress.trouble
-    : `${progress.read.toLocaleString()} patterns from ${made.toLocaleString()} pack${made === 1 ? '' : 's'}`)
+  if (progress.trouble) toast(progress.trouble)
+  else if (!made) toast(`Nothing readable in ${progress.name} — ${progress.skipped.toLocaleString()} files skipped`)
+  else toast(`${progress.read.toLocaleString()} patterns from ${made.toLocaleString()} library${made === 1 ? '' : 'ies'}`)
 
   return packs.length
 }
 
-/** How many files are read in one crossing of the bridge. These are
-    two-kilobyte files and the crossing costs more than the read, so they go in
-    handfuls -- but a handful small enough that the interface gets a turn. */
-const READ_BATCH = 64
+/**
+ * What the walk reads through: the plugin's filesystem.
+ *
+ * Three calls, patient ones. The dialog waits on a person and the disk waits on
+ * a disk; neither belongs under the fifteen seconds that suits a question the
+ * plugin answers out of its own memory. @see callHostSlowly
+ */
+const hostReader = {
+  listFolders: (where) => callHostSlowly('jaminListFolders', where),
+  scanFiles: (where) => callHostSlowly('jaminScanFolder', where, 200000, false),
+  readFiles: (where, names) => callHostSlowly('jaminReadFiles', where, names),
+}
 
 /**
- * One library, shelf by shelf.
+ * One library, folder by folder.
  *
- * Shelf by shelf rather than all at once because a single pack here holds four
- * hundred thousand files, and asking for that list in one answer is thirty
- * megabytes of path crossing the bridge before anything has been read. A shelf
- * is a few hundred, and it is also the unit progress is counted in.
- *
- * Returns false if the job should stop -- which means the database is full,
- * the one failure that must not be shrugged off. Everything else that can go
- * wrong with a scraped collection is one bad file, and one bad file is skipped.
+ * Returns false if the whole job should stop -- which means the database
+ * refused a write, the one failure that must not be shrugged off. Everything
+ * else that can go wrong with a scraped collection is one bad file, and one bad
+ * file is skipped.
  */
-async function importOnePack(pack, progress) {
+async function importOnePack(pack, progress, reader = hostReader) {
   const perFolder = new Map()
   // Spread over the whole library rather than the first shelf of it. @see
   // reservoir, and the same mistake caught once before in spread().
@@ -970,60 +1055,50 @@ async function importOnePack(pack, progress) {
   let kept = 0
   let skipped = 0
 
-  for (const shelf of pack.shelves) {
+  for await (const step of walkLibrary(pack, reader)) {
     if (progress.cancel) break
+    if (step.opensShelf) progress.shelvesDone++
 
-    const where = shelf ? `${pack.root}/${shelf}` : pack.root
-    const files = (await callHost('jaminScanFolder', where, 200000, false).catch(() => [])) || []
-    progress.shelvesDone++
+    for (let i = 0; i < step.names.length; i++) {
+      const encoded = step.blobs[i]
+      if (typeof encoded !== 'string' || !encoded) { skipped++; continue }
 
-    for (let at = 0; at < files.length; at += READ_BATCH) {
-      if (progress.cancel) break
+      // Relative to the library, not to the shelf: it is what the library is
+      // rooted at, so it is what the file is found by later. @see notesFor
+      const path = step.shelf ? `${step.shelf}/${step.names[i]}` : step.names[i]
 
-      const slice = files.slice(at, at + READ_BATCH).map(slashes)
-      const blobs = (await callHost('jaminReadFiles', where, slice).catch(() => [])) || []
+      let groove = null
+      try {
+        groove = readGrooveFile(base64Bytes(encoded), path)
+      } catch {
+        groove = null
+      }
+      if (!groove) { skipped++; continue }
 
-      for (let i = 0; i < slice.length; i++) {
-        const encoded = blobs[i]
-        if (typeof encoded !== 'string' || !encoded) { skipped++; continue }
+      kept++
+      samples.offer(groove)
 
-        // Relative to the library, not to the shelf: it is what the library is
-        // rooted at, so it is what the file is found by later. @see notesFor
-        const path = shelf ? `${shelf}/${slice[i]}` : slice[i]
-
-        let groove = null
-        try {
-          groove = readGrooveFile(base64Bytes(encoded), path)
-        } catch {
-          groove = null
-        }
-        if (!groove) { skipped++; continue }
-
-        kept++
-        samples.offer(groove)
-
-        let hist = perFolder.get(groove.folder)
-        if (!hist) { hist = {}; perFolder.set(groove.folder, hist) }
-        for (const note of groove.notes) {
-          hist[note.note] = (hist[note.note] || 0) + 1
-          pitches.add(note.note)
-        }
-
-        // Without the notes: this row is a pointer, not a copy.
-        batch.push(packGroove(groove, pack.id, index++, { byReference: true }))
+      let hist = perFolder.get(groove.folder)
+      if (!hist) { hist = {}; perFolder.set(groove.folder, hist) }
+      for (const note of groove.notes) {
+        hist[note.note] = (hist[note.note] || 0) + 1
+        pitches.add(note.note)
       }
 
-      // Running totals for the whole job: what earlier packs got, plus this
-      // one so far.
-      progress.read = progress.readBase + kept
-      progress.skipped = progress.skippedBase + skipped
+      // Without the notes: this row is a pointer, not a copy.
+      batch.push(packGroove(groove, pack.id, index++, { byReference: true }))
+    }
 
-      if (batch.length >= 500) {
-        const trouble = await putGrooves(batch)
-        if (trouble) { progress.trouble = storeTrouble(trouble); return false }
-        batch = []
-        await new Promise((resume) => setTimeout(resume, 0))
-      }
+    // Running totals for the whole job: what earlier libraries got, plus this
+    // one so far.
+    progress.read = progress.readBase + kept
+    progress.skipped = progress.skippedBase + skipped
+
+    if (batch.length >= 500) {
+      const trouble = await putGrooves(batch)
+      if (trouble) { progress.trouble = storeTrouble(trouble); return false }
+      batch = []
+      await new Promise((resume) => setTimeout(resume, 0))
     }
   }
 
@@ -1333,6 +1408,14 @@ export async function setDrumSetKit(id, kit, customMap = null) {
 /** What the filters are showing, out of the imported catalogue. */
 export async function searchDrums(filters = null) {
   if (filters) state.drumFilters = { ...state.drumFilters, ...filters }
+  // Which library, remembered. Opening the plugin to the built-in corpus after
+  // importing a collection reads as the collection having vanished.
+  try {
+    if (state.drumFilters.set) localStorage.setItem(DRUM_LIBRARY_KEY, state.drumFilters.set)
+    else localStorage.removeItem(DRUM_LIBRARY_KEY)
+  } catch {
+    /* ignore */
+  }
   const found = await searchGrooves(state.drumFilters)
   state.drumHits = found.rows.map(unpackGroove)
   state.drumSearch = { scanned: found.scanned, partial: found.partial }

@@ -34,6 +34,8 @@ const LOCATE_PULSES = 4 * PULSES_PER_QUARTER
 /** Nothing may wait on the plugin for ever; a call that never completes would
  *  otherwise hold its promise, and its caller, open for the session. */
 const CALL_TIMEOUT_MS = 15000
+// For a dialog somebody is standing in front of, and for walking a disk.
+const SLOW_CALL_TIMEOUT_MS = 10 * 60 * 1000
 
 function backend() {
   if (typeof window === 'undefined') return null
@@ -99,6 +101,25 @@ function bindComplete() {
  * forgot to check `hosted()` finds out at once.
  */
 export function callHost(name, ...params) {
+  return ask(name, CALL_TIMEOUT_MS, params)
+}
+
+/**
+ * The same, for a call that is allowed to take a while.
+ *
+ * Fifteen seconds is the right patience for a question the plugin answers out
+ * of its own memory, and the wrong patience for two things: a file dialog,
+ * which waits on a person, and a walk of somebody's disk. Both of those were
+ * being cut off mid-answer and reported as nothing at all.
+ *
+ * Still bounded, because a call that never answers would otherwise leave an
+ * import running with no way out.
+ */
+export function callHostSlowly(name, ...params) {
+  return ask(name, SLOW_CALL_TIMEOUT_MS, params)
+}
+
+function ask(name, timeout, params) {
   const bus = backend()
   if (!bus) return Promise.reject(new Error(`No plugin host for ${name}`))
 
@@ -108,8 +129,8 @@ export function callHost(name, ...params) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       waiting.delete(id)
-      reject(new Error(`${name} did not answer`))
-    }, CALL_TIMEOUT_MS)
+      reject(new Error(`${name} did not answer within ${Math.round(timeout / 1000)}s`))
+    }, timeout)
 
     waiting.set(id, { resolve, timer })
     bus.emitEvent('__juce__invoke', { name, params, resultId: id })

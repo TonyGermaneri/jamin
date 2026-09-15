@@ -285,15 +285,16 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                            // and parse than the file does to read.
                            complete (juce::var (block.toBase64Encoding()));
                        })
-                   .withNativeFunction ("jaminListTree",
+                   .withNativeFunction ("jaminListFolders",
                        [] (const juce::Array<juce::var>& args, auto complete)
                        {
-                           // Every shelf under a folder, as paths relative to
-                           // it, the root itself first. A collection of eight
-                           // hundred thousand files is a few thousand
-                           // directories, so this is small where a list of the
-                           // files would not be -- and it is what lets the
-                           // import go shelf by shelf.
+                           // The folders directly inside this one, and nothing
+                           // below them. A whole tree came back as one answer
+                           // once: twenty-five thousand paths, which JUCE turns
+                           // into a megabyte and a half of JavaScript source for
+                           // one evaluateJavaScript call. The page walks the
+                           // tree itself now, a rung at a time, and every
+                           // crossing is small.
                            if (args.isEmpty())
                                return complete (juce::var (juce::Array<juce::var>()));
 
@@ -301,18 +302,10 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                            if (! folder.isDirectory())
                                return complete (juce::var (juce::Array<juce::var>()));
 
-                           const int limit = args.size() >= 2 ? (int) args[1] : 50000;
-
                            juce::Array<juce::var> found;
-                           found.add (juce::var (juce::String()));
-
                            for (const auto& entry : juce::RangedDirectoryIterator (
-                                    folder, true, "*", juce::File::findDirectories))
-                           {
-                               if (found.size() >= limit)
-                                   break;
-                               found.add (entry.getFile().getRelativePathFrom (folder));
-                           }
+                                    folder, false, "*", juce::File::findDirectories))
+                               found.add (entry.getFile().getFileName());
 
                            complete (juce::var (found));
                        })

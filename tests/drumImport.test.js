@@ -143,39 +143,36 @@ check('and the verdict follows the exact list',
 // by side, two of them holding most of the files. Importing that as one library
 // would be one row of eight hundred thousand patterns and one note map covering
 // fifty vendors who each wrote for a different one.
+//
+// Only one rung of the tree is needed to decide this, and only one rung is
+// asked for: a whole tree came back as one answer once, and twenty-five
+// thousand paths is a megabyte and a half of JavaScript for one call.
 const collection = planPacks(
   { path: '/Volumes/external/800k-drums', name: '800k-drums' },
-  ['', 'Bossa', 'Analogue Drums', 'Analogue Drums/Fills', 'Analogue Drums/Fills/2 bar',
-   'GM MIDI Pack', 'GM MIDI Pack/GM - Blues', 'GM MIDI Pack/GM - Rock 1']
+  ['Bossa', 'Analogue Drums', 'GM MIDI Pack']
 )
 
-// The loose shelf first, then one per folder at the top.
 check('one library per pack', collection.map((pack) => pack.name),
       ['800k-drums', 'Bossa', 'Analogue Drums', 'GM MIDI Pack'])
 check('rooted where it lives', collection[2].root, '/Volumes/external/800k-drums/Analogue Drums')
-check('everything below it is its shelves', collection[2].shelves,
-      ['', 'Fills', 'Fills/2 bar'])
-check('a pack with no shelves is just itself', collection[1].shelves, [''])
-// The chosen folder's own files, if it has any. The shelf is scanned and no
-// library is written when nothing is on it.
-check('loose files get a shelf too', collection[0].shelves, [''])
+check('and each is walked all the way down', collection[2].deep, true)
+
+// The loose shelf must NOT be walked down, or every pack below it is imported
+// a second time -- once as itself and once as part of the collection.
+check('the loose shelf is one rung only', collection[0].deep, false)
 check('and it is rooted at the folder that was chosen', collection[0].root,
       '/Volumes/external/800k-drums')
 
 // A plain pack is one library, exactly as before -- the rule needs no
 // configuring and no knowledge of any particular collection.
-const plain = planPacks({ path: '/loops/Funk Drums', name: 'Funk Drums' }, [''])
+const plain = planPacks({ path: '/loops/Funk Drums', name: 'Funk Drums' }, [])
 check('a folder with no folders in it is one library', plain.length, 1)
 check('named after itself', plain[0].name, 'Funk Drums')
-check('with the whole tree as its shelves', plain[0].shelves, [''])
+check('and walked whole', plain[0].deep, true)
 
 // Windows hands back backslashes and every path here is compared and joined.
-const windows = planPacks(
-  { path: 'D:\\drums', name: 'drums' },
-  ['', 'Rock', 'Rock\\Fills']
-)
-check('backslashes are separators too', windows[1].shelves, ['', 'Fills'])
-check('and roots are built with one kind', windows[1].root, 'D:/drums/Rock')
+const windows = planPacks({ path: 'D:\\drums', name: 'drums' }, ['Rock'])
+check('roots are built with one kind of separator', windows[1].root, 'D:/drums/Rock')
 
 // Stable, so a job that stops picks up where it left off rather than importing
 // everything a second time.
@@ -184,5 +181,79 @@ check('a folder always gets the same name',
 check('and two folders do not share one',
       idForPath('/x/Analogue Drums') === idForPath('/x/Vintage Drums'), false)
 check('nor do near misses', idForPath('/x/a') === idForPath('/x/b'), false)
+
+/* ---------------- walking a library ------------------------------------- */
+// This is the path that failed in somebody's hands: the whole tree was asked
+// for in one answer, twenty-five thousand paths came back as a megabyte and a
+// half of JavaScript, and what the page saw was an empty list -- which looks
+// exactly like a folder with no drums in it. Now every crossing is one folder.
+
+/** A pretend filesystem, and a record of every question asked of it. */
+function fakeDisk(layout) {
+  const asked = { listFolders: [], scanFiles: [], readFiles: [] }
+  const at = (where) => layout[where] || { folders: [], files: [] }
+  return {
+    asked,
+    listFolders: async (where) => { asked.listFolders.push(where); return at(where).folders },
+    scanFiles: async (where) => { asked.scanFiles.push(where); return at(where).files },
+    readFiles: async (where, names) => {
+      asked.readFiles.push([where, names.join(',')])
+      return names.map((name) => `${where}/${name}`)
+    },
+  }
+}
+
+const shelves = {
+  '/lib/Rock': { folders: ['Fills', 'Beats'], files: ['a.mid'] },
+  '/lib/Rock/Fills': { folders: ['2 bar'], files: ['f1.mid', 'f2.mid'] },
+  '/lib/Rock/Fills/2 bar': { folders: [], files: ['deep.mid'] },
+  '/lib/Rock/Beats': { folders: [], files: [] },
+}
+
+const disk = fakeDisk(shelves)
+const seen = []
+for await (const step of walkLibrary({ root: '/lib/Rock', deep: true }, disk, 2)) {
+  seen.push({ shelf: step.shelf, names: step.names, opens: step.opensShelf })
+}
+
+check('every folder is reached', disk.asked.scanFiles.sort(),
+      ['/lib/Rock', '/lib/Rock/Beats', '/lib/Rock/Fills', '/lib/Rock/Fills/2 bar'])
+// Breadth first: a rung at a time, so the top of a library starts producing
+// rows while the bottom of it is still being found. Paths are relative to the
+// library, because that is what the library is rooted at and therefore what a
+// file is found by later.
+check('a rung at a time', seen.map((s) => s.shelf),
+      ['', 'Fills', 'Beats', 'Fills/2 bar'])
+check('and carry their own names', seen[1].names, ['f1.mid', 'f2.mid'])
+check('a folder with nothing in it still counts',
+      seen.find((s) => s.shelf === 'Beats'), { shelf: 'Beats', names: [], opens: true })
+check('every folder opens exactly once', seen.filter((s) => s.opens).length, 4)
+
+// Batched, because the crossing costs more than the read.
+const many = fakeDisk({ '/lib/P': { folders: [], files: ['1', '2', '3', '4', '5'] } })
+const batches = []
+for await (const step of walkLibrary({ root: '/lib/P', deep: true }, many, 2)) {
+  batches.push(step.names.length)
+}
+check('files come in handfuls', batches, [2, 2, 1])
+check('and only the first opens the folder', many.asked.readFiles.length, 3)
+
+// The loose shelf at the top of a collection of collections must NOT be walked
+// down: everything below it belongs to one of the packs, and walking it would
+// import the entire collection a second time.
+const shallow = fakeDisk(shelves)
+const loose = []
+for await (const step of walkLibrary({ root: '/lib/Rock', deep: false }, shallow, 8)) {
+  loose.push(step.shelf)
+}
+check('a one-rung library stays on its rung', loose, [''])
+check('and never asks what is below it', shallow.asked.listFolders, [])
+
+// Breaking out closes the walk, which is what Stop does.
+const stopper = fakeDisk(shelves)
+for await (const step of walkLibrary({ root: '/lib/Rock', deep: true }, stopper, 8)) {
+  if (step) break
+}
+check('stopping asks nothing more', stopper.asked.scanFiles, ['/lib/Rock'])
 
 console.log(failed ? `drum-import: ${failed} FAILED` : 'drum-import: all checks passed')

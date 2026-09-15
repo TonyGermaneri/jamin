@@ -37,10 +37,14 @@ import {
   setDrumSetKit,
   importDrumFolderByReference,
   notesFor,
+  searchDrums,
+  drumFacetsFor,
   sectionBars,
   partsItFits,
 } from '../store.js'
-import { searchDrums, summarizeGroove } from '../core/drums.js'
+// The in-memory text search, which is not the store's searchDrums: that one
+// asks the database. Both are needed and they are not the same thing.
+import { searchDrums as searchGrooveList, summarizeGroove } from '../core/drums.js'
 import { DRUM_KITS, DRUM_VOICES, kitById, gmName, mapDrumNote, TD11_TO_VOICE } from '../core/drumKits.js'
 import InfoTip from './InfoTip.vue'
 
@@ -69,6 +73,99 @@ watch(() => state.ui.drums, (open) => {
   })
 })
 
+/**
+ * Which catalogue the list is showing.
+ *
+ * Two sources, and they cannot be one. The bundled corpus is 1,150 patterns in
+ * memory and is filtered by walking it. An imported library can be three
+ * quarters of a million and lives in the database, so it is filtered by asking
+ * the database and what comes back is a page of answers. Merging them into one
+ * array would mean holding the second one, which is the thing that cannot be
+ * done.
+ *
+ * So the library is a choice: the built-in corpus, or one of the libraries that
+ * was imported. `state.drumFilters.set` is where that choice lives, because it
+ * is also what the database query needs.
+ */
+const library = computed({
+  get: () => state.drumFilters.set || '',
+  set: (value) => {
+    state.drumFilters.set = value || ''
+    state.drumFilters.folder = ''
+  },
+})
+
+const libraries = computed(() => [
+  { title: `Built in (${state.drums.length.toLocaleString()})`, value: '' },
+  ...state.drumSets.map((set) => ({
+    title: `${set.name} (${(set.count || 0).toLocaleString()})`,
+    value: set.id,
+  })),
+])
+
+/** True when the list is coming out of the database rather than memory. */
+const imported = computed(() => Boolean(library.value))
+
+/**
+ * The shelves inside the chosen library, as filters.
+ *
+ * A vendor's folder names are the only structure a scraped collection has --
+ * "1 Bar Fills", "090 BPM", "GM - Blues" -- so they are what somebody actually
+ * wants to narrow by. Read from the database's own sampling rather than from
+ * the rows on screen, which are one page of several hundred thousand.
+ */
+const facets = ref({ folders: [], kinds: [], bars: [], signatures: [] })
+
+watch(library, async (id) => {
+  facets.value = { folders: [], kinds: [], bars: [], signatures: [] }
+  if (id) facets.value = await drumFacetsFor(id)
+}, { immediate: true })
+
+const shelf = computed({
+  get: () => state.drumFilters.folder || '',
+  set: (value) => { state.drumFilters.folder = value || '' },
+})
+
+/** A dropdown out of a [value, count] tally, in the shape the others use. */
+function fromFacet(pairs, label, title = (name) => String(name)) {
+  return [
+    { title: label, value: 'any' },
+    ...pairs.map(([name, count]) => ({
+      title: `${title(name)} (${count.toLocaleString()})`,
+      value: String(name),
+    })),
+  ]
+}
+
+const shelves = computed(() => [
+  { title: 'Every shelf', value: '' },
+  ...facets.value.folders.map(([name, count]) => ({
+    title: `${name || '(the top of it)'} (${count.toLocaleString()})`,
+    value: name,
+  })),
+])
+
+/**
+ * One place that asks the database.
+ *
+ * Every filter goes through here when a library is chosen, so changing any of
+ * them is one query rather than each control running its own. The built-in
+ * corpus never comes here -- it is in memory and filtering it is a walk.
+ */
+watch(
+  () => [library.value, shelf.value, search.value, kind.value, bars.value, signature.value],
+  () => {
+    if (!library.value) return
+    searchDrums({
+      text: search.value,
+      kind: kind.value === 'any' ? '' : kind.value,
+      bars: bars.value === 'any' ? 0 : Number(bars.value),
+      signature: signature.value === 'any' ? '' : signature.value,
+    })
+  },
+  { immediate: true }
+)
+
 const drums = computed(() => state.drums)
 const settings = computed(() => state.settings.drums)
 
@@ -87,11 +184,16 @@ function facet(pick, label) {
   ]
 }
 
-const kinds = computed(() => facet((groove) => groove.kind, 'Beats and fills'))
+const kinds = computed(() => imported.value
+  ? fromFacet(facets.value.kinds, 'Beats and fills')
+  : facet((groove) => groove.kind, 'Beats and fills'))
 const genres = computed(() => facet((groove) => groove.genre, 'Any genre'))
 
 /** Length in bars, which is the filter that decides whether a groove fits. */
 const barCounts = computed(() => {
+  if (imported.value) {
+    return fromFacet(facets.value.bars, 'Any length', (n) => `${n} bar${n === '1' || n === 1 ? '' : 's'}`)
+  }
   const counts = new Map()
   for (const groove of drums.value) counts.set(groove.bars, (counts.get(groove.bars) || 0) + 1)
   return [
@@ -105,11 +207,24 @@ const barCounts = computed(() => {
 
 /** Time signature. Nearly all of the corpus is in four, which is worth seeing
     rather than discovering when a groove in seven will not sit in the bar. */
-const signatures = computed(() => facet((groove) => groove.timeSignature, 'Any time signature'))
+const signatures = computed(() => imported.value
+  ? fromFacet(facets.value.signatures, 'Any time signature')
+  : facet((groove) => groove.timeSignature, 'Any time signature'))
 
 const matches = computed(() => {
   const starred = state.favourites.length
-  return searchDrums(drums.value, search.value).filter((groove) => {
+  // Already narrowed by the database, which did the kind, length, signature and
+  // text itself over rows this page never held. What is left is the two filters
+  // that depend on things only the page knows: the chart, and the stars.
+  if (imported.value) {
+    return state.drumHits.filter((groove) => {
+      if (onlyFavourites.value && (!starred || !favourite(groove))) return false
+      if (onlyFitting.value && !partsItFits(groove).length) return false
+      return true
+    })
+  }
+
+  return searchGrooveList(drums.value, search.value).filter((groove) => {
     if (kind.value !== 'any' && groove.kind !== kind.value) return false
     if (genre.value !== 'any' && groove.genre !== genre.value) return false
     if (bars.value !== 'any' && String(groove.bars) !== bars.value) return false
@@ -121,7 +236,8 @@ const matches = computed(() => {
 })
 
 const activeFilters = computed(() =>
-  [kind.value !== 'any', genre.value !== 'any', bars.value !== 'any',
+  [kind.value !== 'any', !imported.value && genre.value !== 'any',
+   imported.value && Boolean(shelf.value), bars.value !== 'any',
    signature.value !== 'any', onlyFavourites.value, onlyFitting.value].filter(Boolean).length)
 
 /** The song's parts and how long each is, for the fitting switch to explain
@@ -136,9 +252,15 @@ function clearFilters() {
   genre.value = 'any'
   bars.value = 'any'
   signature.value = 'any'
+  shelf.value = ''
   onlyFavourites.value = false
   onlyFitting.value = false
 }
+
+/** A search of an imported library looks at a fixed number of rows and stops,
+    so what came back can be a slice rather than the answer. Saying so beats
+    letting a capped search look like the whole of it. */
+const capped = computed(() => imported.value && state.drumSearch.partial)
 
 const pageCount = computed(() => Math.max(1, Math.ceil(matches.value.length / PER_PAGE)))
 const list = computed(() => matches.value.slice((page.value - 1) * PER_PAGE, page.value * PER_PAGE))
@@ -483,11 +605,25 @@ function resetMap() {
                     </v-expansion-panel-title>
                     <v-expansion-panel-text>
                       <v-row dense>
+                        <!-- Which catalogue. The built-in corpus is in memory
+                             and an imported one is in the database, so this is
+                             a choice rather than a filter: they cannot be shown
+                             as one list without holding the big one. -->
+                        <v-col v-if="state.drumSets.length" cols="12">
+                          <v-select v-model="library" :items="libraries" label="Library"
+                                    density="compact" hide-details />
+                        </v-col>
                         <v-col cols="6">
                           <v-select v-model="kind" :items="kinds" label="Kind" density="compact" hide-details />
                         </v-col>
+                        <!-- A vendor's folder names are the only structure a
+                             collection like this has, so they are what somebody
+                             narrows by. The built-in corpus has genres instead. -->
                         <v-col cols="6">
-                          <v-select v-model="genre" :items="genres" label="Genre" density="compact" hide-details />
+                          <v-select v-if="imported" v-model="shelf" :items="shelves"
+                                    label="Folder it came from" density="compact" hide-details />
+                          <v-select v-else v-model="genre" :items="genres" label="Genre"
+                                    density="compact" hide-details />
                         </v-col>
                         <v-col cols="6">
                           <v-select v-model="bars" :items="barCounts" label="Length" density="compact" hide-details />
@@ -616,7 +752,13 @@ function resetMap() {
                       <kbd>↑↓</kbd> groove · <kbd>←→</kbd> page ·
                       <kbd>1–0</kbd> part · <kbd>space</kbd> all
                     </span>
-                    {{ matches.length.toLocaleString() }} of {{ drums.length.toLocaleString() }}
+                    <template v-if="imported">
+                      {{ matches.length.toLocaleString() }} found<span v-if="capped">
+                        of the first {{ state.drumSearch.scanned.toLocaleString() }} looked at</span>
+                    </template>
+                    <template v-else>
+                      {{ matches.length.toLocaleString() }} of {{ drums.length.toLocaleString() }}
+                    </template>
                   </span>
                 </div>
               </v-col>
@@ -813,22 +955,22 @@ function resetMap() {
                      style="display: none" @change="onFolderPicked" />
 
               <template v-if="state.drumImport.running">
-                <!-- Shelves rather than files: the number of folders is known
-                     the moment the tree is walked, and the number of files in
-                     them is not known until they have been read. A real
-                     fraction beats a spinner that could mean five minutes or an
-                     hour. -->
+                <!-- Packs, because that is the only count known before the
+                     work starts. The tree below each is walked while it is read
+                     rather than measured first, so folders and files are
+                     reported as they are found rather than as a fraction. -->
                 <v-progress-circular
-                  v-if="!state.drumImport.shelves" indeterminate size="18" width="2" />
+                  v-if="!state.drumImport.packs" indeterminate size="18" width="2" />
                 <v-progress-circular
                   v-else size="18" width="2"
-                  :model-value="100 * state.drumImport.shelvesDone / state.drumImport.shelves"
+                  :model-value="100 * state.drumImport.packsDone / state.drumImport.packs"
                 />
                 <span class="text-caption">
                   <template v-if="state.drumImport.packs > 1">
                     {{ state.drumImport.pack || state.drumImport.name }} —
-                    pack {{ state.drumImport.packsDone + 1 }} of
+                    library {{ state.drumImport.packsDone + 1 }} of
                     {{ state.drumImport.packs }} ·
+                    {{ state.drumImport.shelvesDone.toLocaleString() }} folders ·
                     {{ state.drumImport.read.toLocaleString() }} read
                   </template>
                   <template v-else>

@@ -42,6 +42,10 @@ export const PHRASE_KEY = 'jamin.phrases.v1'
 export const SONG_PHRASE_KEY = 'jamin.songPhrase.v1'
 export const ACCENT_KEY = 'jamin.accent.v1'
 export const DRUM_ACCENT_KEY = 'jamin.drumAccent.v1'
+/** Which imported library the drum book was last showing. Kept because opening
+    the plugin to the built-in corpus after importing a collection reads as the
+    collection having vanished. */
+export const DRUM_LIBRARY_KEY = 'jamin.drumLibrary.v1'
 export const FAVOURITES_KEY = 'jamin.favourites.v1'
 
 export function defaultSettings() {
