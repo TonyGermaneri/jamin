@@ -31,6 +31,29 @@ check('the ride bell is kept', TD11_TO_VOICE[53], 'rideBell')
 /* ---------------- and written back out to a kit -------------------------- */
 const gm = kitById('gm').map
 check('a kick is a kick', mapDrumNote(36, gm), 36)
+
+// A rimshot is a snare hit across head and rim -- a snare. General MIDI 40 is
+// *Electric Snare*, a different instrument that an acoustic kit either does not
+// have or maps to something unrelated. 3,614 hits in the corpus land here, many
+// of them the backbeat, and the numbers alone do not show it.
+check('a rimshot is a snare, not an electric snare', mapDrumNote(40, gm), 38)
+check('and General MIDI agrees about what 40 is', gmName(40), 'Electric Snare')
+check('while 38 is the one we want', gmName(38), 'Acoustic Snare')
+
+// Every voice lands on a note General MIDI names as the thing that voice is.
+const expected = {
+  kick: 'Bass Drum 1', snare: 'Acoustic Snare', snareRim: 'Acoustic Snare',
+  sideStick: 'Side Stick', tomHigh: 'High Tom', tomMid: 'Low-Mid Tom',
+  tomFloor: 'High Floor Tom', hatClosed: 'Closed Hi-Hat', hatOpen: 'Open Hi-Hat',
+  hatPedal: 'Pedal Hi-Hat', crash1: 'Crash Cymbal 1', crash2: 'Crash Cymbal 2',
+  ride: 'Ride Cymbal 1', rideBell: 'Ride Bell',
+}
+for (const [voice, name] of Object.entries(expected)) {
+  if (gmName(gm[voice]) !== name) {
+    failed++
+    console.log(`FAIL ${voice} -> ${gm[voice]} which GM calls "${gmName(gm[voice])}", wanted "${name}"`)
+  }
+}
 check('a TD-11 high tom lands on the GM high tom', mapDrumNote(48, gm), 50)
 check('a TD-11 mid tom lands on the GM low-mid tom', mapDrumNote(45, gm), 47)
 check('a hat edge lands on the closed hat', mapDrumNote(22, gm), 42)

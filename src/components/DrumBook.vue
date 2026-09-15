@@ -31,7 +31,7 @@ import {
   autoFillFrom,
 } from '../store.js'
 import { searchDrums, summarizeGroove } from '../core/drums.js'
-import { DRUM_KITS, DRUM_VOICES, kitById } from '../core/drumKits.js'
+import { DRUM_KITS, DRUM_VOICES, kitById, gmName } from '../core/drumKits.js'
 import InfoTip from './InfoTip.vue'
 
 const search = ref('')
@@ -595,6 +595,7 @@ function resetMap() {
                 <tr>
                   <th class="text-caption">Voice</th>
                   <th class="text-caption">Note</th>
+                  <th class="text-caption">General MIDI calls it</th>
                   <th class="text-caption">{{ chosenKit.name }}</th>
                 </tr>
               </thead>
@@ -612,6 +613,11 @@ function resetMap() {
                       @update:model-value="setNote(voice.id, $event)"
                     />
                   </td>
+                  <!-- The name, not just the number. A mapping that sends the
+                       rimshot to "Electric Snare" is obviously wrong the moment
+                       the words are on screen and nearly impossible to notice
+                       from the numbers -- which is exactly how it shipped. -->
+                  <td class="text-caption text-medium-emphasis">{{ gmName(noteFor(voice.id)) }}</td>
                   <td class="text-caption text-medium-emphasis">
                     {{ chosenKit.map[voice.id] }}
                     <span v-if="noteFor(voice.id) !== chosenKit.map[voice.id]" class="text-warning">
