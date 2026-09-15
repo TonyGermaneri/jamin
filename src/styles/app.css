@@ -453,3 +453,26 @@ body,
   align-self: flex-start;
   padding-top: 2px;
 }
+
+/*
+ * The keyboard hint under the groove list.
+ *
+ * Spelled out rather than hidden behind a help icon: a list of two and a half
+ * thousand things is one nobody will mouse through, so the keys are the way to
+ * use it and a shortcut nobody knows about is a shortcut that does not exist.
+ */
+.jamin-keyhint kbd {
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 0.92em;
+  padding: 0 3px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  opacity: 0.75;
+}
+
+/* Hidden when there is no room for it: the count matters more. */
+@media (max-width: 899px) {
+  .jamin-keyhint {
+    display: none;
+  }
+}

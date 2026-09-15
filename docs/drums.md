@@ -68,6 +68,28 @@ The groove stops where the fill starts, because both at once is two drummers.
 `[d:nofill]` stops the fill out of the section it is written in. The switch in
 Settings stops all of them.
 
+## The keyboard
+
+Two and a half thousand grooves is a list nobody wants to mouse through, and
+binding one to each part of a song is a lot of small clicks in a small window.
+So the list takes the keys:
+
+| | |
+| --- | --- |
+| <kbd>↑</kbd> <kbd>↓</kbd> | move through the grooves, turning the page as it goes |
+| <kbd>←</kbd> <kbd>→</kbd> | the page |
+| <kbd>1</kbd>…<kbd>9</kbd> <kbd>0</kbd> | put this groove on that part, or take it off again |
+| <kbd>space</kbd> | put it on every part |
+
+The number is printed on the pill, because telling somebody the number keys
+choose a part is useless if finding out which number means hovering over each
+one in turn.
+
+Arrowing browses and never binds, even with auto-select on. Auto-select is about
+clicking; an arrow key that rewrote every binding as it passed would make the
+list unusable to look through. <kbd>space</kbd> is the keyboard's way of saying
+the same thing deliberately.
+
 ## Bindings outlive their sections
 
 Delete the `[Chorus]` marker and the chorus's groove is not thrown away. Charts

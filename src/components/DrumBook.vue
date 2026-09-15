@@ -45,6 +45,18 @@ const selected = ref(null)
 const page = ref(1)
 const PER_PAGE = 12
 
+const listEl = ref(null)
+
+/** The keys are useless until something has focus, and asking somebody to click
+    a list before the arrow keys work is asking them to discover a rule. */
+watch(() => state.ui.drums, (open) => {
+  if (!open) return
+  requestAnimationFrame(() => {
+    const el = listEl.value && (listEl.value.$el || listEl.value)
+    if (el && typeof el.focus === 'function') el.focus({ preventScroll: true })
+  })
+})
+
 const drums = computed(() => state.drums)
 const settings = computed(() => state.settings.drums)
 
@@ -129,10 +141,66 @@ function choose(groove) {
   if (autoSelect.value) assignEverywhere(groove)
 }
 
-/** A part's name, short enough for a pill. */
-function pillLabel(row) {
-  if (row.wholeSong) return 'Song'
-  return row.name.length > 10 ? `${row.name.slice(0, 9)}…` : row.name
+/**
+ * A part's name, short enough for a pill, with the key that reaches it.
+ *
+ * The number is on the pill rather than in a tooltip: telling somebody the
+ * number keys choose a part is useless if finding out which number means
+ * hovering over each one in turn. Ten is the last one that gets a key, because
+ * there are only ten digits.
+ */
+function pillLabel(row, index) {
+  const name = row.wholeSong ? 'Song' : row.name
+  const short = name.length > 9 ? `${name.slice(0, 8)}…` : name
+  return index < 10 ? `${(index + 1) % 10} ${short}` : short
+}
+
+/* ---------------- the keyboard ----------------
+ *
+ * Two and a half thousand grooves is a list nobody wants to mouse through, and
+ * binding one to each part of a song is a lot of small clicks in a small
+ * window. So the list takes the keys:
+ *
+ *   ↑ ↓        move through the grooves, turning the page as it goes
+ *   ← →        the page
+ *   1 … 9 0    put this groove on that part, or take it off again
+ *   space      put it on every part
+ *
+ * Arrowing browses and never binds, even with auto-select on: auto-select is
+ * about clicking, and an arrow key that rewrote every binding as it passed
+ * would make the list unusable to look through. Space is the keyboard's way of
+ * saying the same thing deliberately.
+ */
+
+/** Move through the whole filtered list rather than the page, and follow it. */
+function step(by) {
+  const pool = matches.value
+  if (!pool.length) return
+
+  const at = pool.findIndex((groove) => selected.value && groove.id === selected.value.id)
+  const next = Math.min(pool.length - 1, Math.max(0, at < 0 ? 0 : at + by))
+
+  selected.value = pool[next]
+  page.value = Math.floor(next / PER_PAGE) + 1
+}
+
+function turnPage(by) {
+  page.value = Math.min(pageCount.value, Math.max(1, page.value + by))
+}
+
+/** 1-9 are the first nine parts and 0 is the tenth, as tabs and windows have
+    numbered things for thirty years. */
+function assignToPartNumber(digit) {
+  if (!selected.value) return
+  const row = liveRows.value[digit === 0 ? 9 : digit - 1]
+  if (row) toggleGrooveOn(row.name, selected.value)
+}
+
+function onKey(event) {
+  if (event.key >= '0' && event.key <= '9') {
+    event.preventDefault()
+    assignToPartNumber(Number(event.key))
+  }
 }
 
 /**
@@ -302,9 +370,21 @@ function resetMap() {
                   </v-expansion-panel>
                 </v-expansion-panels>
 
-                <v-list v-if="list.length" density="compact"
+                <v-list v-if="list.length" ref="listEl" density="compact"
                         class="py-0 jamin-book-scroll"
-                        :class="{ 'jamin-filters-open': filtersOpen !== undefined }">
+                        :class="{ 'jamin-filters-open': filtersOpen !== undefined }"
+                        tabindex="0"
+                        style="outline: none"
+                        @keydown="onKey"
+                        @keydown.down.prevent="step(1)"
+                        @keydown.up.prevent="step(-1)"
+                        @keydown.left.prevent="turnPage(-1)"
+                        @keydown.right.prevent="turnPage(1)"
+                        @keydown.space.prevent="assignEverywhere(selected)"
+                        @keydown.page-down.prevent="step(PER_PAGE)"
+                        @keydown.page-up.prevent="step(-PER_PAGE)"
+                        @keydown.home.prevent="step(-matches.length)"
+                        @keydown.end.prevent="step(matches.length)">
                   <v-list-item
                     v-for="groove in list" :key="groove.id"
                     :active="selected && selected.id === groove.id"
@@ -328,16 +408,17 @@ function resetMap() {
                          because that is what they are. -->
                     <div v-if="liveRows.length" class="jamin-drum-pills">
                       <v-chip
-                        v-for="row in liveRows" :key="row.name"
+                        v-for="(row, index) in liveRows" :key="row.name"
                         size="x-small" label
                         :variant="boundTo(row.name, groove) ? 'flat' : 'outlined'"
                         :color="boundTo(row.name, groove)
                           ? (groove.kind === 'fill' ? 'warning' : 'primary')
                           : undefined"
                         :title="`${groove.name} ${boundTo(row.name, groove) ? 'plays' : 'does not play'} `
-                              + `${row.wholeSong ? 'the whole song' : row.name}`"
+                              + `${row.wholeSong ? 'the whole song' : row.name}`
+                              + (index < 10 ? ` — press ${(index + 1) % 10}` : '')"
                         @click.stop="toggleGrooveOn(row.name, groove)"
-                      >{{ pillLabel(row) }}</v-chip>
+                      >{{ pillLabel(row, index) }}</v-chip>
                     </div>
 
                     <template #append>
@@ -367,6 +448,10 @@ function resetMap() {
                                 :total-visible="5" density="compact" size="small" />
                   <v-spacer />
                   <span class="text-caption text-medium-emphasis">
+                    <span class="jamin-keyhint mr-2">
+                      <kbd>↑↓</kbd> groove · <kbd>←→</kbd> page ·
+                      <kbd>1–0</kbd> part · <kbd>space</kbd> all
+                    </span>
                     {{ matches.length.toLocaleString() }} of {{ drums.length.toLocaleString() }}
                   </span>
                 </div>
