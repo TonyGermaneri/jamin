@@ -32,7 +32,7 @@ import {
   tapDrum,
 } from '../store.js'
 import { searchDrums, summarizeGroove } from '../core/drums.js'
-import { DRUM_KITS, DRUM_VOICES, kitById, gmName } from '../core/drumKits.js'
+import { DRUM_KITS, DRUM_VOICES, kitById, gmName, TD11_TO_VOICE } from '../core/drumKits.js'
 import InfoTip from './InfoTip.vue'
 
 const search = ref('')
@@ -141,6 +141,50 @@ function choose(groove) {
   selected.value = groove
   if (autoSelect.value) assignEverywhere(groove)
 }
+
+/**
+ * The groove as a grid, the way a piano roll shows one.
+ *
+ * Voice names down the left where the keys would be, sixteenths across. It
+ * answers the question a list of names cannot -- what is actually in this
+ * groove -- and it is how you see that a beat is riding rather than on the hat
+ * without playing it.
+ *
+ * Only the voices this groove uses get a row. Fourteen rows of mostly nothing
+ * is a wall; four rows is a beat you can read.
+ */
+const STEPS_PER_BAR = 16
+const VOICE_ORDER = [
+  'crash1', 'crash2', 'ride', 'rideBell', 'hatOpen', 'hatClosed', 'hatPedal',
+  'tomHigh', 'tomMid', 'tomFloor', 'snare', 'snareRim', 'sideStick', 'kick',
+]
+
+const preview = computed(() => {
+  const groove = selected.value
+  if (!groove || !groove.notes.length) return null
+
+  const steps = Math.max(1, groove.bars * STEPS_PER_BAR)
+  const perStep = groove.lengthPulses / steps
+  const used = new Map()
+
+  for (const note of groove.notes) {
+    const voice = TD11_TO_VOICE[note.note]
+    if (!voice) continue
+    if (!used.has(voice)) used.set(voice, new Array(steps).fill(0))
+    const step = Math.min(steps - 1, Math.floor(note.at / perStep))
+    // The loudest hit in the cell, so a ghost note next to an accent does not
+    // hide it.
+    used.get(voice)[step] = Math.max(used.get(voice)[step], note.velocity || 1)
+  }
+
+  const rows = VOICE_ORDER.filter((id) => used.has(id)).map((id) => ({
+    id,
+    name: (DRUM_VOICES.find((voice) => voice.id === id) || {}).name || id,
+    cells: used.get(id),
+  }))
+
+  return { steps, rows, beats: groove.beatsPerBar * groove.bars }
+})
 
 /** The part the playhead is in, so its pill can say so. @see store.syncDrumsPlaying */
 const playingSection = computed(() => state.playing.section)
@@ -474,6 +518,32 @@ function resetMap() {
                   <div class="text-body-2 mb-1">{{ selected.name }}</div>
                   <div class="text-caption text-medium-emphasis mb-3">
                     {{ summarizeGroove(selected) }}
+                  </div>
+
+                  <!-- What is actually in it. The names sit where a piano roll
+                       puts its keys, and only the drums this groove uses get a
+                       row -- fourteen rows of mostly nothing is a wall. -->
+                  <div v-if="preview" class="jamin-roll mb-3">
+                    <div v-for="row in preview.rows" :key="row.id" class="jamin-roll-row">
+                      <button
+                        type="button" class="jamin-roll-name"
+                        :class="{ 'is-struck': playingVoices.has(row.id) }"
+                        :title="`Hear the ${row.name.toLowerCase()} — ${gmName(noteFor(row.id))}`"
+                        @click="tapDrum(noteFor(row.id))"
+                      >{{ row.name }}</button>
+                      <span class="jamin-roll-cells">
+                        <i
+                          v-for="(velocity, step) in row.cells" :key="step"
+                          class="jamin-roll-cell"
+                          :class="{
+                            'is-hit': velocity > 0,
+                            'is-accent': velocity > 95,
+                            'is-beat': step % 4 === 0,
+                          }"
+                          :style="velocity ? { opacity: 0.35 + 0.65 * (velocity / 127) } : null"
+                        />
+                      </span>
+                    </div>
                   </div>
 
                   <div class="d-flex align-center flex-wrap mb-3" style="gap: 6px">

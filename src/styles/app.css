@@ -510,3 +510,87 @@ body,
      a snare look like a swell. The fade above is the decay. */
   transition: none;
 }
+
+/*
+ * The groove, as a piano roll.
+ *
+ * Names down the left where the keys would be, sixteenths across. It answers the
+ * question a list of names cannot -- what is actually in this groove -- and it
+ * is how you see that a beat is riding rather than on the hat without playing
+ * it. Every name is also a button: the row tells you what the drum is and
+ * clicking it tells you what it sounds like on your kit.
+ */
+.jamin-roll {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.7rem;
+}
+
+.jamin-roll-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Fixed, so every row's grid starts in the same place -- a roll whose columns
+   do not line up is not a roll. */
+.jamin-roll-name {
+  flex: none;
+  width: 84px;
+  text-align: right;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity 120ms ease, background-color 120ms ease;
+}
+
+.jamin-roll-name:hover {
+  opacity: 1;
+  background: rgba(127, 127, 127, 0.18);
+}
+
+/* Lit while that drum is being struck, same as the Kit tab's dot. */
+.jamin-roll-name.is-struck {
+  opacity: 1;
+  color: rgb(var(--v-theme-primary));
+  transition: none;
+}
+
+.jamin-roll-cells {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 1px;
+  min-width: 0;
+}
+
+.jamin-roll-cell {
+  flex: 1 1 0;
+  min-width: 3px;
+  height: 11px;
+  border-radius: 2px;
+  background: rgba(127, 127, 127, 0.14);
+}
+
+/* The downbeat of each beat, so four-four is countable without labels. */
+.jamin-roll-cell.is-beat {
+  background: rgba(127, 127, 127, 0.26);
+}
+
+.jamin-roll-cell.is-hit {
+  background: rgb(var(--v-theme-primary));
+}
+
+/* An accent is the same colour a little taller: velocity is already carried by
+   opacity, and a second colour would say something this does not know. */
+.jamin-roll-cell.is-accent {
+  height: 14px;
+}

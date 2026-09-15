@@ -44,7 +44,7 @@ check('while 38 is the one we want', gmName(38), 'Acoustic Snare')
 const expected = {
   kick: 'Bass Drum 1', snare: 'Acoustic Snare', snareRim: 'Acoustic Snare',
   sideStick: 'Side Stick', tomHigh: 'High Tom', tomMid: 'Low-Mid Tom',
-  tomFloor: 'High Floor Tom', hatClosed: 'Closed Hi-Hat', hatOpen: 'Open Hi-Hat',
+  tomFloor: 'High Floor Tom', hatClosed: 'Closed Hi Hat', hatOpen: 'Open Hi-Hat',
   hatPedal: 'Pedal Hi-Hat', crash1: 'Crash Cymbal 1', crash2: 'Crash Cymbal 2',
   ride: 'Ride Cymbal 1', rideBell: 'Ride Bell',
 }
