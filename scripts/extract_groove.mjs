@@ -47,6 +47,26 @@ const rows = csv.slice(1).map((line) => {
  * announce themselves, so bar one is an entry rather than the groove, and a
  * loop that starts with a crash is a loop that crashes every two bars.
  */
+/**
+ * How far ahead of the bar line a drummer is allowed to be.
+ *
+ * They play ahead of the click -- that is most of what "feel" is -- so a
+ * downbeat routinely lands a pulse or two *before* the bar it belongs to.
+ * Slicing on the exact bar line puts that note at the end of the previous loop
+ * instead of the start of this one, and the result is brutal: measured across
+ * the corpus, 32% of loops flammed on every bar line (a hit at the end and
+ * another at the downbeat, forty milliseconds apart, for ever) and another 28%
+ * lost their downbeat altogether. Sixty per cent of the beats were broken by
+ * the cut, not by the drummer.
+ *
+ * Two pulses, from the data rather than from taste. The hits within two pulses
+ * either side of a bar line are one cluster -- 4,864 at -1 and 4,675 at 0 --
+ * and there is a clear valley at three and four before the count rises again at
+ * six, which is the sixteenth before the beat. Three would start eating that
+ * sixteenth; one would leave a third of the anticipations behind.
+ */
+const ANTICIPATION = 2
+
 const WINDOWS = [
   { bars: 1, from: 1 },
   { bars: 2, from: 1 },
@@ -100,9 +120,15 @@ for (const row of rows) {
     const end = start + window.bars * barPulses
     if (end > totalBars * barPulses) continue
 
+    // The window is shifted back by the anticipation at both ends: a note just
+    // before this bar belongs to it, and a note just before the *next* bar
+    // belongs to that one and must be left for it. @see ANTICIPATION
     const inside = notes
-      .filter((note) => note.at >= start && note.at < end)
-      .map((note) => ({ ...note, at: note.at - start }))
+      .filter((note) => note.at >= start - ANTICIPATION && note.at < end - ANTICIPATION)
+      // An anticipated downbeat is the downbeat. It loses a pulse or two of its
+      // own push, which is the price of a loop that does not flam -- and the
+      // push inside the bar, which is the rest of the feel, is untouched.
+      .map((note) => ({ ...note, at: Math.max(0, note.at - start) }))
 
     // A window with almost nothing in it is a bar the drummer left, not a
     // groove somebody would choose.

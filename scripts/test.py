@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Run the pure-logic test suites through JavaScriptCore (see scripts/jsrun.py)."""
+import re
 import subprocess
+import tempfile
 import sys
 import os
 
@@ -29,6 +31,8 @@ SUITES = [
     (["src/core/themes.js", "src/core/settings.js"], "tests/settings.test.js"),
     (["src/core/host.js"], "tests/host.test.js"),
     (["src/core/drumKits.js"], "tests/drumMap.test.js"),
+    # The shipped corpus itself, checked as data. @see materialise
+    (["src/data/grooveDrums.json"], "tests/grooveData.test.js"),
     ([
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
         "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js",
@@ -96,9 +100,34 @@ SUITES = [
     ], "tests/pedal.test.js"),
 ]
 
+def materialise(path):
+    """A `.json` in a suite's module list becomes a global holding its contents.
+
+    The drum corpus is 1.3MB of data and is worth checking *as data* -- a
+    slicing mistake in it is silent, and the first one broke sixty per cent of
+    the loops without failing anything. Checking a copy would only prove the
+    copy right, so the shipped file itself is loaded, wrapped in a name taken
+    from its own filename.
+    """
+    if not path.endswith(".json"):
+        return path
+
+    name = os.path.splitext(os.path.basename(path))[0]
+    upper = re.sub(r"(?<!^)(?=[A-Z])", "_", name).upper()
+    with open(os.path.join(ROOT, path), encoding="utf-8") as handle:
+        body = handle.read()
+
+    handle = tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8")
+    handle.write(f"const {upper} = {body}\n")
+    handle.close()
+    temporary.append(handle.name)
+    return handle.name
+
+
+temporary = []
 failed = 0
 for modules, suite in SUITES:
-    args = [sys.executable, os.path.join(HERE, "jsrun.py")] + modules + [suite]
+    args = [sys.executable, os.path.join(HERE, "jsrun.py")] + [materialise(m) for m in modules] + [suite]
     result = subprocess.run(args, cwd=ROOT, capture_output=True, text=True)
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
@@ -112,6 +141,12 @@ for modules, suite in SUITES:
         if "all checks passed" not in said and "FAIL" not in said:
             sys.stdout.write(f"{suite}: never reached its sign-off line\n")
         failed += 1
+
+for path in temporary:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 # Source invariants -- about where code reads from rather than what it computes.
 check = subprocess.run([sys.executable, os.path.join(HERE, "check_sources.py")],

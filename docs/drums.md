@@ -123,6 +123,28 @@ The first bar of each beat is skipped. Drummers were counted in and tend to
 announce themselves, so bar one is an entry rather than the groove — and a loop
 that starts with a crash is a loop that crashes every two bars.
 
+**Where the loop is cut.** Drummers play ahead of the click — that is most of
+what "feel" is — so a downbeat routinely lands a pulse or two *before* the bar
+it belongs to. Cutting on the exact bar line puts that note at the end of the
+previous loop instead of the start of this one, and the result is brutal: the
+first version of this extraction left **32% of beats flamming on every bar
+line** (a hit at the end and another on the downbeat, forty milliseconds apart,
+for ever) and another **28% with no downbeat at all**. Sixty per cent of the
+corpus was broken by the cut rather than by the drummer.
+
+The window is shifted back by two pulses at both ends, which is taken from the
+data rather than from taste: hits within two pulses either side of a bar line
+are one cluster — 4,864 at −1 and 4,675 at 0 — with a clear valley at three and
+four before the count rises again at six, which is the sixteenth before the
+beat. Three pulses would start eating that sixteenth; one would leave a third of
+the anticipations behind.
+
+An anticipated downbeat becomes the downbeat, losing a pulse or two of its own
+push. That is the price of a loop that does not flam, and the push *inside* the
+bar — which is the rest of the feel — is untouched. Now 85% of beats start on
+the downbeat and nothing at all lands within forty milliseconds of the loop
+point.
+
 **How much of the groove survives.** This corpus is worth having because it is
 human and unquantised, and jamin counts in 24 pulses per quarter, which is
 coarser than a drummer's hands. Measured across 19,752 notes: the mean deviation
