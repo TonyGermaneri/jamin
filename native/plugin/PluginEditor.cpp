@@ -54,6 +54,27 @@ juce::var readJsonEvents (const juce::var& events, jamin::Sequence& into)
 
 } // namespace
 
+/**
+ * Bytes as base64 the page can actually decode.
+ *
+ * NOT `MemoryBlock::toBase64Encoding`, which is not base64. It writes the byte
+ * count, then a '.', then the data through a private table packing each six
+ * bits least-significant first -- a JUCE format whose only partner is
+ * `fromBase64Encoding`. Handed to the page's `atob` it decodes to noise, and a
+ * MIDI file of noise parses to nothing, so every file in a library was read
+ * successfully and skipped.
+ *
+ * `Base64::convertToBase64` is RFC 4648, which is what `atob` expects.
+ */
+static juce::String asBase64 (const juce::MemoryBlock& block)
+{
+    juce::MemoryOutputStream encoded;
+    if (! juce::Base64::convertToBase64 (encoded, block.getData(), block.getSize()))
+        return {};
+
+    return encoded.toString();
+}
+
 JaminEditor::JaminEditor (JaminProcessor& p)
     : juce::AudioProcessorEditor (&p),
       plugin (p),
@@ -280,10 +301,7 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                            if (! file.existsAsFile() || ! file.loadFileAsData (block))
                                return complete (juce::var());
 
-                           // Base64 because the bridge carries strings: a JSON
-                           // array of forty thousand numbers costs more to build
-                           // and parse than the file does to read.
-                           complete (juce::var (block.toBase64Encoding()));
+                           complete (juce::var (asBase64 (block)));
                        })
                    .withNativeFunction ("jaminListFolders",
                        [] (const juce::Array<juce::var>& args, auto complete)
@@ -338,7 +356,7 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                                    continue;
                                }
 
-                               out.add (juce::var (block.toBase64Encoding()));
+                               out.add (juce::var (asBase64 (block)));
                            }
 
                            complete (juce::var (out));

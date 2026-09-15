@@ -31,6 +31,20 @@ if(APPLE AND JAMIN_BUILD_PLUGIN)
         JUCE_STANDALONE_APPLICATION=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
 endif()
 
+# jamin-base64: the encoding a file read hands the page, pinned to RFC 4648.
+# Tiny, and it exists because the obvious-looking JUCE function is a different
+# encoding with a similar name -- which imported nothing, successfully.
+if(JAMIN_BUILD_PLUGIN)
+    add_executable(jamin-base64 base64_check.cpp)
+    set_target_properties(jamin-base64 PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    target_link_libraries(jamin-base64 PRIVATE
+        juce::juce_core
+        juce::juce_recommended_config_flags)
+    target_compile_definitions(jamin-base64 PRIVATE
+        JUCE_STANDALONE_APPLICATION=1 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
+endif()
+
 # jamin-auhost: what a host does, without a host. auval never instantiates the
 # editor, so it cannot see a crash that only happens once the web view has been
 # created and thrown away.

@@ -1030,6 +1030,11 @@ async function runImport(progress) {
  * a disk; neither belongs under the fifteen seconds that suits a question the
  * plugin answers out of its own memory. @see callHostSlowly
  */
+/** How many failures in a row mean the fault is here rather than in the files.
+    A scraped collection genuinely holds broken files; it does not hold five
+    hundred of them before the first good one. */
+const NOTHING_WORKS = 500
+
 const hostReader = {
   listFolders: (where) => callHostSlowly('jaminListFolders', where),
   scanFiles: (where) => callHostSlowly('jaminScanFolder', where, 200000, false),
@@ -1093,6 +1098,17 @@ async function importOnePack(pack, progress, reader = hostReader) {
     // one so far.
     progress.read = progress.readBase + kept
     progress.skipped = progress.skippedBase + skipped
+
+    // Everything skipped and nothing kept is not a folder of bad files, it is
+    // something wrong on this side -- as it was when the bytes arrived in an
+    // encoding the page could not decode, and 774,000 files were read
+    // successfully and thrown away one at a time. Say so now rather than
+    // twenty minutes from now.
+    if (!progress.read && progress.skipped >= NOTHING_WORKS) {
+      progress.trouble = `${progress.skipped.toLocaleString()} files read and none of them `
+        + 'parsed as MIDI — stopping, because that is a fault rather than a folder of bad files'
+      return false
+    }
 
     if (batch.length >= 500) {
       const trouble = await putGrooves(batch)

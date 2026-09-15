@@ -15,6 +15,11 @@ set_target_properties(jamin-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_B
 
 add_test(NAME jamin-tests COMMAND jamin-tests)
 
+if(TARGET jamin-base64)
+    add_test(NAME jamin-base64 COMMAND jamin-base64)
+    set_tests_properties(jamin-base64 PROPERTIES TIMEOUT 30)
+endif()
+
 # The page, running in the editor's own web view. This is the test that would
 # catch a Vite change that breaks module loading over a custom scheme, which no
 # amount of testing in Chrome ever would.
