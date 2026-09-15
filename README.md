@@ -486,14 +486,16 @@ src/core/progressionStore.js  IndexedDB, so the whole collection fits
 src/core/key.js           key detection, Krumhansl-Schmuckler
 src/core/midi.js          Web MIDI: ports, clock, note IO
 src/core/player.js        clock in, chords and phrases out
-src/canvas/layout.js      per-line text fitting, caret and hit testing
+src/canvas/layout.js      fitting text to the width, caret and hit testing
 src/canvas/textRenderer.js  the 2D text layer
 src/canvas/glRenderer.js  the WebGL effects layer
 ```
 
-**Why a canvas.** Each line scales independently to fill the width, and the
-highlight has to land on the exact word the user typed rather than on a
-re-rendered copy of it. No DOM text control does either. So the chart is drawn
+**Why a canvas.** Text is fitted to the width — by default every line at the
+size the longest one needs, so the chart reads as an even column, or with
+*dynamic line size* each line scaled on its own so a single chord fills the
+screen — and the highlight has to land on the exact word the user typed rather
+than on a re-rendered copy of it. No DOM text control does either. So the chart is drawn
 on canvas, with a fully transparent `<textarea>` on top: invisible, but a real
 text control, so typing, IME, clipboard and the browser's own undo stack all
 still work. Hit testing and vertical caret movement are ours, because the

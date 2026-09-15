@@ -9,7 +9,9 @@ function near(label, got, want, tol = 0.001) {
 
 // Pretend monospace: every glyph is 60 units wide at the reference size.
 const measure = (text) => text.length * 60
-const display = { padding: 20, minFontSize: 18, maxFontSize: 200, lineHeight: 1.2, fitLines: true }
+// Per-line scaling, which is what most of these check; the shared-size mode has
+// its own block at the end.
+const display = { padding: 20, minFontSize: 18, maxFontSize: 200, lineHeight: 1.2, dynamicLineSize: true }
 
 // 'C F G' is 5 chars = 300 units at reference 100 -> to fill 560px the scale is
 // 560/300, i.e. a font size of 186.67px.
@@ -82,5 +84,52 @@ check('the dot fits above the glyphs', layout.lines[0].markSpace > layout.lines[
 const marked = caretRect(layout, 1, measure)
 check('caret sits in the text band', marked.y >= layout.lines[0].textTop, true)
 
+
+
+/* ---------------- one size for the whole chart -------------------------- */
+// The default. Lines share a size, and the line needing the most room sets it,
+// so the chart reads as an even column rather than a stack of headlines.
+const even = { ...display, dynamicLineSize: false }
+
+// 'C F G' is 5 chars, 'C F G Am7' is 9 -> 540 units. To fit 560px that is a
+// font size of 560/540 * 100. Both lines get it.
+score = parseScore('C F G\nC F G Am7', { beatsPerBar: 4 })
+layout = layoutChart(score, { width: 600, measure, display: even })
+near('the longest line sets the size', layout.lines[1].fontSize, (560 / 540) * 100)
+check('and every line shares it', layout.lines[0].fontSize, layout.lines[1].fontSize)
+// The short line no longer fills the width, which is the whole point.
+near('the long line fills the width', layout.lines[1].width, 560)
+near('the short one does not', layout.lines[0].width, 300 * (560 / 540))
+
+// Measured width, not character count: a line of wide glyphs is the one that
+// would run off the edge even when another has more characters in it.
+const proportional = (text) => [...text].reduce((sum, ch) => sum + (ch === 'W' ? 200 : 20), 0)
+score = parseScore('iiii\nWW', { beatsPerBar: 4 })
+layout = layoutChart(score, { width: 600, measure: proportional, display: even })
+near('the widest line wins, not the longest', layout.lines[0].fontSize, (560 / 400) * 100)
+
+// A blank line is a gap, not text, and a full-size gap is a hole. It stays
+// small whichever way the rest is sized.
+score = parseScore('C F G\n\nC F G Am7', { beatsPerBar: 4 })
+layout = layoutChart(score, { width: 600, measure, display: even })
+check('a blank line stays a gap', layout.lines[1].fontSize, even.minFontSize)
+check('and does not set the size', layout.lines[0].fontSize, layout.lines[2].fontSize)
+
+// A chart with nothing in it has no longest line. It starts at the largest size
+// allowed rather than the smallest, because a blank chart that begins tiny and
+// jumps when the first chord is typed reads as a glitch.
+score = parseScore('', { beatsPerBar: 4 })
+layout = layoutChart(score, { width: 600, measure, display: even })
+check('an empty chart does not start tiny',
+      sharedFontSize(score, measure, 560, even), even.maxFontSize)
+
+// The clamps still hold at both ends.
+score = parseScore('C'.repeat(400), { beatsPerBar: 4 })
+layout = layoutChart(score, { width: 600, measure, display: even })
+check('a very long line cannot go below the floor', layout.lines[0].fontSize, even.minFontSize)
+score = parseScore('C', { beatsPerBar: 4 })
+layout = layoutChart(score, { width: 600, measure, display: even })
+check('and a very short one cannot go above the ceiling',
+      layout.lines[0].fontSize, even.maxFontSize)
 
 console.log(failed === 0 ? 'layout: all checks passed' : `layout: ${failed} FAILED`)

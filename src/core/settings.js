@@ -36,7 +36,7 @@ export const STORAGE_KEY = 'jamin.settings.v1'
  *        chord alike; `chords.bassNote` and `accompany.keepBass` are gone, and
  *        anyone who had the chord one on gets the remaining one on.
  */
-export const SETTINGS_VERSION = 10
+export const SETTINGS_VERSION = 11
 export const TEXT_KEY = 'jamin.chart.v1'
 export const PHRASE_KEY = 'jamin.phrases.v1'
 export const SONG_PHRASE_KEY = 'jamin.songPhrase.v1'
@@ -94,7 +94,11 @@ export function defaultSettings() {
       maxFontSize: 190,
       lineHeight: 1.22,
       padding: 28,
-      fitLines: true,
+      // Every line at the size the longest one needs, so the chart reads as a
+      // column of even text. Turn this on and each line is scaled on its own to
+      // fill the width instead -- a bar of four chords small, a single chord
+      // huge. @see canvas/layout.js
+      dynamicLineSize: false,
       // Follow the song, keeping the chord being played near the middle. Off by
       // default: a chart that moves on its own is a surprise the first time.
       autoScroll: false,
@@ -244,6 +248,15 @@ export function migrateSettings(stored) {
     // to be switched on before it can be found is a machine somebody has to
     // walk over to.
     next.network = { enabled: true, ...(next.network || {}) }
+  }
+
+  if (version < 11) {
+    // Lines used to be scaled one at a time; now they share a size by default.
+    // Everybody lands on the new default, including whoever had the old
+    // per-line fitting switched on -- that is what making it the default means,
+    // and the switch is right there to go back.
+    next.display = { ...(next.display || {}) }
+    delete next.display.fitLines
   }
 
   next.version = SETTINGS_VERSION

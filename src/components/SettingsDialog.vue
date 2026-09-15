@@ -421,7 +421,20 @@ async function retryMidi() {
                 <v-slider v-model="state.settings.display.dimInactive" :min="0.1" :max="1" :step="0.01" />
               </v-col>
               <v-col cols="12" md="6">
-                <v-switch v-model="state.settings.display.fitLines" label="Scale each line to fill the width" />
+                <div class="d-flex align-center">
+                  <v-switch v-model="state.settings.display.dynamicLineSize" density="compact"
+                            hide-details label="Dynamic line size" />
+                  <InfoTip>
+                    Off, every line is drawn at one size — whatever the longest line needs to fit
+                    the width — so the chart reads as an even column of text and a short bar does
+                    not shout.
+                    <br /><br />
+                    On, each line is scaled on its own to fill the width: a bar of four chords is
+                    small and a single chord fills the screen. Every line uses all the room there
+                    is, which is worth having when a chart is a few sparse bars and legibility
+                    matters more than evenness.
+                  </InfoTip>
+                </div>
                 <v-switch v-model="state.settings.display.showReadout" label="Show the bar/tempo readout" />
               </v-col>
             </v-row>

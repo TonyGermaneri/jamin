@@ -104,7 +104,7 @@ watch(
 )
 
 watch(
-  () => [state.settings.display.font, state.settings.display.fitLines],
+  () => [state.settings.display.font, state.settings.display.dynamicLineSize],
   () => {
     measure.reset(state.settings.display.font)
     layoutKey = ''
@@ -141,7 +141,7 @@ function ensureLayout() {
     display.maxFontSize,
     display.lineHeight,
     display.padding,
-    display.fitLines,
+    display.dynamicLineSize,
   ].join('|')
   // A reparse always produces a new score object, so identity is the cheapest
   // possible "did the chart change" test.

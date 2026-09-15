@@ -1,10 +1,21 @@
 /**
  * Text layout for the canvas editor.
  *
- * Every line is scaled independently so it fills the width of the window -- a
- * bar of four chords is small, a single chord is huge.  That is why this is a
- * canvas and not a textarea: no DOM text control can do per-line fitting and
- * still let us hang arbitrary paint on one specific typed word.
+ * Two ways to size a chart, and the difference is whether lines share a size.
+ *
+ * **One size for all of it**, the default: the line needing the most room sets
+ * the size, and every other line is drawn at that same size.  A chart read as a
+ * chart -- the eye tracks down a column of even text and a short bar does not
+ * shout.
+ *
+ * **A size per line**, `display.dynamicLineSize`: every line is scaled on its
+ * own to fill the width, so a bar of four chords is small and a single chord is
+ * huge.  Each line uses all the room there is, which is worth having when the
+ * chart is a few sparse bars and legibility beats evenness.
+ *
+ * Either way this is a canvas and not a textarea: no DOM text control can fit
+ * text to a width like this and still let us hang arbitrary paint on one
+ * specific typed word.
  *
  * Nothing in here touches the DOM.  Widths come from an injected `measure(text)`
  * function that reports the width of `text` at REFERENCE_SIZE; because canvas
@@ -19,6 +30,28 @@ export const BASELINE_RATIO = 0.78
 export const MARK_SPACE = 0.3
 
 /**
+ * The size that fits the longest line, for every line to use.
+ *
+ * The longest line by *measured width*, not by character count: "Bb7#9#11" is
+ * eight characters and wider than ten narrow ones, and it is the one that would
+ * run off the edge.
+ *
+ * A chart of nothing but blank lines has no longest line, and falls back to the
+ * largest size allowed rather than the smallest -- a blank chart that starts
+ * tiny and jumps when the first chord is typed reads as a glitch.
+ */
+export function sharedFontSize(score, measure, usable, display) {
+  let widest = 0
+  for (const line of score.lines) {
+    if (!line.text.length) continue
+    widest = Math.max(widest, measure(line.text))
+  }
+
+  if (!widest) return display.maxFontSize
+  return clamp((usable / widest) * REFERENCE_SIZE, display.minFontSize, display.maxFontSize)
+}
+
+/**
  * @param {object} score result of parseScore
  * @param {{width: number, measure: (text: string) => number, display: object}} ctx
  */
@@ -29,16 +62,23 @@ export function layoutChart(score, ctx) {
   const lines = []
   let top = padding
 
+  // The one size the whole chart is drawn at, when lines share a size: whatever
+  // makes the longest line fit. Measured across every line before any is laid
+  // out, because the first line cannot know what the tenth needs.
+  const shared = display.dynamicLineSize ? 0 : sharedFontSize(score, measure, usable, display)
+
   for (const line of score.lines) {
     const referenceWidth = measure(line.text)
     let fontSize
 
     if (!line.text.length) {
+      // A blank line is a gap rather than text, and a full-size gap is a hole.
+      // It stays small whichever way the rest is sized.
       fontSize = display.minFontSize
-    } else if (display.fitLines) {
+    } else if (display.dynamicLineSize) {
       fontSize = clamp((usable / referenceWidth) * REFERENCE_SIZE, display.minFontSize, display.maxFontSize)
     } else {
-      fontSize = display.maxFontSize
+      fontSize = shared
     }
 
     const scale = fontSize / REFERENCE_SIZE
