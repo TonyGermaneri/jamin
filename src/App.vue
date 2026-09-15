@@ -170,6 +170,15 @@ function toggleArm() {
           :title="netTitle"
           @click="state.ui.settingsTab = 'midi'; state.ui.settings = true"
         />
+        <!-- Follow the song. In the toolbar rather than the settings because it
+             is turned on and off while playing, not configured once. -->
+        <v-btn
+          :icon="state.settings.display.autoScroll ? 'mdi-crosshairs-gps' : 'mdi-crosshairs'"
+          :color="state.settings.display.autoScroll ? 'primary' : undefined"
+          size="small" variant="text"
+          :title="state.settings.display.autoScroll ? 'Following the song' : 'Follow the song'"
+          @click="state.settings.display.autoScroll = !state.settings.display.autoScroll"
+        />
         <v-btn icon="mdi-book-music-outline" size="small" variant="text" title="Phrase book" @click="state.ui.phrases = true" />
         <v-btn icon="mdi-bookshelf" size="small" variant="text" title="Progression library" @click="state.ui.progressions = true" />
         <v-btn icon="mdi-circle-multiple-outline" size="small" variant="text" title="Drum book" @click="state.ui.drums = true" />

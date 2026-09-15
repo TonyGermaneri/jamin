@@ -32,6 +32,8 @@ let layoutKey = ''
 let laidOutScore = null
 let frameHandle = 0
 let scroll = 0
+/** When the caret last moved, so the song does not fight somebody typing. */
+let lastCaret_at = 0
 let lastCaret = -1
 let width = 0
 let height = 0
@@ -387,6 +389,7 @@ function frame(now) {
   syncCaret()
   ensureLayout()
   followCaret()
+  followSong()
 
   const seconds = now / 1000
   const status = buildStatus(now)
@@ -437,12 +440,46 @@ function clearGl() {
 
 watch(() => [state.settings.shader.enabled, state.settings.theme.bg], () => { cleared = false })
 
+/**
+ * Keep the chord that is playing in the middle of the window.
+ *
+ * Typing wins. The caret is where somebody's attention is, so while they are
+ * editing the chart stays where they put it -- `followCaret` has already moved
+ * this frame if the caret moved, and following the song as well would fight it.
+ * A moment after the last keystroke the song takes over again.
+ *
+ * Eased rather than jumped, and only when the target has moved by more than a
+ * line: a chart that twitches every frame is unreadable, and a chart that snaps
+ * on every chord is worse than one that does not follow at all. What it cannot
+ * do is centre the first and last lines -- there is nothing above or below them
+ * to show -- so it settles for as close as the ends allow.
+ */
+function followSong() {
+  if (!state.settings.display.autoScroll || !live.running) return
+  if (performance.now() - lastCaret_at < 1500) return
+
+  const event = state.score.events[live.eventIndex]
+  if (!event || !event.tokens.length) return
+
+  const rect = rectForToken(layout, event.tokens[0])
+  if (!rect) return
+
+  const limit = Math.max(0, layout.height - height)
+  const wanted = clamp(rect.y + rect.h / 2 - height / 2, 0, limit)
+
+  // A twelfth of the distance a frame: fast enough to arrive within a chord at
+  // any tempo, slow enough that the eye follows it rather than being moved.
+  if (Math.abs(wanted - scroll) < 0.5) return
+  scroll = clamp(scroll + (wanted - scroll) / 12, 0, limit)
+}
+
 function followCaret() {
   if (caret.value === lastCaret) {
     scroll = clamp(scroll, 0, Math.max(0, layout.height - height))
     return
   }
   lastCaret = caret.value
+  lastCaret_at = performance.now()
   state.status.caretChord = describeAt(caret.value)
   const rect = caretRect(layout, caret.value, measure)
   if (rect.y < scroll) scroll = Math.max(0, rect.y - 20)

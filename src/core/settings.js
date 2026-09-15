@@ -19,6 +19,8 @@ export const STORAGE_KEY = 'jamin.settings.v1'
  *   5 -- snapping notes that are not in the chord onto the nearest one that is
  *        became the default, and became a setting you can see. Nobody can have
  *        chosen the old value, because there was nothing to choose it with.
+ *  10 -- `display.autoScroll` arrived. Defaults to off, so a settings object
+ *        saved before it reads as off, which is what it would have been.
  *   9 -- `drums` arrived, with `midi.drumOutputId` and `midi.drumChannel`. New
  *        blocks with defaults, so a settings object saved before them reads as
  *        the defaults.
@@ -34,7 +36,7 @@ export const STORAGE_KEY = 'jamin.settings.v1'
  *        chord alike; `chords.bassNote` and `accompany.keepBass` are gone, and
  *        anyone who had the chord one on gets the remaining one on.
  */
-export const SETTINGS_VERSION = 9
+export const SETTINGS_VERSION = 10
 export const TEXT_KEY = 'jamin.chart.v1'
 export const PHRASE_KEY = 'jamin.phrases.v1'
 export const SONG_PHRASE_KEY = 'jamin.songPhrase.v1'
@@ -89,6 +91,9 @@ export function defaultSettings() {
       lineHeight: 1.22,
       padding: 28,
       fitLines: true,
+      // Follow the song, keeping the chord being played near the middle. Off by
+      // default: a chart that moves on its own is a surprise the first time.
+      autoScroll: false,
       showReadout: true,
       showPlayhead: true,
       dimInactive: 0.55,
