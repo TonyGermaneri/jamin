@@ -23,7 +23,7 @@ import {
 } from './core/drumStore.js'
 import {
   loadDrumBindings, saveDrumBindings, reconcileBindings, bindGroove,
-  forgetBinding, WHOLE_SONG,
+  forgetBinding, slotOf, cycleBinding, WHOLE_SONG,
 } from './core/drumBindings.js'
 import { Player } from './core/player.js'
 import { parseScore } from './core/score.js'
@@ -838,7 +838,7 @@ export function forgetDrumBinding(name) {
 function refreshDrums() {
   player.getGroove = (span) => grooveForSpan(span, 'groove')
   player.getFill = (span) => grooveForSpan(span, 'fill')
-  player.getKitMap = (groove) => kitMapFor(groove)
+  player.getKitMap = () => kitMapFor()
   player.getInboundMap = (groove) => inboundMapFor(groove)
   player.rebuildDrums()
   // pushToHost is the compile: it debounces and sends the whole request, which
@@ -1443,37 +1443,52 @@ export async function drumFacetsFor(setId) {
 }
 
 /**
- * The kit map a groove should be played through.
+ * The map a groove is played *out* through: the drum instrument on this track.
  *
- * A library's own, when it has one, and the global setting otherwise. This is
- * the whole reason the kit lives on the set: one folder is General MIDI and the
- * next uses pitches General MIDI has no name for, and nothing global can be
- * right for both.
+ * This is the global Kit setting and nothing else, because there is one drum
+ * instrument on the track and every groove goes through it. Which library a
+ * groove came from has no bearing on it.
+ *
+ * It used to return the *library's* kit when the library had one, which made
+ * choosing Addictive Drums on the Kit tab do nothing at all to an imported
+ * library -- it would be read as General MIDI and written straight back out as
+ * General MIDI, silently ignoring the instrument actually loaded. The library's
+ * kit answers a different question, and answers it in @see inboundMapFor.
  */
-export function kitMapFor(groove) {
+export function kitMapFor() {
   const drums = state.settings.drums
-  const global = { ...kitById(drums.kit).map, ...cleanKitMap(drums.customMap) }
-  if (!groove || !groove.setId) return global
-
-  const set = state.drumSets.find((row) => row.id === groove.setId)
-  if (!set) return global
-
-  // The shelf it sits on, then the library, then the global setting. A pack
-  // disagrees with itself often enough that the shelf has to win.
-  const shelf = (set.folderKits || {})[groove.folder]
-  const kit = shelf || set.kit
-  if (!kit) return global
-  return { ...kitById(kit).map, ...cleanKitMap(set.customMap) }
+  return { ...kitById(drums.kit).map, ...cleanKitMap(drums.customMap) }
 }
 
-/** And the map that reads an imported note *in*, which is the other direction
-    and a different table. @see GENERAL_MIDI_IN */
+/**
+ * The map that reads a groove's notes *in*: what numbering the file is written
+ * in.
+ *
+ * This is where a library's own kit belongs, and why the kit lives on the set.
+ * One folder is General MIDI and the next uses pitches General MIDI has no name
+ * for; nothing global can be right for both, because it is a fact about the
+ * file rather than a preference. Detected at import from the notes themselves,
+ * overridable per library, and the shelf beats the library when a pack
+ * disagrees with itself -- which packs do, often.
+ *
+ * Null for the shipped corpus, which is read through its own Roland map.
+ * @see GENERAL_MIDI_IN, classifyKit
+ */
 export function inboundMapFor(groove) {
-  if (!groove || !groove.setId) return null      // the shipped corpus reads itself
+  if (!groove || !groove.setId) return null
   const set = state.drumSets.find((row) => row.id === groove.setId)
   if (!set) return null
   const shelf = (set.folderKits || {})[groove.folder]
   return kitById(shelf || set.kit || 'gm').in || null
+}
+
+/** What a library's notes are being read as, for the interface to say so. */
+export function inboundKitFor(groove) {
+  if (!groove || !groove.setId) return ''
+  const set = state.drumSets.find((row) => row.id === groove.setId)
+  if (!set) return ''
+  const shelf = (set.folderKits || {})[groove.folder]
+  return shelf || set.kit || ''
 }
 
 /**
@@ -1537,26 +1552,50 @@ export function partsItFits(groove) {
   return sectionBars().filter((section) => fitsBars(groove, section.bars))
 }
 
-/** Is this groove bound to this part? Drives the pills in the catalogue. */
+/**
+ * Which slot a groove is in for a part: its groove, its fill, or neither.
+ *
+ * Any pattern can be either. What a library *calls* a pattern is a guess made
+ * from its file name and its length -- "1 Bar Fills" in the path, eight bars or
+ * fewer -- and a guess is not a rule. A two-bar pattern nobody labelled is a
+ * perfectly good fill, and refusing it because of what a vendor typed in a
+ * folder name is the interface arguing with somebody about their own library.
+ */
+export function slotFor(name, groove) {
+  if (!name || !groove) return ''
+  return slotOf(state.drumBindings, name, groove.id)
+}
+
+/** Still true/false, for anything that only wants to know whether it plays. */
 export function boundTo(name, groove) {
-  if (!name || !groove) return false
-  const row = state.drumBindings[name]
-  if (!row) return false
-  return groove.kind === 'fill' ? row.fill === groove.id : row.groove === groove.id
+  return Boolean(slotFor(name, groove))
 }
 
 /**
- * Put a groove on a part, or take it off again.
+ * Round the three states: nothing, the part's groove, the part's fill.
  *
- * Which slot it lands in is decided by what it is rather than by which button
- * was pressed: a beat is a groove and a fill is a fill. There is no sensible
- * way to bind a fill as a section's groove -- it would flurry for eight bars --
- * and no way to lead out of a section with a beat.
+ * One control instead of two buttons and a rule about which one is allowed.
+ * What the pattern is labelled decides only which slot the *first* click
+ * reaches -- a fill offers itself as a fill first, because a fill played for
+ * eight bars is a bad first result -- and both slots are always reachable.
+ *
+ * Returns the slot it landed in, so the caller can say what happened.
  */
+export function cycleGrooveOn(name, groove) {
+  if (!name || !groove) return ''
+
+  const { bindings, slot } = cycleBinding(state.drumBindings, name, groove.id, groove.kind)
+
+  state.drumBindings = bindings
+  saveDrumBindings(bindings)
+  rememberBoundGrooves().then(refreshDrums)
+  refreshDrums()
+  return slot
+}
+
+/** Put a groove in a named slot, or take it out. */
 export function toggleGrooveOn(name, groove) {
-  if (!name || !groove) return
-  const what = groove.kind === 'fill' ? 'fill' : 'groove'
-  setGrooveFor(name, boundTo(name, groove) ? null : groove.id, what)
+  return cycleGrooveOn(name, groove)
 }
 
 /**
@@ -1594,8 +1633,8 @@ export function assignEverywhere(groove) {
  * every section with the same flurry. @see matchingFill
  */
 export function autoFillFrom(groove) {
-  if (!groove || groove.kind === 'fill') {
-    toast('Choose a beat first')
+  if (!groove) {
+    toast('Pick a pattern first')
     return 0
   }
 

@@ -25,8 +25,8 @@ import {
   toggleFavourite,
   setDrumAccent,
   triggerDrumAccent,
-  boundTo,
-  toggleGrooveOn,
+  slotFor,
+  cycleGrooveOn,
   assignEverywhere,
   autoFillFrom,
   tapDrum,
@@ -37,6 +37,7 @@ import {
   setDrumSetKit,
   importDrumFolderByReference,
   notesFor,
+  inboundKitFor,
   searchDrums,
   drumFacetsFor,
   sectionBars,
@@ -120,6 +121,12 @@ watch(library, async (id) => {
   facets.value = { folders: [], kinds: [], bars: [], signatures: [] }
   if (id) facets.value = await drumFacetsFor(id)
 }, { immediate: true })
+
+/** What this groove's library is read as, by name rather than by id. */
+const readAs = computed(() => {
+  const id = inboundKitFor(selected.value)
+  return id ? (kitById(id) || {}).name || '' : ''
+})
 
 const shelf = computed({
   get: () => state.drumFilters.folder || '',
@@ -406,6 +413,31 @@ const playingVoices = computed(() => new Set(state.playing.voices))
  * hovering over each one in turn. Ten is the last one that gets a key, because
  * there are only ten digits.
  */
+/** Off, the part's groove, the part's fill. @see slotFor */
+function chipColour(slot) {
+  return slot === 'fill' ? 'warning' : slot === 'groove' ? 'primary' : undefined
+}
+
+/** What it is doing, and what the next click will do about it -- the whole
+    point of a control with three states is that the third one is findable. */
+function chipTitle(row, groove, index) {
+  const where = row.wholeSong ? 'the whole song' : row.name
+  const slot = slotFor(row.name, groove)
+  const first = groove.kind === 'fill' ? 'fill' : 'groove'
+  const second = first === 'fill' ? 'groove' : 'fill'
+  const next = !slot ? first : slot === first ? second : 'nothing'
+
+  const now = slot === 'groove' ? `plays through ${where}`
+            : slot === 'fill' ? `leads out of ${where}`
+            : `does not play ${where}`
+  const then = next === 'groove' ? `play it through ${where}`
+             : next === 'fill' ? `lead out of ${where} with it`
+             : `take it off ${where}`
+
+  return `${groove.name} ${now}. Click to ${then}`
+        + (index < 10 ? ` — or press ${(index + 1) % 10}` : '')
+}
+
 function pillLabel(row, index) {
   const name = row.wholeSong ? 'Song' : row.name
   const short = name.length > 9 ? `${name.slice(0, 8)}…` : name
@@ -420,7 +452,7 @@ function pillLabel(row, index) {
  *
  *   ↑ ↓        move through the grooves, turning the page as it goes
  *   ← →        the page
- *   1 … 9 0    put this groove on that part, or take it off again
+ *   1 … 9 0    round that part's three states: off, its groove, its fill
  *   space      put it on every part
  *
  * Arrowing browses and never binds, even with auto-select on: auto-select is
@@ -450,7 +482,7 @@ function turnPage(by) {
 function assignToPartNumber(digit) {
   if (!selected.value) return
   const row = liveRows.value[digit === 0 ? 9 : digit - 1]
-  if (row) toggleGrooveOn(row.name, selected.value)
+  if (row) cycleGrooveOn(row.name, selected.value)
 }
 
 function onKey(event) {
@@ -480,8 +512,27 @@ function assign(row, what) {
     toast('Choose a groove first')
     return
   }
+
+  const where = row.wholeSong ? 'the whole song' : row.name
+  // Pressing the slot it is already in takes it off, so the same button that
+  // put it there can undo it.
+  if (slotFor(row.name, selected.value) === what) {
+    setGrooveFor(row.name, null, what)
+    toast(`${selected.value.name} off ${where}`)
+    return
+  }
+
   setGrooveFor(row.name, selected.value.id, what)
-  toast(`${selected.value.name} → ${row.wholeSong ? 'the whole song' : row.name}`)
+  toast(what === 'fill'
+    ? `${selected.value.name} leads out of ${where}`
+    : `${selected.value.name} → ${where}`)
+}
+
+/** Both slots at once, which is what "start this part again" means. */
+function clearPart(row) {
+  setGrooveFor(row.name, null, 'groove')
+  setGrooveFor(row.name, null, 'fill')
+  toast(`${partLabel(row)} cleared`)
 }
 
 const partLabel = (row) => (row.wholeSong ? 'The whole song' : row.name)
@@ -567,23 +618,27 @@ function resetMap() {
                     label="Auto-select"
                   />
                   <InfoTip>
-                    With this on, clicking a groove puts it on every part at once — a beat becomes
-                    every section's groove, a fill becomes every section's fill. Most songs have
-                    one feel, so binding the same beat to five sections one at a time is five
-                    clicks to say one thing. The pills still work either way.
+                    With this on, clicking a groove puts it on every part at once. Most songs
+                    have one feel, so binding the same beat to five sections one at a time is five
+                    clicks to say one thing.
+                    <br /><br />
+                    Which slot it lands in follows what the pattern is called — something named
+                    like a fill becomes every section's fill, anything else becomes their groove.
+                    That is a starting guess, not a rule: the pills still put any pattern in
+                    either slot.
                   </InfoTip>
 
                   <v-spacer />
 
                   <v-btn size="small" variant="tonal"
-                         :disabled="!selected || selected.kind === 'fill' || !liveRows.length"
+                         :disabled="!selected || !liveRows.length"
                          prepend-icon="mdi-auto-fix"
                          @click="autoFillFrom(selected)">
                     Auto-fill
                   </v-btn>
                   <InfoTip location="left">
-                    Takes the beat you have chosen, gives it to every part that has no groove yet,
-                    and finds each part a fill to lead out of — same genre, same time signature,
+                    Takes the pattern you have chosen, gives it to every part that has no groove
+                    yet, and finds each part a fill to lead out of — same genre, same time signature,
                     nearest tempo, chosen separately per part so the song does not leave every
                     section with the same flurry.
                     <br /><br />
@@ -702,23 +757,28 @@ function resetMap() {
                     </v-list-item-subtitle>
                     <!-- One pill per part, on their own line: a song with eight
                          sections is eight pills, and squeezed onto the end of
-                         the name they crowd out the name. Lit is bound; a beat
-                         goes in the groove slot and a fill in the fill slot,
-                         because that is what they are. -->
+                         the name they crowd out the name.
+
+                         Three states, cycled by clicking: not playing, this
+                         part's groove, this part's fill (with a bolt on it).
+                         Any pattern can be either -- what a library calls a
+                         pattern is a guess from its file name, and a guess is
+                         not a rule. -->
                     <div v-if="liveRows.length" class="jamin-drum-pills">
                       <v-chip
                         v-for="(row, index) in liveRows" :key="row.name"
                         size="x-small" label
-                        :variant="boundTo(row.name, groove) ? 'flat' : 'outlined'"
-                        :color="boundTo(row.name, groove)
-                          ? (groove.kind === 'fill' ? 'warning' : 'primary')
-                          : undefined"
+                        :variant="slotFor(row.name, groove) ? 'flat' : 'outlined'"
+                        :color="chipColour(slotFor(row.name, groove))"
                         :class="{ 'is-playing': row.name === playingSection }"
-                        :title="`${groove.name} ${boundTo(row.name, groove) ? 'plays' : 'does not play'} `
-                              + `${row.wholeSong ? 'the whole song' : row.name}`
-                              + (index < 10 ? ` — press ${(index + 1) % 10}` : '')"
-                        @click.stop="toggleGrooveOn(row.name, groove)"
-                      >{{ pillLabel(row, index) }}</v-chip>
+                        :title="chipTitle(row, groove, index)"
+                        @click.stop="cycleGrooveOn(row.name, groove)"
+                      >
+                        <v-icon v-if="slotFor(row.name, groove) === 'fill'" start size="11">
+                          mdi-flash
+                        </v-icon>
+                        {{ pillLabel(row, index) }}
+                      </v-chip>
                     </div>
 
                     <template #append>
@@ -750,7 +810,7 @@ function resetMap() {
                   <span class="text-caption text-medium-emphasis">
                     <span class="jamin-keyhint mr-2">
                       <kbd>↑↓</kbd> groove · <kbd>←→</kbd> page ·
-                      <kbd>1–0</kbd> part · <kbd>space</kbd> all
+                      <kbd>1–0</kbd> cycle part · <kbd>space</kbd> all
                     </span>
                     <template v-if="imported">
                       {{ matches.length.toLocaleString() }} found<span v-if="capped">
@@ -772,6 +832,24 @@ function resetMap() {
                   <div class="text-body-2 mb-1">{{ selected.name }}</div>
                   <div class="text-caption text-medium-emphasis mb-3">
                     {{ summarizeGroove(selected) }}
+                    <!-- Worked out from the notes at import and kept on the
+                         library. Shown because a mapping that happens silently
+                         looks like a mapping that did not happen. -->
+                    <div v-if="readAs">
+                      read as {{ readAs }} · played through {{ chosenKit.name }}
+                      <InfoTip>
+                        Two different questions, and they were being answered with one setting.
+                        <br /><br />
+                        <strong>Read as</strong> is what numbering this library's files are written
+                        in — a fact about the files, worked out from the notes themselves when the
+                        library was imported and kept on it. Change it per library on the Libraries
+                        tab if the guess is wrong; a shelf inside a library can carry its own, and
+                        does when a pack disagrees with itself.
+                        <br /><br />
+                        <strong>Played through</strong> is the drum instrument on this track, which
+                        is the Kit tab and applies to everything.
+                      </InfoTip>
+                    </div>
                   </div>
 
                   <!-- What is actually in it. The names sit where a piano roll
@@ -827,11 +905,17 @@ function resetMap() {
                         {{ partLabel(row) }}
                         <span v-if="row.stale" class="text-caption text-medium-emphasis">— not in the chart</span>
                       </v-list-item-title>
+                      <!-- Neither is gated on what the pattern is called. A
+                           two-bar pattern nobody labelled is a perfectly good
+                           fill, and the label is a guess from a file name. -->
                       <template #append>
-                        <v-btn size="x-small" variant="tonal" class="mr-1"
+                        <v-btn size="x-small" class="mr-1"
+                               :variant="slotFor(row.name, selected) === 'groove' ? 'flat' : 'tonal'"
+                               :color="slotFor(row.name, selected) === 'groove' ? 'primary' : undefined"
                                @click="assign(row, 'groove')">Groove</v-btn>
-                        <v-btn size="x-small" variant="text"
-                               :disabled="selected.kind !== 'fill'"
+                        <v-btn size="x-small"
+                               :variant="slotFor(row.name, selected) === 'fill' ? 'flat' : 'tonal'"
+                               :color="slotFor(row.name, selected) === 'fill' ? 'warning' : undefined"
                                @click="assign(row, 'fill')">Fill</v-btn>
                       </template>
                     </v-list-item>
@@ -872,17 +956,37 @@ function resetMap() {
                       not in the chart
                     </v-chip>
                   </td>
+                  <!-- A clear against each slot rather than one at the end of
+                       the row. There are two things bound here and one button
+                       could only ever undo one of them, which is why the fill
+                       could be set and never taken off again. -->
                   <td class="text-caption">
-                    <span v-if="row.groove">{{ grooveName(row.groove) || 'a groove that is gone' }}</span>
-                    <span v-else class="text-warning">nothing yet</span>
+                    <div class="d-flex align-center" style="gap: 4px">
+                      <span v-if="row.groove">{{ grooveName(row.groove) || 'a groove that is gone' }}</span>
+                      <span v-else class="text-warning">nothing yet</span>
+                      <v-btn v-if="row.groove" icon size="x-small" variant="text"
+                             :aria-label="`Clear the groove on ${partLabel(row)}`"
+                             title="Take this groove off"
+                             @click="setGrooveFor(row.name, null, 'groove')">
+                        <v-icon size="14">mdi-close</v-icon>
+                      </v-btn>
+                    </div>
                   </td>
                   <td class="text-caption">
-                    <span v-if="row.fill">{{ grooveName(row.fill) || 'a fill that is gone' }}</span>
-                    <span v-else class="text-medium-emphasis">any fill</span>
+                    <div class="d-flex align-center" style="gap: 4px">
+                      <span v-if="row.fill">{{ grooveName(row.fill) || 'a fill that is gone' }}</span>
+                      <span v-else class="text-medium-emphasis">whatever suits</span>
+                      <v-btn v-if="row.fill" icon size="x-small" variant="text"
+                             :aria-label="`Clear the fill on ${partLabel(row)}`"
+                             title="Take this fill off"
+                             @click="setGrooveFor(row.name, null, 'fill')">
+                        <v-icon size="14">mdi-close</v-icon>
+                      </v-btn>
+                    </div>
                   </td>
                   <td class="text-right">
-                    <v-btn v-if="row.groove" size="x-small" variant="text"
-                           @click="setGrooveFor(row.name, null, 'groove')">clear</v-btn>
+                    <v-btn v-if="row.groove || row.fill" size="x-small" variant="text"
+                           @click="clearPart(row)">clear both</v-btn>
                     <v-btn v-if="row.stale" icon size="x-small" variant="text" color="error"
                            :aria-label="`Forget ${row.name}`" @click="forgetDrumBinding(row.name)">
                       <v-icon size="16">mdi-delete-outline</v-icon>

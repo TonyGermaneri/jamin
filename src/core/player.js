@@ -84,8 +84,9 @@ export class Player {
         phrase catalogue is, so the application supplies it. */
     this.getGroove = () => null
     this.getFill = () => null
-    /** The kit a given groove should be played through -- its library's, or the
-        global one. @see store.kitMapFor */
+    /** The drum instrument on this track: one kit, every groove through it.
+        Which library a groove came from is the *inbound* question, below.
+        @see store.kitMapFor */
     this.getKitMap = () => ({ ...kitById(this.settings.drums.kit).map,
                               ...cleanKitMap(this.settings.drums.customMap) })
     /** How an arriving note is read. Null means the shipped corpus's own

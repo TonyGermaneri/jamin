@@ -111,6 +111,58 @@ export function bindGroove(bindings, name, grooveId, what = 'groove') {
 }
 
 /**
+ * Which slot a groove is in for a part: its groove, its fill, or neither.
+ *
+ * Any pattern can be either. What a library *calls* a pattern is a guess made
+ * from its file name and its length -- "1 Bar Fills" in the path, eight bars or
+ * fewer -- and a guess is not a rule. A two-bar pattern nobody labelled is a
+ * perfectly good fill, and refusing it because of what a vendor typed in a
+ * folder name is the interface arguing with somebody about their own library.
+ */
+export function slotOf(bindings, name, grooveId) {
+  const row = (bindings || {})[name]
+  if (!row || !grooveId) return ''
+  if (row.groove === grooveId) return 'groove'
+  if (row.fill === grooveId) return 'fill'
+  return ''
+}
+
+/**
+ * The next of the three states: nothing, the part's groove, the part's fill.
+ *
+ * What the pattern is labelled decides only which slot the *first* step reaches
+ * -- something labelled a fill offers itself as a fill first, because a fill
+ * played for eight bars is a bad first result -- and both slots are always
+ * reachable from either starting point.
+ */
+export function nextSlot(current, kind) {
+  const first = kind === 'fill' ? 'fill' : 'groove'
+  const second = first === 'fill' ? 'groove' : 'fill'
+  if (!current) return first
+  return current === first ? second : ''
+}
+
+/**
+ * Round the three states, returning the new bindings and where it landed.
+ *
+ * Moving between slots is a clear and a set rather than a change: a groove
+ * leaving the groove slot has to actually leave it, or a pattern would end up
+ * being both the section's groove and the fill that leads out of it.
+ */
+export function cycleBinding(bindings, name, grooveId, kind) {
+  if (!name || !grooveId) return { bindings, slot: '' }
+
+  const now = slotOf(bindings, name, grooveId)
+  const slot = nextSlot(now, kind)
+
+  let next = bindings
+  if (now) next = bindGroove(next, name, null, now)
+  if (slot) next = bindGroove(next, name, grooveId, slot)
+
+  return { bindings: next, slot }
+}
+
+/**
  * Forget a binding.
  *
  * Refused while the section is still in the chart: there would be nothing to

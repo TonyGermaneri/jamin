@@ -286,6 +286,63 @@ check('and it knows what it is', reconcileBindings({}, [])[0].wholeSong, true)
 check('a repeated section is one row',
       reconcileBindings({}, parseScore('[A] C\n[B] F\n[A] G').sections).map((r) => r.name), ['A', 'B'])
 
+/* ---------------- three states, one control ------------------------------ */
+// Any pattern can be a groove or a fill. What a library *calls* a pattern is a
+// guess from its file name and its length, and a guess is not a rule -- a
+// two-bar pattern nobody labelled is a perfectly good fill, and refusing it is
+// the interface arguing with somebody about their own library.
+
+// A beat goes round: nothing, the part's groove, the part's fill, nothing.
+check('a beat offers itself as a groove first', nextSlot('', 'beat'), 'groove')
+check('then as a fill', nextSlot('groove', 'beat'), 'fill')
+check('then comes off', nextSlot('fill', 'beat'), '')
+
+// A fill starts at the other end, because a fill played for eight bars is a bad
+// first result -- but both slots are still reachable from either start.
+check('a fill offers itself as a fill first', nextSlot('', 'fill'), 'fill')
+check('and can still be a groove', nextSlot('fill', 'fill'), 'groove')
+check('before coming off', nextSlot('groove', 'fill'), '')
+
+// Moving between slots has to actually leave the first one, or a pattern ends
+// up being both the section's groove and the fill that leads out of it.
+let cycled = cycleBinding({}, 'Verse', 'g1', 'beat')
+check('one step binds it as the groove', cycled.bindings.Verse, { groove: 'g1', fill: null })
+check('and says where it landed', cycled.slot, 'groove')
+
+cycled = cycleBinding(cycled.bindings, 'Verse', 'g1', 'beat')
+check('the next step moves it to the fill', cycled.bindings.Verse, { groove: null, fill: 'g1' })
+check('and does not leave it in both', cycled.bindings.Verse.groove, null)
+
+cycled = cycleBinding(cycled.bindings, 'Verse', 'g1', 'beat')
+check('and the last takes it off entirely', cycled.bindings.Verse, undefined)
+
+// Two different patterns, one part: the groove and the fill are separate slots
+// and cycling one does not disturb the other.
+let both = cycleBinding({}, 'Chorus', 'beat1', 'beat').bindings
+both = cycleBinding(both, 'Chorus', 'fill1', 'fill').bindings
+check('a part holds a groove and a fill at once',
+      both.Chorus, { groove: 'beat1', fill: 'fill1' })
+check('and each knows its own slot', slotOf(both, 'Chorus', 'beat1'), 'groove')
+check('including the other one', slotOf(both, 'Chorus', 'fill1'), 'fill')
+
+// A part holds one fill, so stepping a groove *into* the fill slot takes the
+// slot over. That is what binding means and it is the surprising half of a
+// three-state control, so it is pinned rather than left to be discovered.
+const takenOver = cycleBinding(both, 'Chorus', 'beat1', 'beat').bindings
+check('stepping into the fill slot takes it', takenOver.Chorus, { groove: null, fill: 'beat1' })
+check('and the pattern that was there is no longer in either slot',
+      slotOf(takenOver, 'Chorus', 'fill1'), '')
+
+// Clearing a slot outright leaves the other alone -- which is what the two
+// crosses on the Parts tab do, and is why cycling is not the only way out.
+const clearedGroove = bindGroove(both, 'Chorus', null, 'groove')
+check('clearing the groove leaves the fill', clearedGroove.Chorus, { groove: null, fill: 'fill1' })
+const clearedFill = bindGroove(both, 'Chorus', null, 'fill')
+check('and clearing the fill leaves the groove', clearedFill.Chorus, { groove: 'beat1', fill: null })
+
+check('a pattern bound nowhere is in no slot', slotOf({}, 'Verse', 'g1'), '')
+check('and nothing cycles without a groove', cycleBinding({}, 'Verse', null, 'beat').slot, '')
+
 /* ---------------- the drums do not answer to chords ---------------------- */
 // A groove runs across chord changes and stops at a section, which is a
 // different clock. The player calls stopAll() on every chord change, and for a
