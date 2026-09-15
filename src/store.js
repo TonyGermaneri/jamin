@@ -425,7 +425,7 @@ let accentAt = null
  * headless compiler inside the plugin has neither. Only the phrases this chart
  * actually uses go, which is one or two of several thousand.
  */
-function compileRequest() {
+function compileRequest(grooves = null) {
   const phrases = {}
   const include = (ref) => {
     if (!ref || phrases[ref]) return
@@ -441,7 +441,7 @@ function compileRequest() {
     settings: state.settings,
     songPhrase: state.songPhrase,
     phrases,
-    grooves: groovesInUse(),
+    grooves: grooves || groovesInUse(),
     drumBindings: state.drumBindings,
     accentAt,
     accent: accentAt === null ? null : accentPhrase(),
@@ -459,8 +459,11 @@ function compileRequest() {
 function pushToHost() {
   if (!state.host.active) return
   clearTimeout(compileTimer)
-  compileTimer = setTimeout(() => {
-    callHost('jaminCompile', compileRequest()).catch(() => {})
+  compileTimer = setTimeout(async () => {
+    // The grooves are fetched before the request is built, because a library
+    // the plugin points at keeps its notes in the file rather than in the row.
+    const grooves = await resolvedGroovesInUse()
+    callHost('jaminCompile', compileRequest(grooves)).catch(() => {})
   }, 250)
 }
 
@@ -796,6 +799,23 @@ function groovesInUse() {
   return out
 }
 
+/**
+ * The same, with the notes actually in them.
+ *
+ * A row from a library the plugin points at is an index entry: it knows what it
+ * is and where it lives and has no notes at all. The compiler needs the notes,
+ * so the handful a chart actually binds are read off disk first -- one per
+ * section, and a chart has a few sections.
+ */
+async function resolvedGroovesInUse() {
+  const found = groovesInUse()
+  const out = {}
+  for (const [id, groove] of Object.entries(found)) {
+    out[id] = groove.byReference ? await notesFor(groove) : groove
+  }
+  return out
+}
+
 /** The spans the compiler will see, so the same grooves are sent. */
 function buildDrumSpansForRequest() {
   const spans = []
@@ -822,6 +842,158 @@ function buildDrumSpansForRequest() {
 export async function refreshDrumSets() {
   state.drumSets = await listSets()
   return state.drumSets
+}
+
+/**
+ * A library the plugin points at rather than swallows.
+ *
+ * Inside a plugin the filesystem is right there and the page has no business
+ * copying half a gigabyte of somebody else's MIDI into a browser database to
+ * play it. So the folder is scanned natively, each file is read once to work out
+ * what it is, and only the *index* is kept -- what it is called, how long it is,
+ * what shelf it sits on, what the file said about itself. The notes stay in the
+ * file and are read at the moment something needs to play them.
+ *
+ * The browser build cannot do this. A web page has no path to point at, so there
+ * it keeps the notes and this is never reached.
+ */
+export async function importDrumFolderByReference() {
+  const chosen = await callHost('jaminChooseFolder').catch(() => null)
+  if (!chosen || !chosen.path) return null
+
+  const paths = await callHost('jaminScanFolder', chosen.path).catch(() => [])
+  if (!paths || !paths.length) {
+    toast('No MIDI files in there')
+    return null
+  }
+
+  const progress = state.drumImport
+  Object.assign(progress, {
+    running: true, read: 0, skipped: 0, total: paths.length,
+    name: chosen.name || 'library', cancel: false,
+  })
+
+  const setId = `s${Date.now().toString(36)}`
+  const perFolder = new Map()
+  const samples = []
+  let index = 0
+  let batch = []
+
+  for (const path of paths) {
+    if (progress.cancel) break
+
+    const groove = await readByReference(chosen.path, path)
+    if (!groove) { progress.skipped++; continue }
+
+    progress.read++
+    if (samples.length < 120) samples.push(groove)
+
+    let hist = perFolder.get(groove.folder)
+    if (!hist) { hist = {}; perFolder.set(groove.folder, hist) }
+    for (const note of groove.notes) hist[note.note] = (hist[note.note] || 0) + 1
+
+    // Without the notes: this row is a pointer, not a copy.
+    batch.push(packGroove(groove, setId, index++, { byReference: true }))
+
+    if (batch.length >= 500) {
+      await putGrooves(batch)
+      batch = []
+      await new Promise((resume) => setTimeout(resume, 0))
+    }
+  }
+
+  if (batch.length) await putGrooves(batch)
+
+  const { folderKits, setKit } = classifyFolders(perFolder)
+  const count = await countGrooves(setId)
+
+  await putSet({
+    id: setId,
+    name: chosen.name || 'library',
+    // Where it lives, which is the whole point: the rows are pointers into it.
+    root: chosen.path,
+    byReference: true,
+    kit: setKit,
+    customMap: {},
+    folderKits,
+    folders: perFolder.size,
+    facts: samples.length ? describeSet(samples) : {},
+    count,
+    addedAt: Date.now(),
+  })
+
+  await refreshDrumSets()
+  progress.running = false
+  toast(`${count.toLocaleString()} patterns, played from ${chosen.name}`)
+  await searchDrums()
+  return setId
+}
+
+async function readByReference(root, path) {
+  const encoded = await callHost('jaminReadFile', root, path).catch(() => null)
+  if (typeof encoded !== 'string' || !encoded) return null
+  try {
+    return readGrooveFile(base64Bytes(encoded), path)
+  } catch {
+    return null
+  }
+}
+
+/** Base64 to bytes. The bridge carries strings, and a JSON array of forty
+    thousand numbers costs more to build and parse than the file does to read. */
+function base64Bytes(encoded) {
+  const binary = atob(encoded)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+/**
+ * The notes behind an index row, fetched when something is about to play it.
+ *
+ * Cached, because a chart binds a handful of grooves and then compiles on every
+ * keystroke; reading the same four files off disk a hundred times a minute would
+ * be silly. Small, because a handful is all it ever holds.
+ */
+const referenced = new Map()
+
+export async function notesFor(groove) {
+  if (!groove || !groove.byReference) return groove
+
+  const cached = referenced.get(groove.id)
+  if (cached) return cached
+
+  const set = state.drumSets.find((row) => row.id === groove.setId)
+  if (!set || !set.root) return groove
+
+  const read = await readByReference(set.root, groove.path)
+  if (!read) return groove
+
+  const whole = { ...groove, notes: read.notes, byReference: false }
+  if (referenced.size > 64) referenced.clear()
+  referenced.set(groove.id, whole)
+  return whole
+}
+
+/** The commonest verdict per shelf, and the library's own. @see classifyKit */
+function classifyFolders(perFolder) {
+  const folderKits = {}
+  const tally = new Map()
+  for (const [shelf, hist] of perFolder) {
+    const verdict = classifyKit(hist)
+    folderKits[shelf] = verdict.kit
+    tally.set(verdict.kit, (tally.get(verdict.kit) || 0) + 1)
+  }
+
+  const known = [...tally.entries()].filter(([kit]) => kit)
+  const majority = known.sort((a, b) => b[1] - a[1])[0]
+  const setKit = majority ? majority[0] : ''
+
+  for (const shelf of Object.keys(folderKits)) {
+    if (!folderKits[shelf] || folderKits[shelf] === setKit) delete folderKits[shelf]
+  }
+
+  return { folderKits, setKit }
 }
 
 /** A library, read. `files` is whatever a directory picker handed over. */
@@ -901,29 +1073,8 @@ export async function importDrumFolder(files, name) {
 
   if (batch.length) await putGrooves(batch)
 
-  // Each shelf gets the map its own notes say it was written for. Only the
-  // ones that disagree with the set as a whole are worth storing -- a library
-  // where every folder is General MIDI needs one word, not two thousand.
-  const folderKits = {}
-  const tally = new Map()
-  for (const [shelf, hist] of perFolder) {
-    const verdict = classifyKit(hist)
-    folderKits[shelf] = verdict.kit
-    tally.set(verdict.kit, (tally.get(verdict.kit) || 0) + 1)
-  }
-
-  // The commonest verdict, ignoring the shelves it could not name. A pack where
-  // sixty shelves are unreadable and twenty are plainly General MIDI is a
-  // General MIDI pack with sixty odd corners, and defaulting it to nothing
-  // throws away the one piece of evidence there is.
-  const known = [...tally.entries()].filter(([kit]) => kit)
-  const majority = known.sort((a, b) => b[1] - a[1])[0]
-  const setKit = majority ? majority[0] : ''
-  for (const shelf of Object.keys(folderKits)) {
-    // A shelf with no verdict takes the library's, which is better evidence
-    // than nothing; only a shelf that actively disagrees is worth storing.
-    if (!folderKits[shelf] || folderKits[shelf] === setKit) delete folderKits[shelf]
-  }
+  // Each shelf gets the map its own notes say it was written for.
+  const { folderKits, setKit } = classifyFolders(perFolder)
 
   const count = await countGrooves(setId)
   await putSet({

@@ -102,7 +102,7 @@ export function summarizeGroove(groove) {
   const bars = `${groove.bars} bar${groove.bars === 1 ? '' : 's'}`
   const style = groove.substyle ? `${groove.genre} · ${groove.substyle}` : groove.genre
   const who = groove.drummer ? ` · ${groove.drummer}` : ''
-  return `${groove.kind} · ${bars} · ${groove.notes.length} hits · ${style} · played at ${groove.bpm}${who}`
+  return `${groove.kind} · ${bars} · ${groove.hits ?? groove.notes.length} hits · ${style} · played at ${groove.bpm}${who}`
 }
 
 /**

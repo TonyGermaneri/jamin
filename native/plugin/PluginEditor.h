@@ -33,6 +33,10 @@ private:
     uint64_t lastSongGeneration { 0 };
     uint64_t lastRoster { 0 };
     uint64_t lastPhraseRequest { 0 };
+
+    /** Held while a folder chooser is open: it is asynchronous and the dialog
+        outlives the call that opened it. */
+    std::unique_ptr<juce::FileChooser> chooser;
   int lastCompiledEvents { -1 };
     double lastPpqSent { -1.0 };
     bool lastPlayingSent { false };

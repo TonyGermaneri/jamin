@@ -35,6 +35,8 @@ import {
   cancelDrumImport,
   forgetDrumSet,
   setDrumSetKit,
+  importDrumFolderByReference,
+  notesFor,
   sectionBars,
   partsItFits,
 } from '../store.js'
@@ -174,8 +176,28 @@ const VOICE_ORDER = [
   'tomHigh', 'tomMid', 'tomFloor', 'snare', 'snareRim', 'sideStick', 'kick',
 ]
 
+/**
+ * The selected groove with its notes actually in it.
+ *
+ * A row from a library the plugin points at carries no notes -- it is an index
+ * entry, and the file is read when something needs to play it. The preview needs
+ * them too, so it asks for them the same way and draws once they arrive.
+ */
+const resolved = ref(null)
+
+watch(selected, async (groove) => {
+  if (!groove || !groove.byReference) {
+    resolved.value = groove
+    return
+  }
+  resolved.value = null
+  const whole = await notesFor(groove)
+  // Something else may have been picked while the file was being read.
+  if (selected.value === groove) resolved.value = whole
+}, { immediate: true })
+
 const preview = computed(() => {
-  const groove = selected.value
+  const groove = resolved.value
   if (!groove || !groove.notes.length) return null
 
   const steps = Math.max(1, groove.bars * STEPS_PER_BAR)
@@ -731,8 +753,23 @@ function resetMap() {
           <!-- Libraries: somebody's own MIDI, read from where it lives ---- -->
           <v-window-item value="sets">
             <div class="text-caption text-medium-emphasis mb-3">
-              Point jamin at a folder of drum MIDI and it reads what is in it.
+              <span v-if="state.host.active">
+                Point jamin at a folder of drum MIDI. The files stay where they are and play from
+                there.
+              </span>
+              <span v-else>Add a folder of drum MIDI and it reads what is in it.</span>
               <InfoTip>
+                <span v-if="state.host.active">
+                  A plugin can reach the filesystem, so a library is pointed at rather than
+                  swallowed: what is kept here is an index — what each pattern is called, how long
+                  it is, what shelf it sits on — and the notes stay in the file, read at the moment
+                  something needs to play them. Half a gigabyte of MIDI becomes a few tens of
+                  megabytes of index, and what plays is the original rather than a copy of it.
+                  <br /><br />
+                  Move or rename the folder and the patterns stop playing, which is the price of
+                  not copying it.
+                  <br /><br />
+                </span>
                 Nothing imported is ever redistributed: it is read from where it already is on
                 this machine, kept in this browser's own database, and never leaves. The bundled
                 corpus is the only one that can legally travel with the program — a library you
@@ -745,7 +782,16 @@ function resetMap() {
             </div>
 
             <div class="d-flex align-center flex-wrap mb-4" style="gap: 8px">
-              <v-btn size="small" variant="tonal" prepend-icon="mdi-folder-open-outline"
+              <!-- Inside a plugin the filesystem is right there, so the library
+                   is pointed at rather than swallowed: the database keeps an
+                   index and the notes stay in the files. A web page has no path
+                   to point at and has to take a copy. -->
+              <v-btn v-if="state.host.active" size="small" variant="tonal"
+                     prepend-icon="mdi-folder-open-outline"
+                     :disabled="state.drumImport.running" @click="importDrumFolderByReference">
+                Point at a folder
+              </v-btn>
+              <v-btn v-else size="small" variant="tonal" prepend-icon="mdi-folder-open-outline"
                      :disabled="state.drumImport.running" @click="pickFolder">
                 Add a folder
               </v-btn>
@@ -778,7 +824,11 @@ function resetMap() {
               </thead>
               <tbody>
                 <tr v-for="set in state.drumSets" :key="set.id">
-                  <td class="text-body-2">{{ set.name }}</td>
+                  <td class="text-body-2">
+                    {{ set.name }}
+                    <div v-if="set.byReference" class="text-caption text-medium-emphasis"
+                         :title="set.root">played from disk</div>
+                  </td>
                   <td class="text-caption">{{ (set.count || 0).toLocaleString() }}</td>
                   <td style="min-width: 190px">
                     <v-select

@@ -219,9 +219,18 @@ export function describeSet(samples, { agreement = 0.6, limit = 12 } = {}) {
   return { ...facts, pitches: [...pitches].sort((a, b) => a - b) }
 }
 
-/** The compact shape the catalogue is stored in, matching the shipped file. */
-export function packGroove(groove, setId, index) {
-  return {
+/**
+ * The compact shape the catalogue is stored in, matching the shipped file.
+ *
+ * `byReference` leaves the notes out. Inside a plugin the library stays where it
+ * is on disk and the database holds an index rather than a copy -- which for a
+ * collection of this size is the difference between half a gigabyte and a few
+ * tens of megabytes, and means what plays is the original file rather than a
+ * transcription of it. The browser has no filesystem to point at, so it keeps
+ * the notes.
+ */
+export function packGroove(groove, setId, index, { byReference = false } = {}) {
+  const row = {
     id: `${setId}:${index}`,
     s: setId,
     n: groove.name,
@@ -232,9 +241,16 @@ export function packGroove(groove, setId, index) {
     d: groove.lengthPulses,
     t: groove.timeSignature,
     b: groove.bpm,
+    // How many hits, kept in the index because an index row has no notes to
+    // count and the list line says so out loud. Free here: the file has just
+    // been read.
+    h: groove.notes.length,
     m: groove.meta,
-    v: groove.notes.map((note) => [note.at, note.note, note.duration, note.velocity]),
   }
+  if (!byReference) {
+    row.v = groove.notes.map((note) => [note.at, note.note, note.duration, note.velocity])
+  }
+  return row
 }
 
 /** And back, in the shape the player and the book expect. */
@@ -255,7 +271,11 @@ export function unpackGroove(row) {
     beatUnit: denominator,
     bars: row.r || 1,
     lengthPulses: row.d || 96,
+    // Empty when the row is an index entry. The notes are fetched from the file
+    // it points at, at the moment something needs to play it. @see byReference
     notes: (row.v || []).map(([at, note, duration, velocity]) => ({ at, note, duration, velocity })),
+    hits: row.h || (row.v || []).length,
+    byReference: !row.v,
     meta: row.m || {},
     origin: 'imported',
     imported: true,

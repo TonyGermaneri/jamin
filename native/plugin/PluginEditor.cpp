@@ -199,6 +199,86 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                            }
                            complete (juce::var (jamin::Roster::instance().json()));
                        })
+                   .withNativeFunction ("jaminChooseFolder",
+                       [this] (const juce::Array<juce::var>&, auto complete)
+                       {
+                           // A directory, chosen the way the host's own dialogs
+                           // choose one. The page cannot do this: a plugin's web
+                           // view has no filesystem and a directory picker in it
+                           // would be a picker onto nothing.
+                           chooser = std::make_unique<juce::FileChooser> (
+                               "Where is your drum library?",
+                               juce::File::getSpecialLocation (juce::File::userMusicDirectory));
+
+                           chooser->launchAsync (juce::FileBrowserComponent::openMode
+                                                     | juce::FileBrowserComponent::canSelectDirectories,
+                               [complete] (const juce::FileChooser& result)
+                               {
+                                   const auto folder = result.getResult();
+                                   if (folder == juce::File())
+                                       return complete (juce::var());
+
+                                   auto* object = new juce::DynamicObject();
+                                   object->setProperty ("path", folder.getFullPathName());
+                                   object->setProperty ("name", folder.getFileName());
+                                   complete (juce::var (object));
+                               });
+                       })
+                   .withNativeFunction ("jaminScanFolder",
+                       [] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // Paths only, and nothing opened. Three quarters of a
+                           // million files is a walk of the tree, not a read of
+                           // it, and the difference is a second against an hour.
+                           if (args.isEmpty())
+                               return complete (juce::var (juce::Array<juce::var>()));
+
+                           const juce::File folder { args[0].toString() };
+                           if (! folder.isDirectory())
+                               return complete (juce::var (juce::Array<juce::var>()));
+
+                           const int limit = args.size() >= 2 ? (int) args[1] : 200000;
+
+                           juce::Array<juce::var> found;
+                           for (const auto& entry : juce::RangedDirectoryIterator (
+                                    folder, true, "*.mid;*.midi", juce::File::findFiles))
+                           {
+                               if (found.size() >= limit)
+                                   break;
+                               found.add (entry.getFile().getRelativePathFrom (folder));
+                           }
+
+                           complete (juce::var (found));
+                       })
+                   .withNativeFunction ("jaminReadFile",
+                       [] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // One file, as bytes the page can parse with its own
+                           // reader. Read on demand rather than copied in: the
+                           // library stays where it is and what plays is the
+                           // original.
+                           if (args.size() < 2)
+                               return complete (juce::var());
+
+                           const juce::File root { args[0].toString() };
+                           const juce::File file = root.getChildFile (args[1].toString());
+
+                           // Inside the folder that was chosen, and nowhere else.
+                           // The paths come from our own scan of it, but the same
+                           // rule as jaminOpenUrl: a reader that will read
+                           // anything is a reader that will read anything.
+                           if (! file.isAChildOf (root))
+                               return complete (juce::var());
+
+                           juce::MemoryBlock block;
+                           if (! file.existsAsFile() || ! file.loadFileAsData (block))
+                               return complete (juce::var());
+
+                           // Base64 because the bridge carries strings: a JSON
+                           // array of forty thousand numbers costs more to build
+                           // and parse than the file does to read.
+                           complete (juce::var (block.toBase64Encoding()));
+                       })
                    .withNativeFunction ("jaminOpenUrl",
                        [] (const juce::Array<juce::var>& args, auto complete)
                        {
