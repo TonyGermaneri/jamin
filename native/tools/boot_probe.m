@@ -190,6 +190,54 @@ int main(int argc, const char **argv) {
               @"  check('and the settings', !!(request && request.settings && request.settings.midi));"
               @"  check('and a generation', !!(request && request.generation > 0));"
               @"  await wait(2500);"   // the catalogue is built off the critical path
+              /* A control cut in half by the box that scrolls it. Overflowing
+                 to the left does not show up in scrollWidth, so each control is
+                 measured against whichever ancestor actually clips it. */
+              @"  const clipper = (el) => {"
+              @"    for (let n = el.parentElement; n; n = n.parentElement) {"
+              @"      const s = getComputedStyle(n);"
+              @"      if (s.overflowX !== 'visible' || s.overflowY !== 'visible') return n;"
+              @"    }"
+              @"    return null;"
+              @"  };"
+              /* The visible boxes only. A switch's <input> is an invisible hit
+                 target parked over the ripple and routinely sits outside its own
+                 control; flagging it would be crying wolf forever. And 4px of
+                 slack, because sub-pixel layout puts a field's right edge a
+                 pixel or two past its container as a matter of course -- the
+                 fault being looked for is a control sitting a whole gutter
+                 outside the box that scrolls it. */
+              /* A row is the honest signal: it is laid out on whole-pixel
+                 margins, so a row outside its clipper is a real fault at 4px
+                 where a control's own edge is sub-pixel noise at 2. Measured
+                 first, and tightly. */
+              @"  const SLACK = 3;"
+              @"  const clippedIn = (pane) => {"
+              @"    for (const el of pane.querySelectorAll('.v-row, .v-col')) {"
+              @"      const box = el.getBoundingClientRect();"
+              @"      if (!box.width) continue;"
+              @"      const cage = clipper(el);"
+              @"      if (!cage) continue;"
+              @"      const seen = cage.getBoundingClientRect();"
+              @"      if (box.left < seen.left - 1 || box.right > seen.right + 1) {"
+              @"        return 'row [' + Math.round(box.left) + '..' + Math.round(box.right) + '] in ['"
+              @"          + Math.round(seen.left) + '..' + Math.round(seen.right) + ']';"
+              @"      }"
+              @"    }"
+              @"    for (const el of pane.querySelectorAll('.v-btn, .v-chip, .v-field, .v-selection-control')) {"
+              @"      const box = el.getBoundingClientRect();"
+              @"      if (!box.width) continue;"
+              @"      const cage = clipper(el);"
+              @"      if (!cage) continue;"
+              @"      const seen = cage.getBoundingClientRect();"
+              @"      if (box.left < seen.left - SLACK || box.right > seen.right + SLACK) {"
+              @"        return (el.innerText || el.className).slice(0, 30).replace(/\\s+/g, ' ')"
+              @"          + ' [' + Math.round(box.left) + '..' + Math.round(box.right) + '] in ['"
+              @"          + Math.round(seen.left) + '..' + Math.round(seen.right) + ']';"
+              @"      }"
+              @"    }"
+              @"    return null;"
+              @"  };"
               @"  const openBook = async (title) => {"
               @"    const button = [...document.querySelectorAll('button')].find(b => b.title === title);"
               @"    if (!button) return null;"
@@ -266,6 +314,16 @@ int main(int argc, const char **argv) {
               @"        const reachable = !spills || scrolls(pane) || (over(body) && scrolls(body));"
               @"        if (spills) lines.push('  ' + label + ': ' + pane.scrollHeight + 'px in ' + pane.clientHeight + 'px, overflowY=' + getComputedStyle(pane).overflowY);"
               @"        check(title + ' tab \"' + label + '\" can be read to the end', reachable);"
+              /* Sideways, which nothing here used to look at. A v-window-item is
+                 a scroll box, and a v-row inside it carries a -12px inline
+                 margin meant to be absorbed by a padded parent -- with no
+                 padding the first and last control in every row hung outside
+                 the panel and was cut in half. Overflowing to the left does not
+                 even show up in scrollWidth, so the controls are measured
+                 against the box that clips them. */
+              @"        const clipped = clippedIn(pane);"
+              @"        if (clipped) lines.push('  ' + label + ' clips: ' + clipped);"
+              @"        check(title + ' tab \"' + label + '\" does not clip its controls sideways', !clipped);"
               @"      }"
               @"      const sources = [...card.querySelectorAll('.v-tab')].find(t => /sources/i.test(t.textContent));"
               @"      if (sources) {"
@@ -284,6 +342,31 @@ int main(int argc, const char **argv) {
               @"      }"
               @"      const close = [...card.querySelectorAll('button')].find(b => b.querySelector('.mdi-close'));"
               @"      if (close) close.click();"
+              @"      await wait(400);"
+              @"    }"
+              @"  }"
+              /* Settings is the tallest dialog and the one with the most rows
+                 of controls, and it is where a row's -12px inline margin cut
+                 the first and last control in every row in half. Every tab of
+                 it, because the fault is per-panel. */
+              @"  const cog = [...document.querySelectorAll('button')].find(b => b.title === 'Settings');"
+              @"  check('settings opens', !!cog);"
+              @"  if (cog) {"
+              @"    cog.click(); await wait(700);"
+              @"    const dialog = document.querySelector('.jamin-settings .v-card');"
+              @"    check('the settings dialog is there', !!dialog);"
+              @"    if (dialog) {"
+              @"      for (const tab of [...dialog.querySelectorAll('.v-tab')]) {"
+              @"        const label = (tab.textContent || '').trim().slice(0, 24);"
+              @"        tab.click(); await wait(300);"
+              @"        const pane = dialog.querySelector('.v-window-item--active');"
+              @"        if (!pane) continue;"
+              @"        const clipped = clippedIn(pane);"
+              @"        if (clipped) lines.push('  settings ' + label + ' clips: ' + clipped);"
+              @"        check('settings tab \"' + label + '\" does not clip its controls', !clipped);"
+              @"      }"
+              @"      const shut = [...dialog.querySelectorAll('button')].find(b => b.querySelector('.mdi-close'));"
+              @"      if (shut) shut.click();"
               @"      await wait(400);"
               @"    }"
               @"  }"

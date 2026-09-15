@@ -136,12 +136,27 @@ body,
 }
 
 /*
- * A floating field label sits about 9px above its own field, and v-window clips
- * its overflow -- so any tab panel that opens with a row of fields loses the top
- * of every label. Give the panels that much room back.
+ * Room inside a tab panel for the things that sit outside their own box.
+ *
+ * A v-window-item is a scroll box (see below), so anything reaching past its
+ * content box is cut off rather than merely overhanging -- and three things
+ * reach past it:
+ *
+ *   - A floating field label sits about 9px above its own field.
+ *   - A v-row carries a -12px inline margin, meant to be absorbed by a padded
+ *     parent. With no padding here the columns hung 12px outside the panel on
+ *     both sides and were clipped: the first and last control in every row of
+ *     the settings lost its edge.
+ *   - A switch's ripple, a focus ring and a chip's outline all draw a few
+ *     pixels beyond the control, and the last row of a panel sat flush against
+ *     the bottom.
+ *
+ * 12px inline is exactly the row's own margin, so a row now fills the panel's
+ * border box and the columns land where Vuetify intends -- this buys the space
+ * back rather than indenting anything.
  */
 .v-card-text .v-window-item {
-  padding-top: 10px;
+  padding: 10px 12px 12px;
 }
 
 /*
@@ -215,14 +230,16 @@ body,
 }
 
 /* The row of columns, and each column, are columns themselves. */
-/* A v-row carries a -12px margin that its columns' padding cancels out. Inside
-   a box that is exactly the height of the window, that margin is 24px of
-   content hanging out of the bottom -- which is precisely the pagination. The
-   margin goes and the columns keep their padding. */
+/* A v-row carries a -12px margin on every side. Vertically, inside a box that is
+   exactly the height of the window, that is 24px of content hanging out of the
+   bottom -- which is precisely the pagination, so it goes. Horizontally it is
+   wanted and now has padding to sit in, so the columns stay where they were
+   rather than being pushed in by the panel padding above. */
 .jamin-book .jamin-book-row {
   flex: 1 1 auto;
   min-height: 0;
-  margin: 0;
+  margin-block: 0;
+  margin-inline: -12px;
 }
 
 .jamin-book .jamin-book-col {
@@ -249,6 +266,21 @@ body,
   min-height: 6rem;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+/*
+ * A v-row's negative inline margin wants a padded parent to sit in. A scroll box
+ * has no padding of its own and clips instead of overhanging, so a row inside
+ * one loses a few pixels off both ends -- 4px for a dense row, 12 for a plain
+ * one, which is a whole gutter.
+ *
+ * The margin goes rather than padding being added to match it: padding would
+ * have to be kept in step with whatever kind of row somebody puts in there next,
+ * and this cannot drift. The columns keep their own padding, so the spacing is
+ * what Vuetify intends either way.
+ */
+.jamin-book .jamin-book-scroll .v-row {
+  margin-inline: 0;
 }
 
 /*
