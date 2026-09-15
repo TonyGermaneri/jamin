@@ -401,3 +401,44 @@ body,
 .jamin-instance-dice {
   margin-left: 6px;
 }
+
+/*
+ * The drum book, which is wider than the others on purpose.
+ *
+ * Every groove in the catalogue carries a pill per part of the song, and a song
+ * has several parts -- so the row needs room the phrase book's does not. The
+ * list column takes most of it and the detail pane keeps a fixed share, because
+ * a detail pane that grows with the window is mostly whitespace.
+ */
+.jamin-drums .v-overlay__content {
+  max-width: none;
+}
+
+/* The pills. Wrapped rather than scrolled: a song with ten sections should show
+   all ten, and a row that scrolls sideways hides the part you were looking for. */
+.jamin-drum-pills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 3px;
+  max-width: 60%;
+}
+
+.jamin-drum-pills .v-chip {
+  cursor: pointer;
+  font-size: 0.68rem;
+  height: 18px;
+  padding: 0 6px;
+}
+
+/* A bound pill should read as lit from across the room, since the whole point
+   is telling at a glance which groove is on which part. */
+.jamin-drum-pills .v-chip--variant-flat {
+  font-weight: 600;
+}
+
+/* A list row now holds two lines of text and a wrapping set of pills, so it
+   cannot be the single-line height Vuetify gives it. */
+.jamin-drums .jamin-book-scroll .v-list-item {
+  min-height: 46px;
+}

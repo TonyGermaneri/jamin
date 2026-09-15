@@ -291,4 +291,43 @@ check('a repeated section is one row',
   check('and the hits are the groove, once per bar', sent.join(' '), '36 38 36 38 36 38')
 })()
 
+/* ---------------- finding a fill that suits a beat ----------------------- */
+// The corpus does not hand you one: beats and fills were recorded in separate
+// sessions, and the median beat has no fill of its own at all. So it is found
+// by genre, time signature and tempo, widening until something turns up.
+const pool = [
+  { id: 'f-rock-120', kind: 'fill', genre: 'rock', timeSignature: '4-4', bpm: 120, bars: 1 },
+  { id: 'f-rock-160', kind: 'fill', genre: 'rock', timeSignature: '4-4', bpm: 160, bars: 1 },
+  { id: 'f-rock-124-2', kind: 'fill', genre: 'rock', timeSignature: '4-4', bpm: 124, bars: 2 },
+  { id: 'f-jazz-120', kind: 'fill', genre: 'jazz', timeSignature: '4-4', bpm: 120, bars: 1 },
+  { id: 'f-rock-34', kind: 'fill', genre: 'rock', timeSignature: '3-4', bpm: 120, bars: 1 },
+  { id: 'b-rock', kind: 'beat', genre: 'rock', timeSignature: '4-4', bpm: 120, bars: 1 },
+]
+const rockBeat = { kind: 'beat', genre: 'rock', timeSignature: '4-4', bpm: 122, bars: 2 }
+
+check('the nearest tempo in the same genre', matchingFill(rockBeat, pool).id, 'f-rock-120')
+check('a beat is never offered as a fill',
+      matchingFill(rockBeat, pool).kind, 'fill')
+check('and the time signature has to match',
+      matchingFill({ ...rockBeat, timeSignature: '3-4' }, pool).id, 'f-rock-34')
+
+// A genre with no fills of its own still gets one, because five genres in the
+// corpus have none at all and silence is not a better answer.
+const afro = { kind: 'beat', genre: 'afrobeat', timeSignature: '4-4', bpm: 118, bars: 1 }
+check('a genre with no fills falls back rather than refusing',
+      Boolean(matchingFill(afro, pool)), true)
+check('and stays in the right time signature', matchingFill(afro, pool).timeSignature, '4-4')
+
+// Length can be demanded when the space is only one bar.
+check('a one-bar fill when that is what fits',
+      matchingFill(rockBeat, pool, { bars: 1 }).bars, 1)
+check('and a two-bar one when it is asked for',
+      matchingFill(rockBeat, pool, { bars: 2 }).id, 'f-rock-124-2')
+
+// Nothing at all is survivable.
+check('no fills, no answer', matchingFill(rockBeat, [], {}), null)
+check('no beat, no answer', matchingFill(null, pool), null)
+check('and nothing in that signature is null rather than wrong',
+      matchingFill({ ...rockBeat, timeSignature: '7-8' }, pool), null)
+
 console.log(failed ? `drums: ${failed} FAILED` : 'drums: all checks passed')

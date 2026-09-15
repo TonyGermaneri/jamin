@@ -12,7 +12,7 @@ import { reactive, watch } from 'vue'
 import { MidiEngine } from './core/midi.js'
 import { hosted, hostData, callHost, onHost, HostClock } from './core/host.js'
 import { nodeAvailable, Session, httpTransport, hostTransport, localTransport } from './core/net.js'
-import { loadDrums, loadedDrums, drumReport, buildDrumTrack } from './core/drums.js'
+import { loadDrums, loadedDrums, drumReport, buildDrumTrack, matchingFill } from './core/drums.js'
 import {
   loadDrumBindings, saveDrumBindings, reconcileBindings, bindGroove,
   forgetBinding, WHOLE_SONG,
@@ -786,6 +786,95 @@ function buildDrumSpansForRequest() {
     }
   }
   return spans
+}
+
+/** Is this groove bound to this part? Drives the pills in the catalogue. */
+export function boundTo(name, groove) {
+  if (!name || !groove) return false
+  const row = state.drumBindings[name]
+  if (!row) return false
+  return groove.kind === 'fill' ? row.fill === groove.id : row.groove === groove.id
+}
+
+/**
+ * Put a groove on a part, or take it off again.
+ *
+ * Which slot it lands in is decided by what it is rather than by which button
+ * was pressed: a beat is a groove and a fill is a fill. There is no sensible
+ * way to bind a fill as a section's groove -- it would flurry for eight bars --
+ * and no way to lead out of a section with a beat.
+ */
+export function toggleGrooveOn(name, groove) {
+  if (!name || !groove) return
+  const what = groove.kind === 'fill' ? 'fill' : 'groove'
+  setGrooveFor(name, boundTo(name, groove) ? null : groove.id, what)
+}
+
+/**
+ * One groove, every part.
+ *
+ * What auto-select does on a click: a beat becomes every section's groove, a
+ * fill becomes every section's fill. It is the common case by a distance --
+ * most songs have one feel -- and doing it a section at a time is five clicks
+ * to say one thing.
+ */
+export function assignEverywhere(groove) {
+  if (!groove) return 0
+  const what = groove.kind === 'fill' ? 'fill' : 'groove'
+
+  let next = state.drumBindings
+  const rows = drumRows().filter((row) => !row.stale)
+  for (const row of rows) next = bindGroove(next, row.name, groove.id, what)
+
+  state.drumBindings = next
+  saveDrumBindings(next)
+  refreshDrums()
+  toast(`${groove.name} → ${rows.length} part${rows.length === 1 ? '' : 's'}`)
+  return rows.length
+}
+
+/**
+ * Fill in the rest of the song around one beat.
+ *
+ * Every part with no groove gets this one, and every part gets a fill chosen to
+ * suit it -- same genre, same time signature, nearest tempo. Parts that have
+ * already been decided are left alone: this is for getting from nothing to
+ * something, not for overwriting a set of choices somebody made.
+ *
+ * The fill is chosen per part rather than once, so a song does not lead out of
+ * every section with the same flurry. @see matchingFill
+ */
+export function autoFillFrom(groove) {
+  if (!groove || groove.kind === 'fill') {
+    toast('Choose a beat first')
+    return 0
+  }
+
+  const rows = drumRows().filter((row) => !row.stale)
+  if (!rows.length) return 0
+
+  let next = state.drumBindings
+  let placed = 0
+
+  for (const row of rows) {
+    if (!row.groove) {
+      next = bindGroove(next, row.name, groove.id, 'groove')
+      placed++
+    }
+    if (!row.fill) {
+      const fill = matchingFill(groove, state.drums, { prefer: 'random' })
+      if (fill) {
+        next = bindGroove(next, row.name, fill.id, 'fill')
+        placed++
+      }
+    }
+  }
+
+  state.drumBindings = next
+  saveDrumBindings(next)
+  refreshDrums()
+  toast(placed ? `Filled in ${placed} slot${placed === 1 ? '' : 's'}` : 'Everything was already chosen')
+  return placed
 }
 
 /**

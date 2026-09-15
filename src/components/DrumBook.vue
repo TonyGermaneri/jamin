@@ -25,6 +25,10 @@ import {
   toggleFavourite,
   setDrumAccent,
   triggerDrumAccent,
+  boundTo,
+  toggleGrooveOn,
+  assignEverywhere,
+  autoFillFrom,
 } from '../store.js'
 import { searchDrums, summarizeGroove } from '../core/drums.js'
 import { DRUM_KITS, DRUM_VOICES, kitById } from '../core/drumKits.js'
@@ -116,11 +120,34 @@ watch(matches, () => { page.value = 1 })
 function roll() {
   const pool = matches.value
   if (!pool.length) return
-  selected.value = pool[Math.floor(Math.random() * pool.length)]
+  choose(pool[Math.floor(Math.random() * pool.length)])
 }
+
+/** Picking a groove, which in auto-select mode also places it. */
+function choose(groove) {
+  selected.value = groove
+  if (autoSelect.value) assignEverywhere(groove)
+}
+
+/** A part's name, short enough for a pill. */
+function pillLabel(row) {
+  if (row.wholeSong) return 'Song'
+  return row.name.length > 10 ? `${row.name.slice(0, 9)}…` : row.name
+}
+
+/**
+ * Auto-select: one click puts a groove on every part.
+ *
+ * Most songs have one feel, so binding the same beat to five sections one at a
+ * time is five clicks to say one thing. With this on, clicking a row says it
+ * once -- a beat goes on every section's groove, a fill on every section's fill,
+ * decided by what the thing is rather than by which button was pressed.
+ */
+const autoSelect = ref(false)
 
 /* ---------------- parts ---------------- */
 const rows = computed(() => drumRows())
+const liveRows = computed(() => rows.value.filter((row) => !row.stale))
 const waiting = computed(() => rows.value.filter((row) => !row.stale && !row.groove).length)
 
 function assign(row, what) {
@@ -167,7 +194,10 @@ function resetMap() {
 </script>
 
 <template>
-  <v-dialog v-model="state.ui.drums" max-width="900" scrollable class="jamin-book">
+  <!-- The whole width: a row of grooves carries a pill per part, and parts are
+       what a song has several of. @see styles/app.css .jamin-drums -->
+  <v-dialog v-model="state.ui.drums" width="98vw" max-width="none" scrollable
+            class="jamin-book jamin-drums">
     <v-card>
       <v-card-title class="d-flex align-center">
         <v-icon size="18" class="mr-2">mdi-circle-multiple-outline</v-icon>
@@ -202,6 +232,38 @@ function resetMap() {
                   v-model="search" density="compact" hide-details clearable
                   prepend-inner-icon="mdi-magnify" label="Search" class="mb-2 flex-grow-0"
                 />
+
+                <div class="d-flex align-center flex-wrap mb-2 flex-grow-0" style="gap: 8px">
+                  <v-switch
+                    v-model="autoSelect" density="compact" hide-details color="primary"
+                    label="Auto-select"
+                  />
+                  <InfoTip>
+                    With this on, clicking a groove puts it on every part at once — a beat becomes
+                    every section's groove, a fill becomes every section's fill. Most songs have
+                    one feel, so binding the same beat to five sections one at a time is five
+                    clicks to say one thing. The pills still work either way.
+                  </InfoTip>
+
+                  <v-spacer />
+
+                  <v-btn size="small" variant="tonal"
+                         :disabled="!selected || selected.kind === 'fill' || !liveRows.length"
+                         prepend-icon="mdi-auto-fix"
+                         @click="autoFillFrom(selected)">
+                    Auto-fill
+                  </v-btn>
+                  <InfoTip location="left">
+                    Takes the beat you have chosen, gives it to every part that has no groove yet,
+                    and finds each part a fill to lead out of — same genre, same time signature,
+                    nearest tempo, chosen separately per part so the song does not leave every
+                    section with the same flurry.
+                    <br /><br />
+                    Parts you have already decided are left alone. The corpus does not pair its
+                    beats and fills — they were recorded in separate sessions — so the fill is
+                    matched rather than looked up.
+                  </InfoTip>
+                </div>
 
                 <v-expansion-panels v-model="filtersOpen" variant="accordion"
                                     class="mb-2 flex-grow-0 jamin-book-filters">
@@ -246,7 +308,7 @@ function resetMap() {
                   <v-list-item
                     v-for="groove in list" :key="groove.id"
                     :active="selected && selected.id === groove.id"
-                    class="px-2" @click="selected = groove"
+                    class="px-2" @click="choose(groove)"
                   >
                     <template #prepend>
                       <v-icon size="16" :color="groove.kind === 'fill' ? 'warning' : undefined">
@@ -260,7 +322,23 @@ function resetMap() {
                       <span v-if="groove.substyle">· {{ groove.substyle }}</span>
                     </v-list-item-subtitle>
                     <template #append>
-                      <v-btn icon size="x-small" variant="text"
+                      <!-- One pill per part. Lit is bound; a beat goes in the
+                           groove slot and a fill in the fill slot, because
+                           that is what they are. -->
+                      <span class="jamin-drum-pills">
+                        <v-chip
+                          v-for="row in liveRows" :key="row.name"
+                          size="x-small" label
+                          :variant="boundTo(row.name, groove) ? 'flat' : 'outlined'"
+                          :color="boundTo(row.name, groove)
+                            ? (groove.kind === 'fill' ? 'warning' : 'primary')
+                            : undefined"
+                          :title="`${groove.name} ${boundTo(row.name, groove) ? 'plays' : 'does not play'} `
+                                + `${row.wholeSong ? 'the whole song' : row.name}`"
+                          @click.stop="toggleGrooveOn(row.name, groove)"
+                        >{{ pillLabel(row) }}</v-chip>
+                      </span>
+                      <v-btn icon size="x-small" variant="text" class="ml-1"
                              :color="favourite(groove) ? 'error' : undefined"
                              :aria-label="`Favourite ${groove.name}`"
                              @click.stop="toggleFavourite(groove)">

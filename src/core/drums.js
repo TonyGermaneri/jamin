@@ -245,3 +245,48 @@ export function buildDrumTrack(score, options = {}) {
 
   return out.sort((a, b) => a.at - b.at || a.note - b.note)
 }
+
+/**
+ * A fill that suits this beat.
+ *
+ * The corpus does not hand you one. Beats and fills were recorded in separate
+ * sessions -- only seven of twenty-five sessions contain both, and the median
+ * beat has no fill of its own at all -- so "the fill that goes with this groove"
+ * has to be found rather than looked up.
+ *
+ * What genuinely relates them is genre, time signature and tempo, in that order
+ * of importance. A rock fill under a rock beat is right; a rock fill at 80
+ * under a rock beat at 160 is not, because a fill is a flurry and its density
+ * is a function of the tempo it was played at.
+ *
+ * So it narrows and then widens until something is found:
+ *
+ *   genre + time signature + within a fifth of the tempo   median 36 to choose from
+ *   genre + time signature                                 median 61
+ *   time signature alone                                   always something
+ *
+ * Five genres in the corpus have no fills at all -- afrobeat, blues, dance,
+ * highlife, middleeastern -- which is why the last rung exists and why it is a
+ * rung rather than a refusal.
+ */
+export function matchingFill(beat, fills, { bars = null, prefer = 'closest' } = {}) {
+  if (!beat || !fills || !fills.length) return null
+
+  const only = fills.filter((fill) => fill.kind === 'fill'
+    && fill.timeSignature === beat.timeSignature
+    && (bars === null || fill.bars === bars))
+
+  if (!only.length) return null
+
+  const sameGenre = only.filter((fill) => fill.genre === beat.genre)
+  const nearTempo = sameGenre.filter((fill) => Math.abs(fill.bpm - beat.bpm) <= beat.bpm * 0.2)
+
+  const pool = nearTempo.length ? nearTempo : sameGenre.length ? sameGenre : only
+
+  if (prefer === 'random') return pool[Math.floor(Math.random() * pool.length)]
+
+  // The closest tempo, and the shorter fill when two are equally close: a
+  // one-bar fill fits everywhere a two-bar one does and in places it does not.
+  return pool.slice().sort((a, b) =>
+    Math.abs(a.bpm - beat.bpm) - Math.abs(b.bpm - beat.bpm) || a.bars - b.bars)[0]
+}
