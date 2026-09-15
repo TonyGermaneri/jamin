@@ -33,6 +33,7 @@ SUITES = [
     (["src/core/drumKits.js"], "tests/drumMap.test.js"),
     (["src/core/drumKits.js"], "tests/kitClassify.test.js"),
     (["src/core/midiFile.js", "src/core/drumImport.js"], "tests/drumImport.test.js"),
+    (["src/core/midiFile.js", "src/core/midiWrite.js"], "tests/midiWrite.test.js"),
     (["src/core/chordParser.js", "src/core/chordDetect.js"], "tests/chordDetect.test.js"),
     # Ten thousand edits to one chart. Slow on purpose -- it is measuring what a
     # day's work costs, and a day's work is what broke it.

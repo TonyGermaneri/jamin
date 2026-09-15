@@ -24,10 +24,12 @@ import {
   CHORDONOMICON,
   CHORDONOMICON_CSV,
   toast,
+  midiForProgression,
 } from '../store.js'
 import { summarizeProgression } from '../core/progressions.js'
 import { parseScore } from '../core/score.js'
 import InfoTip from './InfoTip.vue'
+import { vDragMidi } from '../core/dragOut.js'
 import { pcName } from '../core/chordParser.js'
 import { openOutside } from '../core/host.js'
 
@@ -339,10 +341,14 @@ function runExport() {
                   @keydown.up.prevent="step(-1)"
                   @wheel="onWheel"
                 >
+                  <!-- Drag a progression onto a track: the chords voiced the
+                       way the chart would play them. @see core/dragOut.js -->
                   <v-list-item
                     v-for="row in rows"
                     :key="row.id || row.name"
+                    v-drag-midi="() => midiForProgression(row)"
                     :active="selected && selected.name === row.name"
+                    :title="`${row.name} — drag onto a track for a MIDI clip`"
                     class="px-2"
                     @click="selected = row"
                   >

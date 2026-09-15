@@ -361,6 +361,56 @@ JaminEditor::JaminEditor (JaminProcessor& p)
 
                            complete (juce::var (out));
                        })
+                   .withNativeFunction ("jaminDragMidi",
+                       [this] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           /*
+                            * Drag a pattern out of here and into the arrangement.
+                            *
+                            * The page must NOT use an HTML5 dragstart for this.
+                            * The web view starts its own drag on that event and
+                            * JUCE then refuses to start one -- "cannot start a
+                            * new drag, a previous drag has not finished" -- so
+                            * the page watches mousedown and mouseleave instead
+                            * and calls this when the pointer leaves the row with
+                            * the button still down. That is the gesture a drag
+                            * out of a window actually is.
+                            *
+                            * A real file, because a DAW accepts a file and has no
+                            * idea what a jamin pattern is. It goes in the
+                            * system's temporary directory under a name somebody
+                            * will recognise when it lands on a track.
+                            */
+                           if (args.size() < 2)
+                               return complete (juce::var (false));
+
+                           const auto name = args[0].toString();
+                           juce::MemoryBlock block;
+                           if (! block.fromBase64Encoding (args[1].toString()))
+                               return complete (juce::var (false));
+
+                           const auto folder = juce::File::getSpecialLocation (
+                                                   juce::File::tempDirectory)
+                                                   .getChildFile ("jamin-drag");
+                           folder.createDirectory();
+
+                           const auto file = folder.getChildFile (
+                               juce::File::createLegalFileName (name.isEmpty() ? "jamin.mid" : name));
+                           if (! file.replaceWithData (block.getData(), block.getSize()))
+                               return complete (juce::var (false));
+
+                           dragging.add (file);
+
+                           // Answered before the drag starts, because the drag
+                           // does not return until the mouse is let go and the
+                           // page has no business waiting for that.
+                           complete (juce::var (true));
+
+                           juce::StringArray paths;
+                           paths.add (file.getFullPathName());
+                           juce::DragAndDropContainer::performExternalDragDropOfFiles (
+                               paths, true, this);
+                       })
                    .withNativeFunction ("jaminOpenUrl",
                        [] (const juce::Array<juce::var>& args, auto complete)
                        {
@@ -420,6 +470,11 @@ JaminEditor::~JaminEditor()
 {
     stopTimer();
     plugin.onNetworkOps = nullptr;
+
+    // The files written for drags out of here. Whatever the host wanted it has
+    // already taken a copy of.
+    for (const auto& file : dragging)
+        file.deleteFile();
 }
 
 void JaminEditor::resized() { browser.setBounds (getLocalBounds()); }

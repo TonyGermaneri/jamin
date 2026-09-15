@@ -23,6 +23,7 @@ import {
   visibleLicks,
   catalogue,
   setAccentPhrase,
+  midiForPhrase,
   triggerAccent,
   favourite,
   toggleFavourite,
@@ -34,6 +35,7 @@ import {
 import { keyPitchClass, phraseCategory, phraseKey, summarize } from '../core/phrases.js'
 import { describeLick } from '../core/licks.js'
 import InfoTip from './InfoTip.vue'
+import { vDragMidi } from '../core/dragOut.js'
 import InstanceTabs from './InstanceTabs.vue'
 
 const search = ref('')
@@ -472,10 +474,13 @@ const assigningTo = computed(() => {
                   @keydown.end.prevent="step(matches.length)"
                   @wheel="onWheel"
                 >
+                  <!-- Drag a phrase straight onto a track. @see core/dragOut.js -->
                   <v-list-item
                     v-for="entry in list"
                     :key="entry.id"
+                    v-drag-midi="() => midiForPhrase(entry)"
                     :active="selected && selected.id === entry.id"
+                    :title="`${entry.name} — drag onto a track for a MIDI clip`"
                     class="px-2"
                     @click="pick(entry)"
                     @contextmenu.prevent="setAccentPhrase(entry.id || entry.name)"

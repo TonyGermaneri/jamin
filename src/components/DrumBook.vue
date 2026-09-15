@@ -38,6 +38,7 @@ import {
   importDrumFolderByReference,
   notesFor,
   inboundKitFor,
+  midiForGroove,
   searchDrums,
   drumFacetsFor,
   sectionBars,
@@ -48,6 +49,7 @@ import {
 import { searchDrums as searchGrooveList, summarizeGroove } from '../core/drums.js'
 import { DRUM_KITS, DRUM_VOICES, kitById, gmName, mapDrumNote, TD11_TO_VOICE } from '../core/drumKits.js'
 import InfoTip from './InfoTip.vue'
+import { vDragMidi } from '../core/dragOut.js'
 
 const search = ref('')
 const kind = ref('any')
@@ -735,9 +737,14 @@ function resetMap() {
                         @keydown.page-up.prevent="step(-PER_PAGE)"
                         @keydown.home.prevent="step(-matches.length)"
                         @keydown.end.prevent="step(matches.length)">
+                  <!-- Drag a groove straight onto a track. Not an HTML5 drag:
+                       the web view starts its own on dragstart and JUCE then
+                       refuses to start one. @see core/dragOut.js -->
                   <v-list-item
                     v-for="groove in list" :key="groove.id"
+                    v-drag-midi="() => midiForGroove(groove)"
                     :active="selected && selected.id === groove.id"
+                    :title="`${groove.name} — drag onto a track for a MIDI clip`"
                     class="px-2" @click="choose(groove)"
                   >
                     <template #prepend>

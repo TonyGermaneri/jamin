@@ -13,7 +13,7 @@ import { MidiEngine } from './core/midi.js'
 import { hosted, hostData, callHost, callHostSlowly, onHost, HostClock } from './core/host.js'
 import { nodeAvailable, Session, httpTransport, hostTransport, localTransport } from './core/net.js'
 import { loadDrums, loadedDrums, drumReport, buildDrumTrack, matchingFill, fitsBars } from './core/drums.js'
-import { kitById, cleanKitMap, classifyKit } from './core/drumKits.js'
+import { kitById, cleanKitMap, classifyKit, mapDrumNotes } from './core/drumKits.js'
 import {
   readGrooveFile, describeSet, packGroove, unpackGroove, spread, planPacks, slashes, reservoir, walkLibrary,
 } from './core/drumImport.js'
@@ -27,6 +27,8 @@ import {
 } from './core/drumBindings.js'
 import { resourceOk } from './core/fetchResource.js'
 import { rebuild, docSize } from './core/crdt.js'
+import { realizeChord } from './core/voicing.js'
+import { scoreOptions } from './core/compile.js'
 import { Player } from './core/player.js'
 import { parseScore } from './core/score.js'
 import {
@@ -854,6 +856,109 @@ export function randomSongPhrase(pool = null) {
  * chart says beats what the drum book has bound, the same way the pedal marks
  * beat the pedal switch. @see core/drums.js
  * ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ *
+ * Dragging something out into the arrangement
+ *
+ * Three kinds of thing can be dragged and they are not the same shape, so each
+ * says for itself what it is: notes, a length, a tempo, a channel and a name.
+ * @see core/dragOut.js for the gesture, core/midiWrite.js for the file
+ * ------------------------------------------------------------------ */
+
+/**
+ * A drum groove, as the kit currently plays it.
+ *
+ * Mapped rather than raw: the library's own numbering read in, the drum
+ * instrument on this track written out, so the clip lands on the same drums it
+ * sounds like here. Channel 10, which is where a DAW looks for a kit.
+ */
+export async function midiForGroove(groove) {
+  if (!groove) return null
+  const whole = groove.byReference ? await notesFor(groove) : groove
+  if (!whole || !whole.notes.length) return null
+
+  const played = mapDrumNotes(whole.notes, kitMapFor(), inboundMapFor(whole) || undefined)
+  if (!played.length) return null
+
+  return {
+    notes: played,
+    name: whole.name,
+    bpm: whole.bpm || Math.round(clock().bpm) || 120,
+    channel: 9,
+    numerator: whole.beatsPerBar || 4,
+    denominator: whole.beatUnit || 4,
+    lengthPulses: whole.lengthPulses || 0,
+  }
+}
+
+/**
+ * A phrase, as it was played.
+ *
+ * Phrases are stored rooted on C -- as degrees measured from the chord they
+ * were played over -- so what goes out is the phrase over its own root, with
+ * the chord it came from in the name. Re-pointing it would mean choosing a
+ * chord on somebody's behalf, and the one they want is in their arrangement,
+ * which we cannot see.
+ */
+export function midiForPhrase(phrase) {
+  if (!phrase || !phrase.notes || !phrase.notes.length) return null
+  const over = phrase.sourceChord && phrase.sourceChord !== '?' ? ` over ${phrase.sourceChord}` : ''
+  return {
+    notes: phrase.notes,
+    name: `${phrase.name}${over}`,
+    bpm: Math.round(clock().bpm) || 120,
+    channel: Math.max(0, (state.settings.midi.accompChannel | 0) - 1),
+    lengthPulses: phrase.lengthPulses || 0,
+  }
+}
+
+/**
+ * A progression, voiced.
+ *
+ * A progression is chords rather than notes, so it has to be played before it
+ * can be a clip -- through the same voicing the chart uses, so what lands in
+ * the arrangement is what this would have sounded like here.
+ */
+export function midiForProgression(entry) {
+  const text = entry && (typeof entry === 'string' ? entry : entry.text)
+  if (!text) return null
+
+  const score = parseScore(text, scoreOptions(state.settings, null))
+  if (!score.events.length) return null
+
+  const chords = state.settings.chords
+  const notes = []
+  let previous = null
+
+  for (const event of score.events) {
+    if (!event.chord || !event.chord.ok) continue
+    const voicing = realizeChord(event.chord, {
+      octave: chords.octave,
+      range: [chords.rangeLow, chords.rangeHigh],
+      smartVoicing: chords.smartVoicing,
+      maxVoices: chords.maxVoices,
+      previousNotes: previous,
+    })
+    if (voicing.notes.length) previous = voicing.notes
+
+    const length = Math.max(1, event.endPulse - event.startPulse)
+    for (const note of voicing.notes) {
+      notes.push({ at: event.startPulse, note, duration: length, velocity: state.settings.midi.velocity })
+    }
+  }
+
+  if (!notes.length) return null
+
+  return {
+    notes,
+    name: (entry && entry.name) || 'progression',
+    bpm: Math.round(clock().bpm) || 120,
+    channel: Math.max(0, (state.settings.midi.chordChannel | 0) - 1),
+    numerator: score.beatsPerBar || 4,
+    denominator: 4,
+    lengthPulses: score.totalPulses || 0,
+  }
+}
 
 /**
  * A groove by id, from wherever it is.

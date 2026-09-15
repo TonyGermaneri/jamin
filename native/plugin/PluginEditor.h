@@ -37,6 +37,11 @@ private:
     /** Held while a folder chooser is open: it is asynchronous and the dialog
         outlives the call that opened it. */
     std::unique_ptr<juce::FileChooser> chooser;
+
+    /** The MIDI files written for drags out of here, cleared when the editor
+        goes. They live in the temporary directory and a DAW copies what it
+        wants out of them, but leaving a trail behind is untidy. */
+    juce::Array<juce::File> dragging;
   int lastCompiledEvents { -1 };
     double lastPpqSent { -1.0 };
     bool lastPlayingSent { false };
