@@ -13,7 +13,7 @@ import { MidiEngine } from './core/midi.js'
 import { hosted, hostData, callHost, onHost, HostClock } from './core/host.js'
 import { nodeAvailable, Session, httpTransport, hostTransport, localTransport } from './core/net.js'
 import { loadDrums, loadedDrums, drumReport, buildDrumTrack, matchingFill, fitsBars } from './core/drums.js'
-import { kitById, cleanKitMap } from './core/drumKits.js'
+import { kitById, cleanKitMap, classifyKit } from './core/drumKits.js'
 import { readGrooveFile, describeSet, packGroove, unpackGroove, spread } from './core/drumImport.js'
 import {
   listSets, putSet, deleteSet, putGrooves, countGrooves,
@@ -774,6 +774,7 @@ function refreshDrums() {
   player.getGroove = (span) => grooveForSpan(span, 'groove')
   player.getFill = (span) => grooveForSpan(span, 'fill')
   player.getKitMap = (groove) => kitMapFor(groove)
+  player.getInboundMap = (groove) => inboundMapFor(groove)
   player.rebuildDrums()
   // pushToHost is the compile: it debounces and sends the whole request, which
   // now carries the grooves this chart uses.
@@ -866,6 +867,12 @@ export async function importDrumFolder(files, name) {
 
   let index = 0
   let batch = []
+  // A histogram per folder, accumulated as the files go past. It costs nothing
+  // -- every file is being read anyway -- and it is what lets each shelf be
+  // given its own note map rather than the whole import sharing one guess.
+  // Measured across this collection, packs genuinely disagree with themselves:
+  // one folder is General MIDI and the next is a pad layout.
+  const perFolder = new Map()
 
   for (const file of list) {
     if (progress.cancel) break
@@ -874,6 +881,11 @@ export async function importDrumFolder(files, name) {
     if (groove) {
       batch.push(packGroove(groove, setId, index++))
       progress.read++
+
+      const shelf = groove.folder
+      let hist = perFolder.get(shelf)
+      if (!hist) { hist = {}; perFolder.set(shelf, hist) }
+      for (const note of groove.notes) hist[note.note] = (hist[note.note] || 0) + 1
     } else {
       progress.skipped++
     }
@@ -889,9 +901,34 @@ export async function importDrumFolder(files, name) {
 
   if (batch.length) await putGrooves(batch)
 
+  // Each shelf gets the map its own notes say it was written for. Only the
+  // ones that disagree with the set as a whole are worth storing -- a library
+  // where every folder is General MIDI needs one word, not two thousand.
+  const folderKits = {}
+  const tally = new Map()
+  for (const [shelf, hist] of perFolder) {
+    const verdict = classifyKit(hist)
+    folderKits[shelf] = verdict.kit
+    tally.set(verdict.kit, (tally.get(verdict.kit) || 0) + 1)
+  }
+
+  // The commonest verdict, ignoring the shelves it could not name. A pack where
+  // sixty shelves are unreadable and twenty are plainly General MIDI is a
+  // General MIDI pack with sixty odd corners, and defaulting it to nothing
+  // throws away the one piece of evidence there is.
+  const known = [...tally.entries()].filter(([kit]) => kit)
+  const majority = known.sort((a, b) => b[1] - a[1])[0]
+  const setKit = majority ? majority[0] : ''
+  for (const shelf of Object.keys(folderKits)) {
+    // A shelf with no verdict takes the library's, which is better evidence
+    // than nothing; only a shelf that actively disagrees is worth storing.
+    if (!folderKits[shelf] || folderKits[shelf] === setKit) delete folderKits[shelf]
+  }
+
   const count = await countGrooves(setId)
   await putSet({
-    id: setId, name: name || 'library', kit: '', customMap: {},
+    id: setId, name: name || 'library', kit: setKit, customMap: {},
+    folderKits, folders: perFolder.size,
     facts, count, addedAt: Date.now(),
   })
   await refreshDrumSets()
@@ -962,8 +999,24 @@ export function kitMapFor(groove) {
   if (!groove || !groove.setId) return global
 
   const set = state.drumSets.find((row) => row.id === groove.setId)
-  if (!set || !set.kit) return global
-  return { ...kitById(set.kit).map, ...cleanKitMap(set.customMap) }
+  if (!set) return global
+
+  // The shelf it sits on, then the library, then the global setting. A pack
+  // disagrees with itself often enough that the shelf has to win.
+  const shelf = (set.folderKits || {})[groove.folder]
+  const kit = shelf || set.kit
+  if (!kit) return global
+  return { ...kitById(kit).map, ...cleanKitMap(set.customMap) }
+}
+
+/** And the map that reads an imported note *in*, which is the other direction
+    and a different table. @see GENERAL_MIDI_IN */
+export function inboundMapFor(groove) {
+  if (!groove || !groove.setId) return null      // the shipped corpus reads itself
+  const set = state.drumSets.find((row) => row.id === groove.setId)
+  if (!set) return null
+  const shelf = (set.folderKits || {})[groove.folder]
+  return kitById(shelf || set.kit || 'gm').in || null
 }
 
 /**

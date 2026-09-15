@@ -88,6 +88,9 @@ export class Player {
         global one. @see store.kitMapFor */
     this.getKitMap = () => ({ ...kitById(this.settings.drums.kit).map,
                               ...cleanKitMap(this.settings.drums.customMap) })
+    /** How an arriving note is read. Null means the shipped corpus's own
+        table, which is what an unimported groove is written in. */
+    this.getInboundMap = () => null
     this.onEventChange = null
     this.onCapture = null
     this.onNotes = null
@@ -336,6 +339,7 @@ export class Player {
       },
       fill: (span) => this.getFill(span),
       map: (groove) => this.getKitMap(groove),
+      inbound: (groove) => this.getInboundMap(groove),
       fillOnEveryBoundary: drums.fillOnEveryBoundary !== false,
     })
   }

@@ -132,11 +132,11 @@ export function fitsBars(groove, bars) {
  * evenly is cut off at the end, which is what a drummer does when the section
  * changes under them.
  */
-export function layOutGroove(groove, spanPulses, map) {
+export function layOutGroove(groove, spanPulses, map, inbound = undefined) {
   if (!groove || !groove.notes.length || spanPulses <= 0) return []
 
   const length = Math.max(1, groove.lengthPulses)
-  const played = mapDrumNotes(groove.notes, map)
+  const played = mapDrumNotes(groove.notes, map, inbound || undefined)
   const out = []
 
   for (let start = 0; start < spanPulses; start += length) {
@@ -160,14 +160,14 @@ export function layOutGroove(groove, spanPulses, map) {
  * it has to live in is refused rather than truncated: half a fill is a mistake,
  * and playing the groove instead is not.
  */
-export function placeFill(fill, spanPulses, map) {
+export function placeFill(fill, spanPulses, map, inbound = undefined) {
   if (!fill || !fill.notes.length) return []
 
   const length = Math.max(1, fill.lengthPulses)
   if (length > spanPulses) return []
 
   const offset = spanPulses - length
-  return mapDrumNotes(fill.notes, map)
+  return mapDrumNotes(fill.notes, map, inbound || undefined)
     .map((note) => ({ ...note, at: offset + note.at }))
     .sort((a, b) => a.at - b.at || a.note - b.note)
 }
@@ -235,7 +235,7 @@ function drumSpans(score) {
 export function buildDrumTrack(score, options = {}) {
   if (!score || !score.events || !score.events.length) return []
 
-  const { groove: pickGroove, fill: pickFill, map, fillOnEveryBoundary = true } = options
+  const { groove: pickGroove, fill: pickFill, map, inbound, fillOnEveryBoundary = true } = options
   if (typeof pickGroove !== 'function') return []
 
   const spans = drumSpans(score)
@@ -256,14 +256,17 @@ export function buildDrumTrack(score, options = {}) {
     const wantFill = fillOnEveryBoundary && leavesSection && !span.noFill
 
     const mapFor = (groove) => (typeof map === 'function' ? map(groove) : map)
+    // How an arriving note is *read*, which an imported library answers
+    // differently from the shipped corpus. @see drumKits.GENERAL_MIDI_IN
+    const inFor = (groove) => (typeof inbound === 'function' ? inbound(groove) : inbound)
 
     const fill = wantFill && typeof pickFill === 'function' ? pickFill(span) : null
-    const placed = fill ? placeFill(fill, length, mapFor(fill)) : []
+    const placed = fill ? placeFill(fill, length, mapFor(fill), inFor(fill)) : []
 
     // The groove stops where the fill starts. Both playing at once is two
     // drummers, which is not what a fill is.
     const grooveSpan = placed.length ? length - fill.lengthPulses : length
-    for (const note of layOutGroove(chosen, grooveSpan, mapFor(chosen))) {
+    for (const note of layOutGroove(chosen, grooveSpan, mapFor(chosen), inFor(chosen))) {
       out.push({ ...note, at: span.startPulse + note.at })
     }
     for (const note of placed) {

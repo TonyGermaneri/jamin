@@ -800,6 +800,15 @@ function resetMap() {
                         <span v-if="unplayable(set).percent > 10">— try another map</span>
                       </span>
                     </div>
+                    <!-- What the classifier made of the shelves inside. A pack
+                         disagrees with itself often enough that this is worth
+                         showing rather than hiding behind one setting. -->
+                    <div v-if="set.folders" class="mb-1">
+                      {{ set.folders.toLocaleString() }} shelves<span
+                        v-if="Object.keys(set.folderKits || {}).length">,
+                        {{ Object.keys(set.folderKits).length.toLocaleString() }} with a map of
+                        their own</span>
+                    </div>
                     <span v-for="(value, key) in setFacts(set)" :key="key" class="mr-2">
                       <strong>{{ key }}</strong> {{ value }}
                     </span>

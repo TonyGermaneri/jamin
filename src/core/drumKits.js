@@ -106,6 +106,33 @@ export const GENERAL_MIDI = {
 }
 
 /**
+ * General MIDI, read *inwards*.
+ *
+ * The other direction. `GENERAL_MIDI` says where to send a voice; this says what
+ * an arriving note means. They are not inverses of each other and cannot be: the
+ * standard defines six toms and two snares where this vocabulary has three and
+ * two, so several notes fold onto one voice on the way in and only one of them
+ * comes back out.
+ *
+ * It matters because an imported library is read with this and not with the
+ * corpus's own map. Without it a General MIDI pack's acoustic bass drum (35),
+ * low floor tom (41) and low tom (45) are notes nothing understands, and they
+ * are dropped in silence.
+ */
+export const GENERAL_MIDI_IN = {
+  35: 'kick', 36: 'kick',
+  37: 'sideStick',
+  38: 'snare', 40: 'snareRim',
+  41: 'tomFloor', 43: 'tomFloor',
+  45: 'tomMid', 47: 'tomMid',
+  48: 'tomHigh', 50: 'tomHigh',
+  42: 'hatClosed', 44: 'hatPedal', 46: 'hatOpen',
+  49: 'crash1', 55: 'crash1',
+  52: 'crash2', 57: 'crash2',
+  51: 'ride', 59: 'ride', 53: 'rideBell',
+}
+
+/**
  * The kits offered in the dropdown, and what is actually known about each.
  *
  * `notes` is what a person needs to do at the other end; it is shown next to the
@@ -117,11 +144,13 @@ export const DRUM_KITS = [
     id: 'gm',
     name: 'General MIDI',
     map: { ...GENERAL_MIDI },
+    in: { ...GENERAL_MIDI_IN },
     notes: 'The standard percussion map. The right answer unless you know otherwise.',
   },
   {
     id: 'tr8s',
     name: 'Roland TR-8S',
+    in: { ...GENERAL_MIDI_IN },
     // Verified against Roland's own MIDI implementation chart: the TR-8S ships
     // with GM numbers for every voice it has, and has no rim, pedal hat or bell
     // -- so those fold onto the drum they belong to rather than being silent.
@@ -139,6 +168,7 @@ export const DRUM_KITS = [
     id: 'ableton',
     name: 'Ableton Drum Rack',
     map: { ...GENERAL_MIDI },
+    in: { ...GENERAL_MIDI_IN },
     notes: 'A Drum Rack is whatever its pads were filled with. Live names every '
          + 'pad with its General MIDI equivalent, so a GM-laid-out kit lands '
          + 'correctly; a hand-built rack may not, and the table below is where to fix it.',
@@ -147,6 +177,7 @@ export const DRUM_KITS = [
     id: 'addictive2',
     name: 'Addictive Drums 2',
     map: { ...GENERAL_MIDI },
+    in: { ...GENERAL_MIDI_IN },
     notes: 'Set the Map Preset to “General MIDI (GM)” in AD2’s MIDI Mapping '
          + 'window. Its own map has far more articulations than this vocabulary '
          + 'has voices, so its GM preset is the accurate route rather than a guess at its layout.',
@@ -155,6 +186,7 @@ export const DRUM_KITS = [
     id: 'abbeyroad',
     name: 'Abbey Road Drummer',
     map: { ...GENERAL_MIDI },
+    in: { ...GENERAL_MIDI_IN },
     notes: 'Use the MIDI Mapping page in the instrument to select a General MIDI '
          + 'layout. As with AD2 its factory map carries articulations this '
          + 'vocabulary has no voice for.',
@@ -162,6 +194,9 @@ export const DRUM_KITS = [
   {
     id: 'vdrums',
     name: 'Roland V-Drums (TD-11)',
+    // The kit the shipped corpus was played on, so its own table is what reads
+    // a note coming in.
+    in: { ...TD11_TO_VOICE },
     // The kit the corpus was recorded on: playing a groove straight back at one
     // is the one case where nothing should be translated at all.
     map: {
@@ -217,8 +252,8 @@ export function kitById(id) {
  * a note to drop rather than to guess at -- a wrong drum is louder than a
  * missing one.
  */
-export function mapDrumNote(note, map) {
-  const voice = TD11_TO_VOICE[note]
+export function mapDrumNote(note, map, inbound = TD11_TO_VOICE) {
+  const voice = inbound[note]
   if (!voice) return null
   const out = map && map[voice]
   return Number.isInteger(out) && out >= 0 && out <= 127 ? out : null
@@ -233,15 +268,92 @@ export function mapDrumNote(note, map) {
  * to light up a drum would be reading the wrong end. The voice is the fact; the
  * number is the destination.
  */
-export function mapDrumNotes(notes, map) {
+export function mapDrumNotes(notes, map, inbound = TD11_TO_VOICE) {
   const out = []
   for (const note of notes || []) {
-    const voice = TD11_TO_VOICE[note.note]
-    const pitch = mapDrumNote(note.note, map)
+    const voice = inbound[note.note]
+    const pitch = mapDrumNote(note.note, map, inbound)
     if (pitch === null) continue
     out.push({ ...note, note: pitch, voice })
   }
   return out
+}
+
+/**
+ * Which note map a pile of drum MIDI was written for.
+ *
+ * Deterministic, and deliberately about the *core kit* rather than the whole
+ * histogram. Measured across 760 packs and three quarters of a million files,
+ * almost everything is General MIDI where it counts and vendor-specific
+ * everywhere else: a sixties drummer library puts its kick on 36, its snare on
+ * 38 and its hats on 42 exactly as General MIDI says, and then hangs its own
+ * articulations off 92 and 97 where General MIDI has nothing. Judging such a
+ * pack by its full range calls it unknown; judging it by its kick and snare
+ * calls it what it is.
+ *
+ * So: where do the kick, the snare and the hi-hats live? That is the question
+ * every drum map answers differently and every drum pattern asks constantly.
+ *
+ *   22 or 26 carrying weight   a Roland V-Drums kit -- General MIDI has no
+ *                              percussion at all below 35, so these cannot be
+ *                              anything else
+ *   the core kit where GM puts it   General MIDI
+ *   the weight up in the hand percussion   General MIDI, with no kit in it
+ *   none of the above          unknown, and say so rather than guess
+ *
+ * `coverage` is the number that actually matters to a listener: how much of
+ * this pack the chosen map can play at all. A pack can be correctly identified
+ * as General MIDI and still lose a third of its notes, because the vocabulary
+ * here has fourteen voices and a sampled drum library has ninety.
+ */
+export function classifyKit(histogram) {
+  const entries = Object.entries(histogram || {}).map(([note, n]) => [Number(note), Number(n)])
+  const total = entries.reduce((sum, [, n]) => sum + n, 0)
+  if (!total) return { kit: DEFAULT_KIT, confidence: 0, coverage: 0, reason: 'nothing to look at' }
+
+  const weight = (test) => entries.reduce((sum, [note, n]) => sum + (test(note) ? n : 0), 0) / total
+  const on = (notes) => weight((note) => notes.has(note))
+
+  const hatEdge = on(new Set([22, 26]))
+  // The toms are what separates a Roland kit from General MIDI: a TD-11 puts
+  // them on 48/45/43 and General MIDI on 50/47/43. The hi-hat edge notes are
+  // *not* enough on their own -- measured across the collection, 66,101 files
+  // in packs using 22 and 26 put their toms exactly where General MIDI does,
+  // and calling those Roland would move every tom on every one of them.
+  const rolandToms = on(new Set([48, 45]))
+  const gmToms = on(new Set([50, 47]))
+  const vdrums = hatEdge >= 0.02 && rolandToms > gmToms ? hatEdge : 0
+
+  const kick = on(new Set([35, 36]))
+  const snare = on(new Set([37, 38, 40]))
+  const hats = on(new Set([42, 44, 46]))
+  const percussion = weight((note) => note >= 60 && note <= 81)
+  const core = kick + snare + hats
+
+  // What this kit can make sense of on the way *in*. Not the notes it sends --
+  // that is the other direction and answers a different question.
+  const playable = (kit) => {
+    const understood = kitById(kit).in || GENERAL_MIDI_IN
+    return weight((note) => Boolean(understood[note]))
+  }
+
+  if (vdrums >= 0.02) {
+    return { kit: 'vdrums', confidence: Math.min(1, vdrums * 10), coverage: playable('vdrums'),
+             reason: 'hi-hat edge notes and toms where a Roland kit puts them' }
+  }
+
+  if (core >= 0.30) {
+    return { kit: 'gm', confidence: Math.min(1, core / 0.5), coverage: playable('gm'),
+             reason: 'kick, snare and hats are where General MIDI puts them' }
+  }
+
+  if (percussion >= 0.40) {
+    return { kit: 'gm', confidence: Math.min(1, percussion), coverage: playable('gm'),
+             reason: 'hand percussion, in the General MIDI range' }
+  }
+
+  return { kit: '', confidence: 0, coverage: playable('gm'),
+           reason: 'nothing here is where a standard kit would be' }
 }
 
 /** A custom map, sanitised: known voices, whole numbers, in range. */
