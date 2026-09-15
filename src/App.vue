@@ -8,14 +8,14 @@ import DrumBook from './components/DrumBook.vue'
 import {
   state,
   initApp,
-  armCapture,
-  disarmCapture,
   panic,
   toggleInternalTransport,
   transposeSong,
   triggerAccent,
   accentPhrase,
   engine,
+  toast,
+  openDrumBook,
 } from './store.js'
 
 const idle = ref(false)
@@ -108,9 +108,13 @@ function openMidi() {
   if (!state.host.active && (state.midi.state === 'denied' || state.midi.state === 'idle')) engine.enable()
 }
 
-function toggleArm() {
-  if (state.ui.armed) disarmCapture()
-  else armCapture()
+/** Mr. Accompany Me on or off: hearing what is played and answering it. */
+function toggleListen() {
+  const accompany = state.settings.accompany
+  accompany.listen = !accompany.listen
+  toast(accompany.listen
+    ? `Listening — ${accompany.liveMode === 'override' ? 'your chords win' : 'over the chart'}`
+    : 'Not listening')
 }
 </script>
 
@@ -152,12 +156,12 @@ function toggleArm() {
           @click="triggerAccent"
         />
         <v-btn
-          icon="mdi-record-circle-outline"
+          icon="mdi-ear-hearing"
           size="small"
           variant="text"
-          :color="state.ui.armed ? 'error' : undefined"
-          title="Mr. Accompany Me — capture a phrase over the next chord"
-          @click="toggleArm"
+          :color="state.settings.accompany.listen ? 'primary' : undefined"
+          title="Mr. Accompany Me — hear what you play and answer it"
+          @click="toggleListen"
         />
         <!-- Only when there is a network to be on. A chart shared with nobody
              should not carry an indicator saying so. -->
@@ -181,7 +185,8 @@ function toggleArm() {
         />
         <v-btn icon="mdi-book-music-outline" size="small" variant="text" title="Phrase book" @click="state.ui.phrases = true" />
         <v-btn icon="mdi-bookshelf" size="small" variant="text" title="Progression library" @click="state.ui.progressions = true" />
-        <v-btn icon="mdi-circle-multiple-outline" size="small" variant="text" title="Drum book" @click="state.ui.drums = true" />
+        <v-btn icon="mdi-circle-multiple-outline" size="small" variant="text" title="Drum book"
+               @click="openDrumBook" />
         <v-btn icon="mdi-cog-outline" size="small" variant="text" title="Settings" @click="state.ui.settings = true" />
         <v-btn icon="mdi-volume-off" size="small" variant="text" title="All notes off" @click="panic" />
         <v-tooltip :text="midiHint" location="bottom">
@@ -212,7 +217,10 @@ function toggleArm() {
         <span v-if="state.status.phrase"><span class="label">phrase </span>{{ state.status.phrase }}</span>
         <span v-else-if="state.songPhrase"><span class="label">phrase </span>{{ state.songPhrase }}</span>
         <span v-if="state.status.caretChord" style="opacity: 0.55"><span class="label">typing </span>{{ state.status.caretChord }}</span>
-        <span v-if="state.ui.armed" style="color: #ff5470">● capturing</span>
+        <span v-if="state.heard.name" style="color: #4ec9b0">
+          <span class="label">hearing </span>{{ state.heard.name }}
+        </span>
+        <span v-else-if="state.settings.accompany.listen" class="label">listening</span>
         <span v-if="!state.status.running" class="label">stopped — waiting for the DAW</span>
       </div>
 

@@ -432,6 +432,28 @@ std::optional<juce::WebBrowserComponent::Resource> JaminEditor::provide (const j
     if (relative.isEmpty())
         relative = "index.html";
 
+    /*
+     * The shared chart, fetched rather than pushed.
+     *
+     * It used to travel as an event, and events are escaped by
+     * WebBrowserComponent::Impl::emitEvent with two calls to String::replace --
+     * which is quadratic, each replaceSection reallocating the whole string. A
+     * chart carrying a day's editing took thirty-six seconds of CPU to escape,
+     * every time an editor opened, and the profile was one stack from top to
+     * bottom.
+     *
+     * Nothing here is escaped: the bytes go out as bytes. The event that
+     * announces a new chart now carries a generation number and nothing else,
+     * and the page comes and gets the rest. @see jaminSong
+     */
+    if (relative == "jamin-song.json")
+    {
+        const auto song = jamin::SongBus::instance().snapshot();
+        const auto* first = reinterpret_cast<const std::byte*> (song.json.data());
+        std::vector<std::byte> bytes (first, first + song.json.size());
+        return juce::WebBrowserComponent::Resource { std::move (bytes), "application/json" };
+    }
+
     // A path cannot climb out of the bundle. The page is ours and would never
     // try, but a resource provider is a file server and a file server that can
     // be talked out of its root is a file server with a hole in it.
@@ -467,13 +489,24 @@ void JaminEditor::timerCallback()
     // host stayed silent.
     bus.poll();
 
+    // What is being played into this track, for Mr. Accompany Me to hear. Sent
+    // only when there is something -- a silent keyboard should cost one atomic
+    // load and nothing else.
+    {
+        juce::Array<juce::var> heard;
+        if (plugin.takeHeardNotes (heard) > 0)
+            browser.emitEventIfBrowserIsVisible ("jaminHeard", juce::var (heard));
+    }
+
     if (bus.generation() != lastSongGeneration)
     {
         const auto song = bus.snapshot();
         lastSongGeneration = song.generation;
 
+        // The number only. The chart itself is fetched over the resource
+        // scheme, because an event this size costs thirty-six seconds to
+        // escape. @see provide()
         auto* object = new juce::DynamicObject();
-        object->setProperty ("json", juce::String (song.json));
         object->setProperty ("generation", (juce::int64) song.generation);
         browser.emitEventIfBrowserIsVisible ("jaminSong", juce::var (object));
     }

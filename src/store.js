@@ -25,6 +25,8 @@ import {
   loadDrumBindings, saveDrumBindings, reconcileBindings, bindGroove,
   forgetBinding, slotOf, cycleBinding, WHOLE_SONG,
 } from './core/drumBindings.js'
+import { resourceOk } from './core/fetchResource.js'
+import { rebuild, docSize } from './core/crdt.js'
 import { Player } from './core/player.js'
 import { parseScore } from './core/score.js'
 import {
@@ -94,7 +96,10 @@ export const state = reactive({
   licksLoading: false,
   lickReport: null,
   bulk: { count: 0, importing: false, progress: '', report: null },
-  pendingCapture: null,
+  // What Mr. Accompany Me can hear right now: the chord under somebody's
+  // fingers, named. Nothing is kept -- this is what is sounding, not a
+  // recording of it. @see core/chordDetect.js
+  heard: { name: '', pitches: [] },
   midi: { state: 'idle', error: null, inputs: [], outputs: [] },
   // Set once at startup and never again: whether this page is the plugin's
   // editor rather than a browser tab, and who it is if so.
@@ -182,7 +187,6 @@ export const state = reactive({
     /// Which instance the phrase book is pointed at. Null is this one.
     targetInstance: null,
     progressionsTab: 'library',
-    armed: false,
     accentArmed: false,
     /** The chord the phrase book is picking for, when it was opened by
         right-clicking one. -1 means it was opened for the song. */
@@ -232,12 +236,23 @@ player.onEventChange = (event, info) => {
   state.status.notes = info.notes
 }
 
-player.onCapture = (capture) => {
-  state.pendingCapture = { ...capture, name: '' }
-  state.ui.phrases = true
-  state.ui.phrasesTab = 'captured'
-  state.ui.armed = player.capture.armed
-  toast('Phrase captured')
+player.onHeard = (found) => {
+  state.heard = found ? { name: found.name, pitches: found.pitches } : { name: '', pitches: [] }
+}
+
+/**
+ * The phrase a heard chord is articulated through.
+ *
+ * The chart's own, so playing along sounds like the song rather than like a
+ * second program: whatever the chord under the playhead is using. An armed
+ * accent beats it, as an accent beats everything, and the song's default phrase
+ * stands in when the chart has nothing to say.
+ */
+player.getLivePhrase = () => {
+  const accent = player.getPhrase(state.accentPhrase)
+  if (accent) return accent
+  const here = player.current && player.current.phraseId
+  return player.getPhrase(here || state.songPhrase)
 }
 
 /**
@@ -328,15 +343,18 @@ export async function initApp() {
   // milliseconds off the critical path, so it is ready before anyone opens the
   // tab, and nothing waits on it if they never do.
   state.drumBindings = loadDrumBindings()
-  refreshDrumSets().then((sets) => {
-    // Back to whichever library was being used, if it is still here.
-    const last = readStored(DRUM_LIBRARY_KEY)
-    if (last && sets.some((set) => set.id === last)) {
-      state.drumFilters.set = last
-      searchDrums()
-    }
-    return rememberBoundGrooves().then(refreshDrums)
-  })
+  state.drumFilters.set = readStored(DRUM_LIBRARY_KEY) || ''
+
+  // The imported catalogue is not opened at all unless this chart needs it.
+  //
+  // An imported groove's id carries its library -- `p2f4k9:1841` -- where a
+  // bundled one is `g1841`, so whether a chart has any is a question about
+  // strings rather than about a database. A chart that binds nothing imported
+  // costs nothing here, which for somebody who has never imported anything is
+  // every chart. @see packGroove, openDrumBook
+  if (boundToImported(state.drumBindings)) {
+    refreshDrumSets().then(() => rememberBoundGrooves().then(refreshDrums))
+  }
   state.drumAccent = readStored(DRUM_ACCENT_KEY)
   loadDrums().then((list) => {
     state.drums = list
@@ -381,12 +399,47 @@ async function adoptHost() {
   })
 
   // Another instance in this host changed the chart. @see adoptShared
-  onHost('jaminSong', (song) => {
-    if (song && typeof song.json === 'string') adoptShared(song.json)
+  /**
+   * Another instance in this host changed the chart.
+   *
+   * The event carries a generation number and nothing else; the chart itself is
+   * fetched over the resource scheme. An event's payload is escaped by JUCE with
+   * two quadratic `String::replace` calls, so a chart carrying a day's editing
+   * cost thirty-six seconds of CPU to deliver -- every time a window opened.
+   * Bytes fetched are bytes; nothing escapes them.
+   */
+  onHost('jaminSong', async (song) => {
+    if (!song || typeof song.generation !== 'number') return
+    if (song.generation === lastSharedGeneration) return
+    lastSharedGeneration = song.generation
+
+    try {
+      const response = await fetch('jamin-song.json', { cache: 'no-store' })
+      if (!resourceOk(response)) return
+      adoptShared(await response.text())
+    } catch {
+      /* a chart that cannot be fetched is the chart we already have */
+    }
   })
 
   // Somebody joined, left, was muted, soloed or renamed.
   onHost('jaminRoster', (roster) => adoptRoster(roster))
+
+  /**
+   * What is being played into this track.
+   *
+   * In a browser the keyboard reaches the page directly through Web MIDI. In
+   * the plugin the notes arrive on the audio thread, which must not go near a
+   * web view, so they are copied out and handed over on a timer. Either way
+   * they end up in the same place. @see Player.noteIn
+   */
+  onHost('jaminHeard', (notes) => {
+    if (!Array.isArray(notes)) return
+    for (const item of notes) {
+      if (!item || typeof item.note !== 'number') continue
+      player.noteIn(item.note, item.velocity | 0, Boolean(item.on))
+    }
+  })
 
   // Another window asked this instance to play something. Only this instance
   // can act on it: the catalogue the name is looked up in is here.
@@ -439,6 +492,8 @@ function adoptSavedState(saved) {
 
 let hostGeneration = 0
 let compileTimer = null
+/** The shared chart we last fetched. @see jaminSong */
+let lastSharedGeneration = -1
 /** The event the armed accent lands on, or null. @see triggerAccent */
 let accentAt = null
 
@@ -605,12 +660,55 @@ async function joinNetwork() {
 /** True while applying what the segment said, so it is not written straight back. */
 let applyingShared = false
 
+/**
+ * The op log grows with the editing and cannot be pruned.
+ *
+ * Tombstones cannot be collected in this document -- it is a chain, every one
+ * of them is an ancestor of something alive, and re-parenting rewrites the
+ * chart. @see crdt.js for the measurement behind that.
+ *
+ * What *is* safe is starting again from the text, which throws the history away
+ * entirely. It needs nobody else to be holding a copy, because every id changes
+ * and a peer working from the old ones would find none of them. So it happens
+ * only when this instance is demonstrably alone: nobody on the network, and no
+ * other instance in this host.
+ */
+/*
+ * Bytes, not nodes: what this costs is what gets published on every keystroke.
+ *
+ * Measured over ten thousand edits to a three-kilobyte chart, Yjs settles at
+ * about 47KB and goes on climbing in proportion to the editing -- every
+ * deletion leaves a range in the delete set, and deletions scattered around a
+ * chart do not merge into runs. Starting again from the text puts it back to
+ * three kilobytes. Rebuilding at sixteen means a solo chart never costs more
+ * than that to publish, and the rebuild itself is a fraction of a millisecond.
+ */
+const REBUILD_ABOVE = 16 * 1024
+
+function alone() {
+  if (state.net.joined && state.net.peers.length) return false
+  const others = (state.roster.instances || []).filter((row) => row.id !== state.roster.me)
+  return others.length === 0
+}
+
+function compactIfAlone() {
+  if (!session || !alone()) return false
+  if (docSize(session.doc) < REBUILD_ABOVE) return false
+
+  session.doc = rebuild(session.doc)
+  return true
+}
+
 /** Put this instance's whole document in the segment. */
 function publishShared() {
   if (!hosted() || !session || applyingShared) return
-  const ops = session.everything()
-  if (!ops.length) return
-  callHost('jaminPublishSong', JSON.stringify({ v: 1, ops })).catch(() => {})
+  compactIfAlone()
+  const update = session.everything()
+  if (!update) return
+  // v2: one Yjs update in base64, where v1 was an array of JSON operations --
+  // a different thing entirely, so the version says so rather than letting an
+  // older instance try to read it as ops.
+  callHost('jaminPublishSong', JSON.stringify({ v: 2, ops: update })).catch(() => {})
 }
 
 /** Take what another instance in this host put there. */
@@ -624,7 +722,10 @@ function adoptShared(json) {
     return false                     // written by a version that meant something else
   }
 
-  if (!carried || !Array.isArray(carried.ops)) return false
+  // A v1 segment holds an array of causal-tree operations, which this cannot
+  // read and must not guess at. Ignoring it leaves the chart this instance
+  // already has, and the next publish overwrites the segment with v2.
+  if (!carried || carried.v !== 2 || typeof carried.ops !== 'string') return false
 
   applyingShared = true
   try {
@@ -903,7 +1004,6 @@ function buildDrumSpansForRequest() {
 
 export async function refreshDrumSets() {
   state.drumSets = await listSets()
-  if (state.drumSets.length) measureStorage()
   return state.drumSets
 }
 
@@ -1421,6 +1521,48 @@ export async function setDrumSetKit(id, kit, customMap = null) {
   refreshDrums()
 }
 
+/**
+ * The catalogue, read when somebody actually looks at it.
+ *
+ * Opening the editor used to search the imported catalogue and ask the browser
+ * how much room it was taking, every time. With a few hundred patterns that
+ * cost nothing and nobody noticed. With three quarters of a million it took
+ * about thirty seconds a window -- measured: four editor open/close cycles went
+ * from 38 seconds to two and a half minutes on this machine, all of it real CPU
+ * rather than waiting, once a large library had been imported.
+ *
+ * So none of it happens at startup any more. The chart, the phrases and the
+ * drums a chart binds are what opening a window needs; the catalogue is what
+ * opening the *book* needs, and it is only ever a click away from being asked
+ * for.
+ */
+export async function openDrumBook() {
+  state.ui.drums = true
+  await refreshDrumSets()
+  if (!state.drumSets.length) return
+  // A library that has since been removed is not one to search for.
+  if (!state.drumSets.some((set) => set.id === state.drumFilters.set)) state.drumFilters.set = ''
+  if (state.drumFilters.set) await searchDrums()
+  measureStorage()
+}
+
+/**
+ * Does this chart bind anything that lives in the imported catalogue?
+ *
+ * An imported groove's id names its library and its place in it -- `p2f4k9:1841`
+ * -- where a bundled one is `g1841`. So this is a question about strings, and
+ * answering it costs nothing, which is the point: the database is not opened to
+ * find out whether the database is needed.
+ */
+function boundToImported(bindings) {
+  for (const row of Object.values(bindings || {})) {
+    for (const id of [row.groove, row.fill]) {
+      if (typeof id === 'string' && id.includes(':')) return true
+    }
+  }
+  return false
+}
+
 /** What the filters are showing, out of the imported catalogue. */
 export async function searchDrums(filters = null) {
   if (filters) state.drumFilters = { ...state.drumFilters, ...filters }
@@ -1697,8 +1839,8 @@ export function triggerDrumAccent() {
 /** Tell the others about an edit made here. */
 function publishEdit(text) {
   if (!session || applyingRemote) return
-  const ops = session.change(text)
-  if (ops.length) publishShared()
+  const update = session.change(text)
+  if (update) publishShared()
 }
 
 function readStored(key) {
@@ -1840,7 +1982,11 @@ function syncStatus() {
   }
   status.bar = Math.floor(live.position / pulsesPerBar) + 1
   status.beat = Math.floor((live.position % pulsesPerBar) / 24) + 1
-  state.ui.armed = player.capture.armed
+  // Settled here as well as on the clock, so a chord names itself on screen
+  // whether or not the transport is rolling. It can only be *articulated* while
+  // it is -- a phrase is a rhythm, and a stopped transport has no time to lay
+  // one on. @see Player.hearTick
+  player.hearTick()
   syncDrumsPlaying()
 }
 
@@ -1996,36 +2142,6 @@ watch(
 
 function loadPhraseBook() {
   state.phrases = loadPhrases()
-}
-
-export function armCapture() {
-  player.arm(state.settings.accompany.captureMode)
-  state.ui.armed = true
-  toast('Play over the next chord…')
-}
-
-export function disarmCapture() {
-  player.disarm()
-  state.ui.armed = false
-}
-
-export function keepCapture(name) {
-  if (!state.pendingCapture) return null
-  // Stored rooted on C, so what you played over one chord works over any.
-  const phrase = normalizePhrase({
-    ...state.pendingCapture,
-    id: newPhraseId(),
-    kind: 'captured',
-    category: 'captured here',
-    name: uniqueName(state.phrases, name || `${state.pendingCapture.sourceChord}-lick`),
-  })
-  delete phrase.capturedAt
-  phrase.createdAt = Date.now()
-  phrase.voices = maxSimultaneous(phrase.notes)
-  state.phrases = [phrase, ...state.phrases]
-  savePhrases(state.phrases)
-  state.pendingCapture = null
-  return phrase
 }
 
 export function deletePhrase(name) {

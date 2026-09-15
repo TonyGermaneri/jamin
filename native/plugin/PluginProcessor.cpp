@@ -177,6 +177,39 @@ double JaminProcessor::nextBoundaryPpq() const
     return std::floor ((ppq + slack) / step + 1.0) * step;
 }
 
+/**
+ * Notes heard since the last look.
+ *
+ * A note-on with no velocity is a note-off -- half the keyboards in the world
+ * say it that way -- and the page should not have to know that.
+ */
+int JaminProcessor::takeHeardNotes (juce::Array<juce::var>& into)
+{
+    const auto ready = heardFifo.getNumReady();
+    if (ready <= 0)
+        return 0;
+
+    const auto scope = heardFifo.read (ready);
+    const auto gather = [&] (int start, int size)
+    {
+        for (int i = 0; i < size; ++i)
+        {
+            const auto& slot = heardRing[(size_t) (start + i)];
+            const bool isOn = (slot.bytes[0] & 0xf0) == 0x90 && slot.bytes[2] > 0;
+
+            auto* object = new juce::DynamicObject();
+            object->setProperty ("note", (int) slot.bytes[1]);
+            object->setProperty ("on", isOn);
+            object->setProperty ("velocity", (int) slot.bytes[2]);
+            into.add (juce::var (object));
+        }
+    };
+    gather (scope.startIndex1, scope.blockSize1);
+    gather (scope.startIndex2, scope.blockSize2);
+
+    return into.size();
+}
+
 void JaminProcessor::tapNote (int note, int velocity, int channel)
 {
     if (note < 0 || note > 127 || tapFifo.getFreeSpace() <= 0)
@@ -247,18 +280,26 @@ void JaminProcessor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBu
     audio.clear();
 
     // Anything arriving stays in the stream -- a chord generator that swallowed
-    // the keys under it would make the track unplayable -- and is copied out for
-    // the editor's phrase capture on the way past.
+    // the keys under it would make the track unplayable -- and the notes are
+    // copied out on the way past so the editor can hear what is being played.
+    //
+    // Notes only. This is for working out a chord, and a pitch bend is not part
+    // of one; letting everything through filled the ring with clock and
+    // aftertouch and pushed the notes out of it.
     for (const auto metadata : midi)
     {
-        if (metadata.numBytes > 3 || captureFifo.getFreeSpace() <= 0)
+        if (metadata.numBytes != 3 || heardFifo.getFreeSpace() <= 0)
             continue;
 
-        const auto scope = captureFifo.write (1);
+        const auto status = (uint8_t) (metadata.data[0] & 0xf0);
+        if (status != 0x90 && status != 0x80)
+            continue;
+
+        const auto scope = heardFifo.write (1);
         if (scope.blockSize1 <= 0)
             continue;
 
-        auto& slot = captureRing[(size_t) scope.startIndex1];
+        auto& slot = heardRing[(size_t) scope.startIndex1];
         slot.length = (uint8_t) metadata.numBytes;
         for (int i = 0; i < metadata.numBytes; ++i)
             slot.bytes[i] = metadata.data[i];

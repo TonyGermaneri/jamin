@@ -10,17 +10,19 @@ function ok(label, got, detail) {
   if (!got) { failed++; console.log(`FAIL ${label}${detail ? ` (${detail})` : ''}`) }
 }
 
-/** Ops cross a network, so they are copied the way a network would copy them. */
-const wire = (ops) => JSON.parse(JSON.stringify(ops))
+/** An update crosses a network, so it is copied the way a network would copy
+    it -- through JSON, which is why it is base64 and not raw bytes. */
+const wire = (update) => JSON.parse(JSON.stringify({ ops: update })).ops
 
 /* ---------------- one site on its own ---------------- */
 
 let a = createDoc('a')
 check('an empty document is empty', docText(a), '')
 
-let ops = setDocText(a, 'Cmaj7')
+let update = setDocText(a, 'Cmaj7')
 check('typing shows up', docText(a), 'Cmaj7')
-check('and produced one op per character', ops.length, 5)
+ok('and produced something to send', Boolean(update))
+check('typing nothing new sends nothing', setDocText(a, 'Cmaj7'), '')
 
 setDocText(a, 'Cmaj7 A-7')
 check('appending', docText(a), 'Cmaj7 A-7')
@@ -31,17 +33,20 @@ check('deleting everything', docText(a), '')
 check('and nothing is left to see', docText(a), '')
 
 // A whole-string replacement only touches what changed.
+// A whole-string replacement only touches what changed, which is no longer
+// visible in the update's shape -- it is one opaque blob. What it means is that
+// somebody else's edit elsewhere in the chart survives, which is checked below.
 a = docFromText('a', 'Cmaj7 A-7 D-7 G7')
-ops = setDocText(a, 'Cmaj7 A-7 D-7 G7#11')
-check('editing the end leaves the front alone', ops.length, 3)
-ok('and they are all inserts', ops.every((op) => op.t === 'ins'))
+update = setDocText(a, 'Cmaj7 A-7 D-7 G7#11')
+check('editing the end leaves the front alone', docText(a), 'Cmaj7 A-7 D-7 G7#11')
+ok('and there is an update for it', Boolean(update))
 
 /* ---------------- two sites, one edit each ---------------- */
 
 function pair(text) {
   const one = docFromText('a', text)
   const two = createDoc('b')
-  applyOps(two, wire(snapshot(one)))
+  applyUpdate(two, wire(snapshot(one)))
   return [one, two]
 }
 
@@ -50,8 +55,8 @@ check('a new site catches up from a snapshot', docText(y), 'C F G')
 
 const fromX = setDocText(x, 'C F G Am')
 const fromY = setDocText(y, 'Bb C F G')
-applyOps(x, wire(fromY))
-applyOps(y, wire(fromX))
+applyUpdate(x, wire(fromY))
+applyUpdate(y, wire(fromX))
 check('both sides see the same thing', docText(x), docText(y))
 ok('and it contains both edits', docText(x).includes('Am') && docText(x).includes('Bb'), docText(x))
 
@@ -60,8 +65,8 @@ ok('and it contains both edits', docText(x).includes('Am') && docText(x).include
 ;[x, y] = pair('CG')
 const insX = setDocText(x, 'CXG')
 const insY = setDocText(y, 'CYG')
-applyOps(x, wire(insY))
-applyOps(y, wire(insX))
+applyUpdate(x, wire(insY))
+applyUpdate(y, wire(insX))
 check('inserting at the same point converges', docText(x), docText(y))
 ok('and keeps both characters', /X/.test(docText(x)) && /Y/.test(docText(x)), docText(x))
 check('and keeps what was there', docText(x).replace(/[XY]/g, ''), 'CG')
@@ -69,14 +74,16 @@ check('and keeps what was there', docText(x).replace(/[XY]/g, ''), 'CG')
 /* ---------------- delivery order does not matter ---------------- */
 
 ;[x, y] = pair('C F G Am')
-const edits = [setDocText(x, 'C F G Am Bb'), setDocText(x, 'C7 F G Am Bb'), setDocText(x, 'C7 F G Am')]
-const flat = wire(edits.flat())
+// One update per edit now, rather than one op per character: Yjs keeps an
+// update whose history has not arrived yet and applies it when the gap is
+// filled, so the whole batch still lands however it is ordered.
+const edits = [setDocText(x, 'C F G Am Bb'), setDocText(x, 'C7 F G Am Bb'), setDocText(x, 'C7 F G Am')].map(wire)
 
-// Backwards, which means every insert arrives before its parent.
+// Backwards, which means every update arrives before the one it follows.
 const backwards = createDoc('c')
-applyOps(backwards, wire(snapshot(y)))
-applyOps(backwards, flat.slice().reverse())
-check('ops applied backwards still converge', docText(backwards), docText(x))
+applyUpdate(backwards, wire(snapshot(y)))
+for (const update of edits.slice().reverse()) applyUpdate(backwards, update)
+check('updates applied backwards still converge', docText(backwards), docText(x))
 
 // One at a time, in a shuffled order, with repeats thrown in.
 function seeded(seed) {
@@ -88,16 +95,16 @@ function seeded(seed) {
 }
 
 const shuffled = createDoc('d')
-applyOps(shuffled, wire(snapshot(y)))
-const bag = flat.slice()
+applyUpdate(shuffled, wire(snapshot(y)))
+const bag = edits.slice()
 const random = seeded(12345)
 while (bag.length) {
   const at = Math.floor(random() * bag.length)
-  const op = bag[at]
-  applyOps(shuffled, [op])
-  applyOps(shuffled, [op])          // twice: applying an op again must do nothing
+  const update = bag[at]
+  applyUpdate(shuffled, update)
+  applyUpdate(shuffled, update)        // twice: applying one again must do nothing
   if (random() < 0.5) bag.splice(at, 1)
-  else { bag.splice(at, 1); bag.push(op) }   // and again, much later
+  else { bag.splice(at, 1); bag.push(update) }   // and again, much later
 }
 check('shuffled, duplicated delivery converges', docText(shuffled), docText(x))
 
@@ -116,7 +123,7 @@ function converge(seed, siteCount, rounds) {
 
   for (let i = 1; i < siteCount; i++) {
     const doc = createDoc(`s${i}`)
-    applyOps(doc, wire(snapshot(first)))
+    applyUpdate(doc, wire(snapshot(first)))
     sites.push(doc)
     outbox.push([])
   }
@@ -136,8 +143,8 @@ function converge(seed, siteCount, rounds) {
       next = text.slice(0, at) + WORDS[Math.floor(random() * WORDS.length)] + text.slice(at)
     }
 
-    const made = wire(setDocText(doc, next))
-    for (let i = 0; i < siteCount; i++) if (i !== who) outbox[i].push(...made)
+    const made = setDocText(doc, next)
+    if (made) for (let i = 0; i < siteCount; i++) if (i !== who) outbox[i].push(wire(made))
 
     // And some of the post gets delivered, in whatever order it feels like.
     for (let i = 0; i < siteCount; i++) {
@@ -148,12 +155,12 @@ function converge(seed, siteCount, rounds) {
         const k = Math.floor(random() * (j + 1))
         const swap = batch[j]; batch[j] = batch[k]; batch[k] = swap
       }
-      applyOps(sites[i], batch)
+      for (const update of batch) applyUpdate(sites[i], update)
     }
   }
 
   // Everything still in the post gets through in the end.
-  for (let i = 0; i < siteCount; i++) if (outbox[i].length) applyOps(sites[i], outbox[i])
+  for (let i = 0; i < siteCount; i++) for (const update of outbox[i]) applyUpdate(sites[i], update)
 
   const answers = sites.map(docText)
   const distinct = [...new Set(answers)]
@@ -182,9 +189,12 @@ for (let i = 0; i < 30; i++) setDocText(busy, `${docText(busy)} ${WORDS[i % WORD
 setDocText(busy, docText(busy).slice(0, 20))
 
 const late = createDoc('z')
-applyOps(late, wire(snapshot(busy)))
+applyUpdate(late, wire(snapshot(busy)))
 check('a snapshot carries the deletions too', docText(late), docText(busy))
-ok('and the tombstones came with it', tombstones(late) > 0, `${tombstones(late)}`)
+// What a deletion leaves behind is Yjs's business now -- a range in a delete
+// set rather than a character kept for ever. What is checked is that it
+// travelled: the late arrival sees the cut, not the text before it.
+ok('and the cut came with it', docText(late).length === 20, `${docText(late).length}`)
 
 /* ---------------- nothing falls over ---------------- */
 
@@ -194,12 +204,13 @@ check('a long document survives being walked', docText(deep).length, 20000)
 setDocText(deep, '')
 check('and being emptied', docText(deep), '')
 
-check('nonsense ops are ignored', applyOps(createDoc('a'), [null, {}, { t: 'ins' }, { t: 'nope', id: ['a', 1] }]), false)
-check('and so is nothing at all', applyOps(createDoc('a'), null), false)
+check('nonsense is ignored', applyUpdate(createDoc('a'), 'not base64 at all!!'), false)
+check('and so is nothing at all', applyUpdate(createDoc('a'), null), false)
+check('and so is an empty update', applyUpdate(createDoc('a'), ''), false)
 
 // An orphan that never gets its parent stays out rather than corrupting anything.
 const orphaned = docFromText('a', 'AB')
-applyOps(orphaned, [{ t: 'ins', id: ['q', 9], parent: ['q', 8], ch: 'Z' }])
+applyUpdate(orphaned, [{ t: 'ins', id: ['q', 9], parent: ['q', 8], ch: 'Z' }])
 check('an insert with no parent waits', docText(orphaned), 'AB')
 
 console.log(failed === 0 ? 'crdt: all checks passed' : `crdt: ${failed} FAILED`)

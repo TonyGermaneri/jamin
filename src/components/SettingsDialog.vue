@@ -32,13 +32,6 @@ const fonts = [
   '"Futura", "Avenir Next", system-ui, sans-serif',
 ]
 
-const quantizeOptions = [
-  { title: 'Off', value: 0 },
-  { title: '1/16', value: 6 },
-  { title: '1/8', value: 12 },
-  { title: '1/4', value: 24 },
-]
-
 const search = ref('')
 const results = ref([])
 
@@ -557,13 +550,18 @@ async function retryMidi() {
                 />
               </v-col>
               <v-col cols="12" md="4">
-                <v-select v-model="state.settings.accompany.quantize" :items="quantizeOptions" label="Quantize capture" />
-              </v-col>
-              <v-col cols="12" md="4">
+                <!-- Mr. Accompany Me listens rather than records, so the two
+                     controls that shaped a recording have nothing to shape. It
+                     lives on the phrase book's Playback tab, next to the rest of
+                     what a phrase does. -->
                 <v-select
-                  v-model="state.settings.accompany.captureMode"
-                  :items="[{ title: 'Capture one chord, then stop', value: 'once' }, { title: 'Keep capturing', value: 'continuous' }]"
-                  label="Capture mode"
+                  v-model="state.settings.accompany.liveMode"
+                  :items="[{ title: 'Play over the chart', value: 'merge' },
+                           { title: 'My chords replace the chart\'s', value: 'override' }]"
+                  label="When I play along"
+                  :disabled="!state.settings.accompany.listen"
+                  hint="Turn listening on in the phrase book, under Playback."
+                  persistent-hint
                 />
               </v-col>
             </v-row>

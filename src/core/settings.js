@@ -36,7 +36,7 @@ export const STORAGE_KEY = 'jamin.settings.v1'
  *        chord alike; `chords.bassNote` and `accompany.keepBass` are gone, and
  *        anyone who had the chord one on gets the remaining one on.
  */
-export const SETTINGS_VERSION = 11
+export const SETTINGS_VERSION = 12
 export const TEXT_KEY = 'jamin.chart.v1'
 export const PHRASE_KEY = 'jamin.phrases.v1'
 export const SONG_PHRASE_KEY = 'jamin.songPhrase.v1'
@@ -141,7 +141,27 @@ export function defaultSettings() {
       // Wider than the chord voicing range: a two-handed phrase spans more.
       rangeLow: 28,
       rangeHigh: 100,
-      quantize: 0, // pulses; 6 = 16th notes
+      /**
+       * Mr. Accompany Me, listening.
+       *
+       * It hears what is played, names the chord, and articulates it -- so this
+       * is on only when asked for. A plugin that started turning incoming notes
+       * into accompaniment the moment it was loaded would be a surprise.
+       */
+      listen: false,
+      // merge: the chart plays its chords and the hands play over the top, which
+      // is what a second player in the room is. override: while anything is held
+      // the chart's harmony gives way. The drums and the pedal follow the song
+      // either way -- they follow the song, not the hands.
+      liveMode: 'merge',
+      // How long a heard chord's phrase runs before coming round again. A held
+      // chord lasts until the hands move, so it has to be given a length, and a
+      // phrase is written to fill a bar.
+      liveBars: 1,
+      // How still the notes have to be before the chord is called. Four fingers
+      // do not land in the same millisecond and every note on the way down is
+      // briefly a different chord. @see core/chordDetect.js
+      settleMs: 60,
       captureMode: 'once', // once | continuous
       // Off by default: one phrase plays for the whole song. Turn it on to bind
       // a different phrase to individual chords, marked with a dot.
@@ -257,6 +277,12 @@ export function migrateSettings(stored) {
     // and the switch is right there to go back.
     next.display = { ...(next.display || {}) }
     delete next.display.fitLines
+  }
+
+  if (version < 12) {
+    // Mr. Accompany Me stopped recording and started listening. The capture
+    // quantiser has nothing left to quantise.
+    delete next.accompany.quantize
   }
 
   next.version = SETTINGS_VERSION

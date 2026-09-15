@@ -413,19 +413,41 @@ The import tab has the URL for a ready-made slice.
 
 ## Mr. Accompany Me
 
-Pick your keyboard as the accompaniment input, arm the red button, and play for
-exactly one chord while the DAW runs. The phrase lands in the phrase book
-(the book icon) with the chord it was played over.
+It listens. Play, and the chord under your fingers is worked out while you are
+still holding it, then played back to you through a phrase -- so the answer is
+in the style of the song rather than in the style of a chord generator.
 
-Bind it to a chord and it follows the chart.
+Turn it on with the ear icon, or in the phrase book under Playback. Two ways to
+sit with the chart, and it is a real choice rather than a default with an
+escape hatch:
+
+- **Play over the chart.** The chart keeps its own chords and you play over the
+  top, which is what a second player in the room is.
+- **My chords replace the chart's.** While you are holding something, the
+  chart's harmony gives way. The drums and the pedal still follow the song --
+  they follow the song, not your hands.
+
+A written chord knows how long it lasts because the bar says so. A held one
+lasts until your hands move, so it is given a length and comes round again until
+you let go.
+
+Nothing is recorded and nothing is kept. What you hear is what is being held.
+
+**What it hears** is decided by a table, not by statistics, so a wrong answer
+can be looked up rather than guessed at. Two rules in it are choices worth
+knowing: a note the chord has no room for counts against it harder than a
+missing one -- playing a note is evidence, leaving one out is only absence --
+and the root is always a note you are actually playing. An E, a B♭ and a D is an
+E half-diminished, which somebody really played, rather than a rootless C7 they
+might have meant. @see `src/core/chordDetect.js`
 
 ### Phrases are not key dependent
 
 A phrase is stored **rooted on C** -- that is, as degrees measured from the chord
-it was played over, not as the notes you happened to play. Capture something over
-Fm7 and it is filed as root, ♭3, 5, ♭7; play it back over Dm7 and you get D, F,
-A, C. The key it was born in is remembered but never used at playback. Phrases
-saved before this are migrated on load.
+it was played over, not as the notes that were happened to be played. A phrase
+taken over Fm7 is filed as root, ♭3, 5, ♭7; play it back over Dm7 and you get D,
+F, A, C. The key it was born in is remembered but never used at playback.
+Phrases saved before this are migrated on load.
 
 Getting it over a chord happens in that order, and the order matters:
 

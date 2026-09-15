@@ -34,13 +34,16 @@ SUITES = [
     (["src/core/drumKits.js"], "tests/kitClassify.test.js"),
     (["src/core/midiFile.js", "src/core/drumImport.js"], "tests/drumImport.test.js"),
     (["src/core/chordParser.js", "src/core/chordDetect.js"], "tests/chordDetect.test.js"),
+    # Ten thousand edits to one chart. Slow on purpose -- it is measuring what a
+    # day's work costs, and a day's work is what broke it.
+    (["src/core/crdt.js"], "tests/crdtBurn.test.js"),
     # The shipped corpus itself, checked as data. @see materialise
     (["src/data/grooveDrums.json"], "tests/grooveData.test.js"),
     ([
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
         "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js",
         "src/core/fetchResource.js", "src/core/drumKits.js", "src/core/drums.js",
-        "src/core/drumBindings.js", "src/core/player.js",
+        "src/core/drumBindings.js", "src/core/chordDetect.js", "src/core/player.js",
     ], "tests/drums.test.js"),
     (["src/core/crdt.js"], "tests/crdt.test.js"),
     # The shared segment: what may travel between instances in one host, and why
@@ -54,7 +57,7 @@ SUITES = [
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
         "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js",
         "src/core/fetchResource.js", "src/core/drumKits.js", "src/core/drums.js",
-        "src/core/drumBindings.js", "src/core/player.js", "src/core/compile.js",
+        "src/core/drumBindings.js", "src/core/chordDetect.js", "src/core/player.js", "src/core/compile.js",
     ], "tests/compile.test.js"),
     (["src/core/vocParser.js"], "tests/voc.test.js"),
     ([
@@ -66,7 +69,7 @@ SUITES = [
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
         "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js",
         "src/core/fetchResource.js", "src/core/drumKits.js", "src/core/drums.js",
-        "src/core/drumBindings.js", "src/core/player.js", "src/core/compile.js",
+        "src/core/drumBindings.js", "src/core/chordDetect.js", "src/core/player.js", "src/core/compile.js",
     ], "tests/accent.test.js"),
     ([
         "src/core/themes.js", "src/core/settings.js", "src/core/chordParser.js",
@@ -89,12 +92,12 @@ SUITES = [
     ([
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
         "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js", "src/core/fetchResource.js", "src/core/drumKits.js", "src/core/drums.js",
-        "src/core/drumBindings.js", "src/core/player.js",
+        "src/core/drumBindings.js", "src/core/chordDetect.js", "src/core/player.js",
     ], "tests/player.test.js"),
     ([
         "src/core/chordParser.js", "src/core/score.js", "src/core/voiceLeading.js",
         "src/core/voicing.js", "src/core/themes.js", "src/core/settings.js", "src/core/fetchResource.js", "src/core/drumKits.js", "src/core/drums.js",
-        "src/core/drumBindings.js", "src/core/player.js",
+        "src/core/drumBindings.js", "src/core/chordDetect.js", "src/core/player.js",
         # The rest of the program that walks the same token list: transposing,
         # the shorthand rewrite, the progression library and the clipboard.
         # Not key.js: it and voiceLeading.js each declare mod12, and these are

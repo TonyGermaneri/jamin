@@ -28,9 +28,16 @@ check('a current choice stands', migrateSettings(chosen).accompany.fit, 'stretch
 check('migrating twice changes nothing', migrateSettings(migrateSettings(old)).accompany.fit, 'follow')
 
 // Everything else is left where it was.
-const rich = { version: 1, midi: { velocity: 55 }, accompany: { fit: 'stretch', quantize: 6 } }
+const rich = { version: 1, midi: { velocity: 55 }, accompany: { fit: 'stretch', speed: 2 } }
 check('other settings survive migration', migrateSettings(rich).midi.velocity, 55)
-check('and so do siblings in the same section', migrateSettings(rich).accompany.quantize, 6)
+check('and so do siblings in the same section', migrateSettings(rich).accompany.speed, 2)
+
+// Mr. Accompany Me stopped recording and started listening, so the setting that
+// quantised a capture has nothing left to quantise and is taken away rather
+// than left behind to puzzle over.
+const recorded = { version: 11, accompany: { quantize: 6, fit: 'follow' } }
+check('the capture quantiser goes', 'quantize' in migrateSettings(recorded).accompany, false)
+check('and its neighbours stay', migrateSettings(recorded).accompany.fit, 'follow')
 
 // Junk in, junk out, without throwing.
 check('null', migrateSettings(null), null)

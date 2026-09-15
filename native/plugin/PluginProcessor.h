@@ -92,6 +92,18 @@ public:
         message thread; the note reaches the next block. */
     void tapNote (int note, int velocity, int channel);
 
+    /**
+     * Notes that came in since the last look, for the editor to make a chord of.
+     *
+     * Mr. Accompany Me hears what is played; the hearing happens in the page, so
+     * the notes have to get there. Drained on a timer rather than pushed from
+     * the audio thread, which must not go near a web view.
+     *
+     * Filled with `{ note, on, velocity }` -- what the page needs and nothing
+     * else, so the ring's own shape stays private to the processor.
+     */
+    int takeHeardNotes (juce::Array<juce::var>& into);
+
     /** Mute or solo any instance in this host, quantised as the settings say. */
     void setInstanceMuted (const juce::String& id, bool muted);
     void setInstanceSoloed (const juce::String& id, bool soloed);
@@ -213,8 +225,8 @@ public:
         uint8_t length {};
     };
 
-    juce::AbstractFifo captureFifo { 512 };
-    std::array<RawMidi, 512> captureRing {};
+    juce::AbstractFifo heardFifo { 512 };
+    std::array<RawMidi, 512> heardRing {};
 
     /** Notes the editor has asked to hear, on their way to the next block.
         Auditioning a drum from a plugin window has nowhere else to go: the page

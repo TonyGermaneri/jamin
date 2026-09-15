@@ -136,10 +136,39 @@ round trip in between that is not an edge case — it is what happens whenever t
 the same second.
 
 So what travels is the edits, and `src/core/crdt.js` is what makes them safe to apply in any
-order. It is a causal tree: every character carries an id unique for all time and the id of the
-character it was typed after, and the document is that tree walked depth-first. Two people
-inserting at the same point interleave the same way on every machine without anybody agreeing in
-advance who went first.
+order. It is a `Y.Text` — Yjs's character-level text CRDT — and what goes on the wire is one
+binary update per edit, in base64 because the envelopes are JSON. Two people inserting at the
+same point interleave the same way on every machine without anybody agreeing in advance who went
+first.
+
+This was a hand-written causal tree for a long time and it converged correctly. What it did not
+do was stop growing, and `publishShared` serialises the whole document on every keystroke — so a
+chart got slower the longer it was worked on, which is how it was found: opening the plugin
+editor took **36 seconds of CPU**, all of it inside JUCE escaping the chart on its way to the
+page. Measured over ten thousand edits to a three-kilobyte chart:
+
+| | snapshot | time |
+| --- | --- | --- |
+| hand-written causal tree | 8,015 KB | 264 s |
+| Yjs | 126 KB | 0.8 s |
+| Yjs, V2 encoding | 47 KB | |
+| Yjs, rebuilt when it passes 16KB | **16 KB, flat** | 0.3 s |
+
+The tree could not be pruned. Every character is typed *after* the one before it, so the document
+is a chain: every tombstone is an ancestor of something still alive, and measured on a real edit
+pattern **not one tombstone in two and a half thousand was collectable**. Re-parenting around
+them bounded the growth and silently rewrote the chart, because in a causal tree the tree *is*
+the ordering — `tests/crdtBurn.test.js` caught that by rebuilding a document from its own
+snapshot and finding different text in it.
+
+Even Yjs grows with the editing: every deletion leaves a range in the delete set, and deletions
+scattered around a chart do not merge into runs. What bounds it is starting again from the text,
+which throws the history away entirely. Every identity changes, so that is only safe when nothing
+else holds a copy — one instance, nobody joined — and it is the one compaction that is both
+complete and correct, because there is nobody left to disagree with.
+
+Yjs costs about 25KB gzipped in the bundle. It is MIT, which is one-way compatible with our
+GPLv3.
 
 There is **no leader and no server** in this. A node that has been off the network and comes back
 converges by exchanging edits, not by being told what the answer is.

@@ -15,6 +15,7 @@ import { realizeChord } from './voicing.js'
 import { realizePhrase } from './voiceLeading.js'
 import { buildDrumTrack } from './drums.js'
 import { kitById, cleanKitMap } from './drumKits.js'
+import { ChordListener } from './chordDetect.js'
 
 const mod = (n, m) => ((n % m) + m) % m
 
@@ -77,7 +78,29 @@ export class Player {
     /** Armed, waiting for the next section. @see armDrumAccent */
     this.drumAccent = null
 
-    this.capture = { armed: false, mode: 'once', notes: [], open: new Map(), startedEvent: -1 }
+    /**
+     * Mr. Accompany Me, listening.
+     *
+     * It used to wait for a chord to be written down and record what was played
+     * over it. Now the playing comes first: the notes are heard, named as a
+     * chord, and that chord is articulated. Nothing is kept -- there is no
+     * recording here, only what is sounding now.
+     */
+    this.listener = new ChordListener()
+    this.listener.onChord = (heard) => this.hearChord(heard)
+    this.live = {
+      heard: null,          // what detectChord last said, or null
+      phrase: null,
+      queue: [],
+      cursor: 0,
+      startPulse: 0,
+      lengthPulses: 0,
+      sounding: new Set(),
+    }
+    /** The phrase a heard chord is played through. The catalogue is the
+        application's, so the application chooses. */
+    this.getLivePhrase = () => null
+    this.onHeard = null
 
     this.getPhrase = () => null
     /** name or span -> a groove. The catalogue is a browser thing, as the
@@ -93,7 +116,6 @@ export class Player {
         table, which is what an unimported groove is written in. */
     this.getInboundMap = () => null
     this.onEventChange = null
-    this.onCapture = null
     this.onNotes = null
     this.onAccentSpent = null
   }
@@ -152,6 +174,10 @@ export class Player {
 
     this.local = position - event.startPulse
     this.flushPhrase(this.local)
+    // Settled on the clock as well as from the interface, so a chord heard
+    // mid-bar is articulated on the next pulse rather than on the next frame.
+    this.hearTick()
+    this.flushLive(position)
     // Driven from the song position, not the chord: a groove runs across chord
     // changes and stops at a section, which is a different clock.
     this.flushDrums(position, wrapped)
@@ -169,7 +195,7 @@ export class Player {
    * chord would leave the chart silent until the next chord came round.
    */
   transport(kind) {
-    if (kind === 'stop') this.finishCapture(true)
+    this.forgetHeld()
     this.stopAll()
     // Unlike a chord change, this really is the drums starting again.
     this.drumCursor = 0
@@ -182,17 +208,20 @@ export class Player {
   /* ---------------- chord + phrase events ---------------- */
 
   startEvent(event) {
-    const previous = this.current
-    if (previous) this.finishCapture(false, previous)
     this.stopAll()
 
     this.current = event
     this.currentIndex = event.index
 
-    if (this.capture.armed) {
-      this.capture.notes = []
-      this.capture.open.clear()
-      this.capture.startedEvent = event.index
+    // Somebody playing beats the chart, when they have asked for that. The
+    // event still runs -- the drums and the pedal follow the song, not the
+    // hands -- but the harmony comes from the keyboard.
+    if (this.overriding()) {
+      this.activePhrase = null
+      this.phraseQueue = []
+      this.phraseCursor = 0
+      if (this.onEventChange) this.onEventChange(event, { notes: [], phrase: null })
+      return
     }
 
     const chord = event.chord
@@ -500,6 +529,11 @@ export class Player {
     const bassOut = midi.bassOutputId || midi.chordOutputId
     for (const note of this.droneNotes) this.engine.noteOff(bassOut, midi.bassChannel, note)
     this.droneNotes = []
+    // What the hands are holding is *not* stopped here. stopAll() runs on every
+    // chord change and the hands do not answer to chords -- the same rule the
+    // drums follow. A real stop goes through transport(), which calls
+    // forgetHeld().
+
     // After the note-offs, which is the gesture a pianist makes: the keys come
     // up and then the pedal does. Either order ends in silence -- a note-off
     // under a held pedal is deferred, not ignored -- but this is the one that
@@ -516,70 +550,178 @@ export class Player {
     if (this.onNotes) this.onNotes([])
   }
 
-  /* ---------------- Mr. Accompany Me ---------------- */
+  /* ---------------- Mr. Accompany Me ----------------
+   *
+   * It listens now rather than recording. Notes arrive, the chord they make is
+   * named, and that chord is played through a phrase -- all of it while the
+   * keys are still down. Nothing is stored: what you hear is what is being
+   * held, and letting go ends it.
+   *
+   * Two ways to sit with the chart, and it is a real choice rather than a
+   * default with an escape hatch:
+   *
+   *   merge      the chart plays its own chords and this plays over the top.
+   *              Two parts, which is what a second player in the room is.
+   *   override   while anything is held the chart's harmony gives way and the
+   *              hands decide it. The drums and the pedal still follow the
+   *              song, because they follow the song and not the hands.
+   */
 
-  arm(mode = 'once') {
-    this.capture.armed = true
-    this.capture.mode = mode
-    this.capture.notes = []
-    this.capture.open.clear()
-    this.capture.startedEvent = this.currentIndex
+  /** True while somebody is holding something and has asked to be in charge. */
+  overriding() {
+    const accompany = this.settings.accompany
+    return Boolean(accompany.listen && accompany.liveMode === 'override' && this.live.heard)
   }
 
-  disarm() {
-    this.capture.armed = false
-    this.capture.open.clear()
-    this.capture.notes = []
-  }
-
-  noteIn(note, velocity, on) {
+  /** One note in or out, from a keyboard or from the host. */
+  noteIn(note, velocity, on, now = Date.now()) {
     const midi = this.settings.midi
     if (this.settings.accompany.monitor && midi.accompOutputId) {
       if (on) this.engine.noteOn(midi.accompOutputId, midi.accompChannel, note, velocity)
       else this.engine.noteOff(midi.accompOutputId, midi.accompChannel, note)
     }
-    if (!this.capture.armed || !this.current) return
 
-    const quantize = this.settings.accompany.quantize || 0
-    const at = quantize > 0 ? Math.round(this.local / quantize) * quantize : this.local
+    if (!this.settings.accompany.listen) return
+    this.listener.settleMs = this.settings.accompany.settleMs || 60
+    this.listener.note(note, on, now)
+  }
 
-    if (on) {
-      this.capture.open.set(note, { at, note, velocity })
+  /**
+   * Give the listener a chance to settle.
+   *
+   * Called from the clock and from the interface both, because a chord is worth
+   * naming on screen whether or not the transport is rolling -- it just cannot
+   * be *articulated* while stopped, since a phrase is a rhythm and a stopped
+   * transport has no time to lay it on.
+   */
+  hearTick(now = Date.now()) {
+    if (!this.settings.accompany.listen) {
+      if (this.live.heard) this.hearChord(null)
+      return
+    }
+    this.listener.tick(now)
+  }
+
+  /**
+   * A chord was heard, or the hands came off.
+   *
+   * The phrase is built the same way the chart builds one -- same function,
+   * same voice leading -- over a slot of its own making. @see buildPhraseQueue
+   */
+  hearChord(heard) {
+    this.stopLive()
+    this.live.heard = heard || null
+
+    if (heard) {
+      const phrase = this.getLivePhrase()
+      this.live.phrase = phrase || null
+      if (phrase) {
+        const event = this.liveSlot()
+        const built = buildPhraseQueue(phrase, heard.chord, event, this.settings, null)
+        this.live.queue = built.queue
+        this.live.startPulse = this.position
+        this.live.lengthPulses = event.endPulse - event.startPulse
+        this.live.cursor = 0
+      }
     } else {
-      const open = this.capture.open.get(note)
-      if (!open) return
-      this.capture.open.delete(note)
-      this.capture.notes.push({ ...open, duration: Math.max(1, at - open.at) })
+      this.live.phrase = null
+      this.live.queue = []
+      this.live.lengthPulses = 0
+    }
+
+    // The chart was holding its tongue for a chord that has now gone, so it
+    // needs to be asked again.
+    if (!heard && this.settings.accompany.liveMode === 'override' && this.current) {
+      const resume = this.current
+      this.currentIndex = -1
+      this.startEvent(resume)
+    }
+
+    if (this.onHeard) this.onHeard(heard)
+  }
+
+  /**
+   * The slot a heard chord is laid over.
+   *
+   * A written chord knows how long it lasts because the bar says so. A held one
+   * does not -- it lasts until the hands move -- so it is given a length and
+   * repeats for as long as it is held. A bar is the default because a phrase is
+   * written to fill one.
+   */
+  liveSlot() {
+    const bars = Math.max(1, this.settings.accompany.liveBars || 1)
+    const perBar = this.score && this.score.pulsesPerBar ? this.score.pulsesPerBar : 96
+    const length = bars * perBar
+    return {
+      index: -1,
+      startPulse: 0,
+      endPulse: length,
+      bars,
+      chord: this.live.heard ? this.live.heard.chord : null,
+      phraseId: null,
     }
   }
 
-  /** Close the books on the chord we just left and hand the result to the UI. */
-  finishCapture(force, event = this.current) {
-    if (!this.capture.armed || !event) return
-    if (this.capture.startedEvent !== event.index && !force) return
+  /**
+   * The heard chord's notes, up to here.
+   *
+   * Loops rather than stopping: the hands are still down, so the phrase comes
+   * round again. Rebuilt on each pass so the voice leading carries on from
+   * where it was rather than jumping back.
+   */
+  flushLive(position) {
+    if (!this.live.queue.length || !this.live.lengthPulses) return
 
-    const length = event.endPulse - event.startPulse
-    for (const [note, open] of this.capture.open) {
-      this.capture.notes.push({ ...open, note, duration: Math.max(1, length - open.at) })
-    }
-    this.capture.open.clear()
+    const midi = this.settings.midi
+    const outputId = midi.accompOutputId || midi.chordOutputId
+    const channel = midi.accompChannel
 
-    const notes = this.capture.notes.slice().sort((a, b) => a.at - b.at)
-    this.capture.notes = []
-
-    if (notes.length && this.onCapture) {
-      this.onCapture({
-        notes,
-        lengthPulses: length,
-        sourcePcs: event.chord && event.chord.ok ? event.chord.absPcs : [0, 4, 7],
-        sourceChord: event.chord && event.chord.ok ? event.chord.text : '?',
-        bars: event.bars,
-        capturedAt: Date.now(),
-      })
+    let local = position - this.live.startPulse
+    if (local < 0) {
+      // The transport looped underneath a held chord.
+      this.live.startPulse = position
+      local = 0
+      this.live.cursor = 0
     }
 
-    if (this.capture.mode === 'once') this.capture.armed = false
-    else this.capture.startedEvent = -1
+    while (local >= this.live.lengthPulses) {
+      this.live.startPulse += this.live.lengthPulses
+      local -= this.live.lengthPulses
+      this.live.cursor = 0
+    }
+
+    let guard = 0
+    while (this.live.cursor < this.live.queue.length && guard++ < 256) {
+      const item = this.live.queue[this.live.cursor]
+      if (item.at > local) break
+      this.live.cursor++
+      if (item.on) {
+        if (this.engine.noteOn(outputId, channel, item.note, item.velocity)) {
+          this.live.sounding.add(item.note)
+        }
+      } else {
+        this.engine.noteOff(outputId, channel, item.note)
+        this.live.sounding.delete(item.note)
+      }
+    }
+  }
+
+  /** Everything the heard chord has sounding, off. */
+  stopLive() {
+    const midi = this.settings.midi
+    const outputId = midi.accompOutputId || midi.chordOutputId
+    for (const note of this.live.sounding) this.engine.noteOff(outputId, midi.accompChannel, note)
+    this.live.sounding.clear()
+    this.live.cursor = 0
+  }
+
+  /** The hands are off, whatever the keyboard thinks. A locate or a stop. */
+  forgetHeld() {
+    this.listener.clear()
+    this.stopLive()
+    this.live.heard = null
+    this.live.queue = []
+    this.live.phrase = null
   }
 }
 

@@ -20,7 +20,7 @@
  * or long after they were made. @see src/core/crdt.js and docs/network.md
  */
 
-import { applyOps, createDoc, docText, setDocText, snapshot } from './crdt.js'
+import { applyUpdate, createDoc, docText, setDocText, snapshot } from './crdt.js'
 import { callHost, hosted, onHost } from './host.js'
 
 /** How long to wait before trying the stream again, and the ceiling on that. */
@@ -242,8 +242,8 @@ export class Session {
       this.setState(this.state === 'refused' ? 'joining' : this.state)
       let changed = false
       for (const envelope of envelopes) {
-        if (envelope && Array.isArray(envelope.ops)) {
-          if (applyOps(this.doc, envelope.ops)) changed = true
+        if (envelope && typeof envelope.ops === 'string') {
+          if (applyUpdate(this.doc, envelope.ops)) changed = true
         }
       }
       if (changed) this.onText(this.text())
@@ -260,8 +260,8 @@ export class Session {
 
     this.stream = this.transport.listen(
       (envelope) => {
-        if (!envelope || envelope.from === this.site || !Array.isArray(envelope.ops)) return
-        if (applyOps(this.doc, envelope.ops)) this.onText(this.text())
+        if (!envelope || envelope.from === this.site || typeof envelope.ops !== 'string') return
+        if (applyUpdate(this.doc, envelope.ops)) this.onText(this.text())
       },
       () => {
         this.retry = RETRY_MS
@@ -298,18 +298,18 @@ export class Session {
   }
 
   /**
-   * The chart changed here. Returns the ops, having already sent them.
+   * The chart changed here. Returns the update, having already sent it.
    *
    * Nothing waits for the network: the local document is updated first and the
-   * send is let go of. A send that fails is a send that fails -- the op is in
-   * our log, and anybody who missed it gets it from `/doc` when they next catch
-   * up.
+   * send is let go of. A send that fails is a send that fails -- the edit is in
+   * our document, and anybody who missed it gets it from `/doc` when they next
+   * catch up.
    */
   change(text) {
-    const ops = setDocText(this.doc, text)
-    if (!ops.length) return ops
-    this.send(ops)
-    return ops
+    const update = setDocText(this.doc, text)
+    if (!update) return ''
+    this.send(update)
+    return update
   }
 
   /**
@@ -326,30 +326,32 @@ export class Session {
    * the same edit, that diff invents *new* insertions for characters that
    * already exist elsewhere. Every machine then ends up with both copies.
    */
-  ingest(ops) {
-    if (!Array.isArray(ops) || !ops.length) return false
-    if (!applyOps(this.doc, ops)) return false
+  ingest(update) {
+    if (typeof update !== 'string' || !update) return false
+    if (!applyUpdate(this.doc, update)) return false
     this.onText(this.text())
     return true
   }
 
-  /** The whole document as operations, for the shared segment. */
+  /** The whole document, for the shared segment. */
   everything() {
     return snapshot(this.doc)
   }
 
   /** Hand somebody else the whole document, for a node with an empty log. */
   publishAll() {
-    const ops = snapshot(this.doc)
-    if (ops.length) this.send(ops)
-    return ops
+    const update = snapshot(this.doc)
+    if (update) this.send(update)
+    return update
   }
 
-  send(ops) {
+  send(update) {
     const envelope = {
       m: `${this.site}-${++nextMessage}`,
       from: this.site,
-      ops,
+      // Still called `ops` on the wire: it is one Yjs update in base64 rather
+      // than an array of operations, and the name is what the other end reads.
+      ops: update,
     }
 
     this.transport.send(envelope)

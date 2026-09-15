@@ -11,12 +11,10 @@
 import { computed, ref, watch } from 'vue'
 import {
   state,
-  keepCapture,
   deletePhrase,
   renamePhrase,
   usePhrase,
   bindPhrase,
-  armCapture,
   currentToken,
   toast,
   ensureLicks as rebuildLicks,
@@ -315,6 +313,13 @@ function pick(entry) {
   usePhrase(entry)
 }
 
+/** How long a heard chord runs before its phrase comes round again. */
+const LIVE_BARS = [
+  { title: 'one bar', value: 1 },
+  { title: 'two bars', value: 2 },
+  { title: 'four bars', value: 4 },
+]
+
 const SPEEDS = [
   { title: '1/16×', value: 0.0625 },
   { title: '1/8×', value: 0.125 },
@@ -336,20 +341,6 @@ watch(
   },
   { immediate: true }
 )
-
-watch(
-  () => state.pendingCapture,
-  (capture) => {
-    name.value = capture ? `${capture.sourceChord}-lick` : ''
-  }
-)
-
-function keepAndUse() {
-  const phrase = keepCapture(name.value)
-  if (!phrase) return
-  usePhrase(phrase)
-  state.ui.phrasesTab = 'catalogue'
-}
 
 function commitRename(entry) {
   if (renaming.value !== entry.id) return
@@ -442,7 +433,6 @@ const assigningTo = computed(() => {
 
       <v-tabs v-model="state.ui.phrasesTab">
         <v-tab value="catalogue">Catalogue ({{ total }})</v-tab>
-        <v-tab value="captured">Just played</v-tab>
         <v-tab value="playback">Playback</v-tab>
         <v-tab value="sources">Sources</v-tab>
         <v-tab value="about">How it works</v-tab>
@@ -680,47 +670,57 @@ const assigningTo = computed(() => {
             </v-row>
           </v-window-item>
 
-          <!-- Just played ------------------------------------------------- -->
-          <v-window-item value="captured">
-            <div v-if="!state.pendingCapture" class="text-center py-8">
-              <v-icon size="42" class="mb-3" color="grey">mdi-piano</v-icon>
-              <div class="text-body-2 mb-1">Nothing captured yet.</div>
-              <div class="text-caption text-medium-emphasis mb-4">
-                Arm capture, then play over one chord while the DAW is running.
-              </div>
-              <v-btn size="small" :color="state.ui.armed ? 'error' : 'primary'" @click="armCapture">
-                {{ state.ui.armed ? 'Armed — play something' : 'Arm capture' }}
-              </v-btn>
-            </div>
-
-            <div v-else>
-              <div class="text-caption text-medium-emphasis mb-2">{{ summarize(state.pendingCapture) }}</div>
-              <svg :width="260" :height="54" class="mb-3" style="background: rgba(255,255,255,0.04); border-radius: 6px">
-                <rect
-                  v-for="(note, index) in roll(state.pendingCapture, 260, 54)"
-                  :key="index"
-                  :x="note.x"
-                  :y="note.y"
-                  :width="note.w"
-                  :height="note.h"
-                  :opacity="note.o"
-                  fill="currentColor"
-                  rx="1"
-                />
-              </svg>
-              <v-text-field v-model="name" label="Name" class="mb-3" />
-              <div class="d-flex flex-wrap" style="gap: 8px">
-                <v-btn size="small" color="primary" @click="keepAndUse">Use</v-btn>
-                <v-btn size="small" variant="text" @click="state.pendingCapture = null">Discard</v-btn>
-              </div>
-              <div class="text-caption text-medium-emphasis mt-3">
-                It joins the catalogue either way once used, and behaves like anything else in it.
-              </div>
-            </div>
-          </v-window-item>
-
           <!-- Playback ---------------------------------------------------- -->
           <v-window-item value="playback">
+            <!-- Mr. Accompany Me, which is the thing this book is for. It used
+                 to wait for a chord to be written down and record what was
+                 played over it; now it hears what is played and answers it. -->
+            <div class="mb-3">
+              <div class="d-flex align-center">
+                <v-switch v-model="accompany.listen" density="compact" hide-details
+                          color="primary" label="Listen to what I play" />
+                <InfoTip>
+                  Notes come in, the chord they make is named, and that chord is played back
+                  through a phrase — all while the keys are still down. Nothing is recorded and
+                  nothing is kept: what you hear is what is being held, and letting go ends it.
+                  <br /><br />
+                  The phrase it uses is the chart's own — whatever the chord under the playhead is
+                  playing — so it sounds like the song rather than like a second program. An armed
+                  accent beats that, as an accent beats everything.
+                  <br /><br />
+                  A chord is named whether or not the transport is rolling, but it can only be
+                  <em>played</em> while it is: a phrase is a rhythm, and a stopped transport has no
+                  time to lay one on.
+                </InfoTip>
+              </div>
+
+              <div v-if="accompany.listen" class="ml-8">
+                <v-radio-group v-model="accompany.liveMode" density="compact" hide-details
+                               class="mb-2">
+                  <v-radio value="merge" label="Play over the chart" />
+                  <v-radio value="override" label="My chords replace the chart's" />
+                </v-radio-group>
+                <div class="text-caption text-medium-emphasis mb-2">
+                  <span v-if="accompany.liveMode === 'override'">
+                    While you are holding something the chart's harmony gives way. The drums and
+                    the pedal still follow the song — they follow the song, not your hands.
+                  </span>
+                  <span v-else>
+                    The chart plays its own chords and you play over the top, which is what a
+                    second player in the room is.
+                  </span>
+                </div>
+                <v-select v-model="accompany.liveBars" :items="LIVE_BARS" density="compact"
+                          hide-details label="A held chord lasts" style="max-width: 260px" />
+                <div class="text-caption text-medium-emphasis mt-1">
+                  A written chord knows how long it lasts because the bar says so. A held one lasts
+                  until your hands move, so it is given a length and comes round again.
+                </div>
+              </div>
+            </div>
+
+            <v-divider class="mb-3" />
+
             <v-row dense>
               <v-col cols="12" md="6">
                 <v-select v-model="accompany.speed" :items="SPEEDS" label="Speed" />

@@ -57,28 +57,118 @@ player.setScore(parseScore('C C C', { beatsPerBar: 4 }))
 for (let p = 1; p <= 287; p++) player.tick(p)
 check('single attack across 3 bars', engine.log.filter(l => l[0] === 'on').length, 3)
 
-// --- phrase capture ---
-engine = new FakeEngine(); settings = makeSettings(); player = new Player(engine, settings)
-settings.accompany.monitor = false
-const captured = []
-player.onCapture = (c) => captured.push(c)
-player.setScore(parseScore('C F', { beatsPerBar: 4 }))
-player.tick(1)
-player.arm('once')
-player.tick(2)
-player.noteIn(60, 100, true)
-for (let p = 3; p <= 30; p++) player.tick(p)
-player.noteIn(60, 0, false)
-player.noteIn(64, 90, true)
-for (let p = 31; p <= 200; p++) player.tick(p)   // crosses into the next chord
+// --- Mr. Accompany Me listens ---
+// It used to wait for a chord to be written down and record what was played
+// over it. Now the playing comes first: notes are heard, named as a chord, and
+// that chord is articulated while the keys are still down. Nothing is kept.
+const livePhrase = {
+  name: 'live', lengthPulses: 96, sourcePcs: [0, 4, 7], sourceChord: 'C',
+  notes: [
+    { at: 0, note: 60, velocity: 100, duration: 12 },
+    { at: 24, note: 64, velocity: 100, duration: 12 },
+  ],
+}
 
-check('one phrase captured', captured.length, 1)
-check('capture note count', captured[0].notes.length, 2)
-check('capture start offsets', captured[0].notes.map(n => n.at), [2, 30])
-check('capture length is the slot', captured[0].lengthPulses, 96)
-check('capture source chord', captured[0].sourceChord, 'C')
-check('capture source pcs', captured[0].sourcePcs, [0, 4, 7])
-check('auto disarmed', player.capture.armed, false)
+function listening(patch = {}) {
+  const e = new FakeEngine()
+  const s = makeSettings()
+  s.accompany.monitor = false
+  s.accompany.listen = true
+  s.accompany.liveBars = 1
+  s.accompany.settleMs = 10
+  Object.assign(s.accompany, patch)
+  const p = new Player(e, s)
+  p.getLivePhrase = () => livePhrase
+  p.setScore(parseScore('C F', { beatsPerBar: 4 }))
+  return { e, s, p }
+}
+
+// Three notes go down, and once they stop moving the chord they make is heard.
+let live = listening()
+const heard = []
+live.p.onHeard = (h) => heard.push(h ? h.name : null)
+live.p.tick(1)
+live.p.noteIn(62, 100, true, 1000)
+live.p.noteIn(65, 100, true, 1005)
+live.p.noteIn(69, 100, true, 1010)
+live.p.hearTick(1015)
+check('nothing while the hand is still moving', heard, [])
+live.p.hearTick(1100)
+check('the chord under the fingers is heard', heard, ['D-'])
+
+// And it is articulated: the phrase, re-pointed at what was played.
+live.e.log.length = 0
+for (let t = 2; t <= 40; t++) live.p.tick(t)
+const livePlayed = live.e.log.filter((l) => l[0] === 'on').map((l) => l[1] % 12)
+check('the heard chord is played through a phrase', livePlayed.length > 0, true)
+check('and re-pointed at what was heard', livePlayed.every((n) => [2, 5, 9].includes(n)), true)
+
+// Letting go stops it. There is no recording to close and nothing to name.
+live.p.noteIn(62, 0, false, 2000)
+live.p.noteIn(65, 0, false, 2001)
+live.p.noteIn(69, 0, false, 2002)
+live.p.hearTick(2100)
+check('letting go is heard too', heard, ['D-', null])
+check('and nothing of it is left sounding', live.p.live.sounding.size, 0)
+
+// --- merge: two parts, which is what a second player in the room is ---
+live = listening({ liveMode: 'merge' })
+live.p.setScore(parseScore('C F', { beatsPerBar: 4 }))
+live.p.tick(1)
+check('the chart plays its own chord', live.e.log.filter((l) => l[0] === 'on').length > 0, true)
+live.e.log.length = 0
+live.p.noteIn(62, 100, true, 1000)
+live.p.noteIn(65, 100, true, 1005)
+live.p.noteIn(69, 100, true, 1010)
+live.p.hearTick(1100)
+for (let t = 2; t <= 40; t++) live.p.tick(t)
+const merged = live.e.log.filter((l) => l[0] === 'on').map((l) => l[1] % 12)
+check('and the hands play over the top of it', merged.some((n) => [2, 5, 9].includes(n)), true)
+
+// --- override: the hands decide the harmony ---
+live = listening({ liveMode: 'override' })
+live.p.setScore(parseScore('C F', { beatsPerBar: 4 }))
+live.p.noteIn(62, 100, true, 1000)
+live.p.noteIn(65, 100, true, 1005)
+live.p.noteIn(69, 100, true, 1010)
+live.p.hearTick(1100)
+live.e.log.length = 0
+for (let t = 1; t <= 40; t++) live.p.tick(t)
+const over = live.e.log.filter((l) => l[0] === 'on').map((l) => l[1] % 12)
+check('the chart holds its tongue', over.every((n) => [2, 5, 9].includes(n)), true)
+check('and something is still playing', over.length > 0, true)
+
+// Letting go hands the chart back, at the chord it was already on.
+live.p.noteIn(62, 0, false, 2000)
+live.p.noteIn(65, 0, false, 2001)
+live.p.noteIn(69, 0, false, 2002)
+live.e.log.length = 0
+live.p.hearTick(2100)
+const resumed = live.e.log.filter((l) => l[0] === 'on').map((l) => l[1] % 12)
+check('the chart comes back when the hands come off', resumed.sort(), [0, 4, 7])
+
+// --- a held chord repeats rather than stopping ---
+// A written chord knows how long it lasts because the bar says so. A held one
+// lasts until the hands move, so the phrase comes round again.
+live = listening({ liveBars: 1 })
+live.p.setScore(parseScore('C C C', { beatsPerBar: 4 }))
+live.p.noteIn(60, 100, true, 1000)
+live.p.noteIn(64, 100, true, 1001)
+live.p.noteIn(67, 100, true, 1002)
+live.p.hearTick(1100)
+live.e.log.length = 0
+for (let t = 1; t <= 200; t++) live.p.tick(t)
+const rounds = live.e.log.filter((l) => l[0] === 'on').length
+check('a bar-long phrase plays more than once over two bars', rounds >= 4, true)
+
+// --- switched off, it hears nothing ---
+live = listening({ listen: false })
+const silent = []
+live.p.onHeard = (h) => silent.push(h)
+live.p.noteIn(60, 100, true, 1000)
+live.p.noteIn(64, 100, true, 1001)
+live.p.hearTick(1100)
+check('with listening off nothing is heard', silent, [])
 
 // --- phrase playback, re-pointed at each chord ---
 engine = new FakeEngine(); settings = makeSettings(); player = new Player(engine, settings)

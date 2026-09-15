@@ -204,7 +204,7 @@ never writes to it, because the hosts that will not host a MIDI effect are the s
 will not host an instrument with no bus. One implementation, two declarations.
 
 Incoming MIDI passes through untouched in both. A chord generator that swallowed the keys
-underneath it would make the track unplayable, and phrase capture needs to see them anyway.
+underneath it would make the track unplayable, and Mr. Accompany Me needs to hear them.
 
 **A changed plugin code needs `killall -9 AudioComponentRegistrar`.** macOS caches the component
 registry, and until it is rebuilt `auval` says `didn't find the component` for a plugin that is
@@ -266,7 +266,7 @@ in JavaScriptCore, which is the engine the plugin embeds, so it is not a stand-i
 four phrases, one chart, and typing a chord changes all four.
 
 **Phase 4 — what only makes sense live.** The accent, which cannot be precompiled because it is
-pressed; MIDI learn against the host's own input; phrase capture from the incoming stream.
+pressed; MIDI learn against the host's own input; hearing the incoming stream as chords.
 
 **Phase 5 — shipping.** Editor size persistence, `pluginval`, signing, notarisation, CI, and the
 four-character codes decided before anything leaves the machine.
