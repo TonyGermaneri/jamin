@@ -225,6 +225,12 @@ const preview = computed(() => {
 
 const folderInput = ref(null)
 
+/** Bytes, as somebody would say them. */
+function inGigabytes(bytes) {
+  const mb = (bytes || 0) / 1024 / 1024
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`
+}
+
 /** Everything the sampling found, minus the pitch list, which is machinery
     rather than something to read. */
 function setFacts(set) {
@@ -760,6 +766,14 @@ function resetMap() {
               <span v-else>Add a folder of drum MIDI and it reads what is in it.</span>
               <InfoTip>
                 <span v-if="state.host.active">
+                  Point at one pack and it becomes one library. Point at a folder with fifty
+                  packs in it and each becomes its own library, because that is the level a
+                  vendor's name is at, and a note map belongs to a vendor rather than to a
+                  collection. Everything below a pack is its shelves.
+                  <br /><br />
+                  Stopping leaves what has been read where it is; starting again carries on from
+                  the pack it stopped in rather than beginning over.
+                  <br /><br />
                   A plugin can reach the filesystem, so a library is pointed at rather than
                   swallowed: what is kept here is an index — what each pattern is called, how long
                   it is, what shelf it sits on — and the notes stay in the file, read at the moment
@@ -799,13 +813,35 @@ function resetMap() {
                      style="display: none" @change="onFolderPicked" />
 
               <template v-if="state.drumImport.running">
-                <v-progress-circular indeterminate size="18" width="2" />
+                <!-- Shelves rather than files: the number of folders is known
+                     the moment the tree is walked, and the number of files in
+                     them is not known until they have been read. A real
+                     fraction beats a spinner that could mean five minutes or an
+                     hour. -->
+                <v-progress-circular
+                  v-if="!state.drumImport.shelves" indeterminate size="18" width="2" />
+                <v-progress-circular
+                  v-else size="18" width="2"
+                  :model-value="100 * state.drumImport.shelvesDone / state.drumImport.shelves"
+                />
                 <span class="text-caption">
-                  {{ state.drumImport.name }} —
-                  {{ state.drumImport.read.toLocaleString() }} of
-                  {{ state.drumImport.total.toLocaleString() }}
+                  <template v-if="state.drumImport.packs > 1">
+                    {{ state.drumImport.pack || state.drumImport.name }} —
+                    pack {{ state.drumImport.packsDone + 1 }} of
+                    {{ state.drumImport.packs }} ·
+                    {{ state.drumImport.read.toLocaleString() }} read
+                  </template>
+                  <template v-else>
+                    {{ state.drumImport.name }} —
+                    {{ state.drumImport.read.toLocaleString() }}<template
+                      v-if="state.drumImport.total"> of
+                      {{ state.drumImport.total.toLocaleString() }}</template>
+                  </template>
                   <span v-if="state.drumImport.skipped">
                     · {{ state.drumImport.skipped.toLocaleString() }} skipped
+                  </span>
+                  <span v-if="state.drumImport.packsKept">
+                    · {{ state.drumImport.packsKept.toLocaleString() }} already here
                   </span>
                 </span>
                 <v-btn size="x-small" variant="text" @click="cancelDrumImport">Stop</v-btn>
@@ -826,8 +862,12 @@ function resetMap() {
                 <tr v-for="set in state.drumSets" :key="set.id">
                   <td class="text-body-2">
                     {{ set.name }}
-                    <div v-if="set.byReference" class="text-caption text-medium-emphasis"
-                         :title="set.root">played from disk</div>
+                    <div v-if="set.byReference || set.partial"
+                         class="text-caption text-medium-emphasis" :title="set.root">
+                      <span v-if="set.byReference">played from disk</span>
+                      <span v-if="set.byReference && set.partial"> · </span>
+                      <span v-if="set.partial">stopped part way</span>
+                    </div>
                   </td>
                   <td class="text-caption">{{ (set.count || 0).toLocaleString() }}</td>
                   <td style="min-width: 190px">
@@ -849,6 +889,12 @@ function resetMap() {
                         have nowhere to go on this kit
                         <span v-if="unplayable(set).percent > 10">— try another map</span>
                       </span>
+                    </div>
+                    <!-- Why, when the classifier gave up. A pack of chromatic
+                         runs is how a sample library indexes itself and is not a
+                         kit; an empty box does not say that. -->
+                    <div v-if="set.kitReason" class="mb-1 text-medium-emphasis">
+                      No map could be worked out — {{ set.kitReason }}
                     </div>
                     <!-- What the classifier made of the shelves inside. A pack
                          disagrees with itself often enough that this is worth
@@ -873,7 +919,13 @@ function resetMap() {
               </tbody>
             </v-table>
 
-            <div v-else class="text-caption text-medium-emphasis pa-4">
+            <div v-if="state.drumSets.length && state.drumStorage.quota"
+                 class="text-caption text-medium-emphasis mt-2">
+              The catalogue is using {{ inGigabytes(state.drumStorage.usage) }} of the
+              {{ inGigabytes(state.drumStorage.quota) }} this machine will give it.
+            </div>
+
+            <div v-else-if="!state.drumSets.length" class="text-caption text-medium-emphasis pa-4">
               No libraries yet. The bundled corpus is on the Grooves tab and works without any.
             </div>
           </v-window-item>

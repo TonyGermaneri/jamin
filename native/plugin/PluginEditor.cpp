@@ -238,10 +238,16 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                                return complete (juce::var (juce::Array<juce::var>()));
 
                            const int limit = args.size() >= 2 ? (int) args[1] : 200000;
+                           // Recursive by default, because a folder somebody
+                           // points at is usually a tree. The batch importer
+                           // turns it off and walks the tree itself, a shelf at
+                           // a time, so no single answer is thirty megabytes of
+                           // path.
+                           const bool deep = args.size() >= 3 ? (bool) args[2] : true;
 
                            juce::Array<juce::var> found;
                            for (const auto& entry : juce::RangedDirectoryIterator (
-                                    folder, true, "*.mid;*.midi", juce::File::findFiles))
+                                    folder, deep, "*.mid;*.midi", juce::File::findFiles))
                            {
                                if (found.size() >= limit)
                                    break;
@@ -278,6 +284,71 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                            // array of forty thousand numbers costs more to build
                            // and parse than the file does to read.
                            complete (juce::var (block.toBase64Encoding()));
+                       })
+                   .withNativeFunction ("jaminListTree",
+                       [] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // Every shelf under a folder, as paths relative to
+                           // it, the root itself first. A collection of eight
+                           // hundred thousand files is a few thousand
+                           // directories, so this is small where a list of the
+                           // files would not be -- and it is what lets the
+                           // import go shelf by shelf.
+                           if (args.isEmpty())
+                               return complete (juce::var (juce::Array<juce::var>()));
+
+                           const juce::File folder { args[0].toString() };
+                           if (! folder.isDirectory())
+                               return complete (juce::var (juce::Array<juce::var>()));
+
+                           const int limit = args.size() >= 2 ? (int) args[1] : 50000;
+
+                           juce::Array<juce::var> found;
+                           found.add (juce::var (juce::String()));
+
+                           for (const auto& entry : juce::RangedDirectoryIterator (
+                                    folder, true, "*", juce::File::findDirectories))
+                           {
+                               if (found.size() >= limit)
+                                   break;
+                               found.add (entry.getFile().getRelativePathFrom (folder));
+                           }
+
+                           complete (juce::var (found));
+                       })
+                   .withNativeFunction ("jaminReadFiles",
+                       [] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // A batch of files in one crossing. Reading eight
+                           // hundred thousand one at a time is eight hundred
+                           // thousand round trips through the bridge, and the
+                           // round trip costs more than the read does -- these
+                           // are two-kilobyte files.
+                           if (args.size() < 2 || ! args[1].isArray())
+                               return complete (juce::var (juce::Array<juce::var>()));
+
+                           const juce::File root { args[0].toString() };
+                           const auto& wanted = *args[1].getArray();
+
+                           juce::Array<juce::var> out;
+                           for (const auto& relative : wanted)
+                           {
+                               const auto file = root.getChildFile (relative.toString());
+
+                               // Inside the folder that was chosen, and nowhere
+                               // else. @see jaminReadFile
+                               juce::MemoryBlock block;
+                               if (! file.isAChildOf (root) || ! file.existsAsFile()
+                                   || ! file.loadFileAsData (block))
+                               {
+                                   out.add (juce::var());
+                                   continue;
+                               }
+
+                               out.add (juce::var (block.toBase64Encoding()));
+                           }
+
+                           complete (juce::var (out));
                        })
                    .withNativeFunction ("jaminOpenUrl",
                        [] (const juce::Array<juce::var>& args, auto complete)

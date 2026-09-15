@@ -14,7 +14,9 @@ import { hosted, hostData, callHost, onHost, HostClock } from './core/host.js'
 import { nodeAvailable, Session, httpTransport, hostTransport, localTransport } from './core/net.js'
 import { loadDrums, loadedDrums, drumReport, buildDrumTrack, matchingFill, fitsBars } from './core/drums.js'
 import { kitById, cleanKitMap, classifyKit } from './core/drumKits.js'
-import { readGrooveFile, describeSet, packGroove, unpackGroove, spread } from './core/drumImport.js'
+import {
+  readGrooveFile, describeSet, packGroove, unpackGroove, spread, planPacks, slashes, reservoir,
+} from './core/drumImport.js'
 import {
   listSets, putSet, deleteSet, putGrooves, countGrooves,
   searchGrooves, grooveFacets, getGrooves,
@@ -107,7 +109,17 @@ export const state = reactive({
   drumHits: [],
   drumSearch: { scanned: 0, partial: false },
   drumFilters: { set: '', kind: '', bars: 0, signature: '', text: '', folder: '' },
-  drumImport: { running: false, read: 0, total: 0, skipped: 0, name: '', cancel: false },
+  // A batch job. `total` is the browser's, which knows how many files it was
+  // handed; the plugin walks a tree it has not counted, so it measures itself in
+  // packs and shelves, which it does know up front.
+  drumImport: {
+    running: false, read: 0, total: 0, skipped: 0, name: '', cancel: false,
+    readBase: 0, skippedBase: 0,
+    packs: 0, packsDone: 0, packsKept: 0, packsMade: 0, pack: '',
+    shelves: 0, shelvesDone: 0, trouble: '',
+  },
+  // What the catalogue is taking on disk, when the browser will say.
+  drumStorage: { usage: 0, quota: 0 },
   drumBindings: {},
   drumAccent: null,
   // What is being heard right now: the section the playhead is in, and the drums
@@ -841,92 +853,259 @@ function buildDrumSpansForRequest() {
 
 export async function refreshDrumSets() {
   state.drumSets = await listSets()
+  if (state.drumSets.length) measureStorage()
   return state.drumSets
 }
 
 /**
- * A library the plugin points at rather than swallows.
+ * Libraries the plugin points at rather than swallows.
  *
  * Inside a plugin the filesystem is right there and the page has no business
  * copying half a gigabyte of somebody else's MIDI into a browser database to
- * play it. So the folder is scanned natively, each file is read once to work out
+ * play it. So the tree is walked natively, each file is read once to work out
  * what it is, and only the *index* is kept -- what it is called, how long it is,
  * what shelf it sits on, what the file said about itself. The notes stay in the
  * file and are read at the moment something needs to play them.
  *
- * The browser build cannot do this. A web page has no path to point at, so there
- * it keeps the notes and this is never reached.
+ * **One click, many libraries.** What somebody actually points at is usually a
+ * collection of collections: fifty vendors' packs side by side, two of them
+ * holding most of the files. Each becomes its own library, because that is the
+ * level a vendor's name is at and a note map belongs to a vendor. @see planPacks
+ *
+ * It is a batch job and it is meant to be interrupted. Stopping leaves the packs
+ * that finished alone and marks the one it was in; starting again skips what is
+ * whole and finishes what is not.
+ *
+ * The browser build cannot do any of this. A web page has no path to point at,
+ * so there it keeps the notes and this is never reached.
  */
 export async function importDrumFolderByReference() {
   const chosen = await callHost('jaminChooseFolder').catch(() => null)
   if (!chosen || !chosen.path) return null
 
-  const paths = await callHost('jaminScanFolder', chosen.path).catch(() => [])
-  if (!paths || !paths.length) {
-    toast('No MIDI files in there')
+  const tree = (await callHost('jaminListTree', chosen.path).catch(() => [])) || []
+  const packs = planPacks(chosen, tree)
+  if (!packs.length) {
+    toast('Nothing that looks like a drum library in there')
     return null
   }
 
   const progress = state.drumImport
   Object.assign(progress, {
-    running: true, read: 0, skipped: 0, total: paths.length,
-    name: chosen.name || 'library', cancel: false,
+    running: true, read: 0, skipped: 0, total: 0, cancel: false,
+    readBase: 0, skippedBase: 0,
+    name: chosen.name || 'library',
+    packs: packs.length, packsDone: 0, packsKept: 0, packsMade: 0, pack: '',
+    shelves: packs.reduce((sum, pack) => sum + pack.shelves.length, 0), shelvesDone: 0,
+    trouble: '',
   })
 
-  const setId = `s${Date.now().toString(36)}`
-  const perFolder = new Map()
-  const samples = []
-  let index = 0
-  let batch = []
+  // What is already here and whole. A pack that was stopped part way is not:
+  // skipping it would mean an interrupted job could never be finished, only
+  // restarted from nothing.
+  const already = new Set(state.drumSets.filter((set) => !set.partial).map((set) => set.id))
+  const unfinished = new Set(state.drumSets.filter((set) => set.partial).map((set) => set.id))
 
-  for (const path of paths) {
+  for (const pack of packs) {
     if (progress.cancel) break
 
-    const groove = await readByReference(chosen.path, path)
-    if (!groove) { progress.skipped++; continue }
+    // Already here. Re-reading three hundred thousand files to arrive at rows
+    // that are already in the database would make an interrupted job start over
+    // rather than carry on.
+    if (already.has(pack.id)) {
+      progress.packsDone++
+      progress.packsKept++
+      progress.shelvesDone += pack.shelves.length
+      continue
+    }
 
-    progress.read++
-    if (samples.length < 120) samples.push(groove)
+    progress.pack = pack.name
+    // The rows a stopped run left behind, cleared before the second attempt:
+    // they are numbered from the start of the pack, and a shorter second pass
+    // would leave the tail of the first one orphaned.
+    if (unfinished.has(pack.id)) await deleteSet(pack.id)
+    const ok = await importOnePack(pack, progress)
+    progress.packsDone++
+    if (!ok) break
+  }
 
-    let hist = perFolder.get(groove.folder)
-    if (!hist) { hist = {}; perFolder.set(groove.folder, hist) }
-    for (const note of groove.notes) hist[note.note] = (hist[note.note] || 0) + 1
+  progress.running = false
+  progress.pack = ''
+  await refreshDrumSets()
+  await searchDrums()
 
-    // Without the notes: this row is a pointer, not a copy.
-    batch.push(packGroove(groove, setId, index++, { byReference: true }))
+  const made = progress.packsMade
+  toast(progress.trouble
+    ? progress.trouble
+    : `${progress.read.toLocaleString()} patterns from ${made.toLocaleString()} pack${made === 1 ? '' : 's'}`)
 
-    if (batch.length >= 500) {
-      await putGrooves(batch)
-      batch = []
-      await new Promise((resume) => setTimeout(resume, 0))
+  return packs.length
+}
+
+/** How many files are read in one crossing of the bridge. These are
+    two-kilobyte files and the crossing costs more than the read, so they go in
+    handfuls -- but a handful small enough that the interface gets a turn. */
+const READ_BATCH = 64
+
+/**
+ * One library, shelf by shelf.
+ *
+ * Shelf by shelf rather than all at once because a single pack here holds four
+ * hundred thousand files, and asking for that list in one answer is thirty
+ * megabytes of path crossing the bridge before anything has been read. A shelf
+ * is a few hundred, and it is also the unit progress is counted in.
+ *
+ * Returns false if the job should stop -- which means the database is full,
+ * the one failure that must not be shrugged off. Everything else that can go
+ * wrong with a scraped collection is one bad file, and one bad file is skipped.
+ */
+async function importOnePack(pack, progress) {
+  const perFolder = new Map()
+  // Spread over the whole library rather than the first shelf of it. @see
+  // reservoir, and the same mistake caught once before in spread().
+  const samples = reservoir(120, hashOf(pack.id))
+  const pitches = new Set()
+  let index = 0
+  let batch = []
+  let kept = 0
+  let skipped = 0
+
+  for (const shelf of pack.shelves) {
+    if (progress.cancel) break
+
+    const where = shelf ? `${pack.root}/${shelf}` : pack.root
+    const files = (await callHost('jaminScanFolder', where, 200000, false).catch(() => [])) || []
+    progress.shelvesDone++
+
+    for (let at = 0; at < files.length; at += READ_BATCH) {
+      if (progress.cancel) break
+
+      const slice = files.slice(at, at + READ_BATCH).map(slashes)
+      const blobs = (await callHost('jaminReadFiles', where, slice).catch(() => [])) || []
+
+      for (let i = 0; i < slice.length; i++) {
+        const encoded = blobs[i]
+        if (typeof encoded !== 'string' || !encoded) { skipped++; continue }
+
+        // Relative to the library, not to the shelf: it is what the library is
+        // rooted at, so it is what the file is found by later. @see notesFor
+        const path = shelf ? `${shelf}/${slice[i]}` : slice[i]
+
+        let groove = null
+        try {
+          groove = readGrooveFile(base64Bytes(encoded), path)
+        } catch {
+          groove = null
+        }
+        if (!groove) { skipped++; continue }
+
+        kept++
+        samples.offer(groove)
+
+        let hist = perFolder.get(groove.folder)
+        if (!hist) { hist = {}; perFolder.set(groove.folder, hist) }
+        for (const note of groove.notes) {
+          hist[note.note] = (hist[note.note] || 0) + 1
+          pitches.add(note.note)
+        }
+
+        // Without the notes: this row is a pointer, not a copy.
+        batch.push(packGroove(groove, pack.id, index++, { byReference: true }))
+      }
+
+      // Running totals for the whole job: what earlier packs got, plus this
+      // one so far.
+      progress.read = progress.readBase + kept
+      progress.skipped = progress.skippedBase + skipped
+
+      if (batch.length >= 500) {
+        const trouble = await putGrooves(batch)
+        if (trouble) { progress.trouble = storeTrouble(trouble); return false }
+        batch = []
+        await new Promise((resume) => setTimeout(resume, 0))
+      }
     }
   }
 
-  if (batch.length) await putGrooves(batch)
+  if (batch.length) {
+    const trouble = await putGrooves(batch)
+    if (trouble) { progress.trouble = storeTrouble(trouble); return false }
+  }
 
-  const { folderKits, setKit } = classifyFolders(perFolder)
-  const count = await countGrooves(setId)
+  progress.readBase += kept
+  progress.skippedBase += skipped
+
+  // An empty folder is not a library. Writing a row for one would put fifty
+  // names in a list that plays nothing.
+  if (!kept) return true
+
+  progress.packsMade++
+  const { folderKits, setKit, reason } = classifyFolders(perFolder)
+  const drawn = samples.take()
 
   await putSet({
-    id: setId,
-    name: chosen.name || 'library',
+    id: pack.id,
+    name: pack.name,
     // Where it lives, which is the whole point: the rows are pointers into it.
-    root: chosen.path,
+    root: pack.root,
     byReference: true,
+    // Stopped part way through. The rows that were read are good and play; the
+    // row says so rather than claiming the whole folder is in.
+    partial: progress.cancel,
     kit: setKit,
     customMap: {},
     folderKits,
     folders: perFolder.size,
-    facts: samples.length ? describeSet(samples) : {},
-    count,
+    // Why, when the answer was nothing. A pack of chromatic runs -- one
+    // ascending note per beat, which is how a sample library indexes itself --
+    // is not a kit and cannot be classified as one, and saying so is more use
+    // than an empty box.
+    kitReason: setKit ? '' : reason,
+    facts: drawn.length ? describeSet(drawn, { pitches: [...pitches].sort((a, b) => a - b) }) : {},
+    count: kept,
     addedAt: Date.now(),
   })
 
-  await refreshDrumSets()
-  progress.running = false
-  toast(`${count.toLocaleString()} patterns, played from ${chosen.name}`)
-  await searchDrums()
-  return setId
+  return true
+}
+
+/**
+ * How much room the catalogue is taking, and how much there is.
+ *
+ * An index of eight hundred thousand patterns is a few hundred megabytes, which
+ * is within what a browser will store and not obviously so. A number somebody
+ * can see beats a job that stops at four hundred thousand for reasons nobody
+ * can name -- and the job does stop cleanly, @see importOnePack.
+ */
+export async function measureStorage() {
+  try {
+    if (!navigator.storage || !navigator.storage.estimate) return
+    const { usage = 0, quota = 0 } = await navigator.storage.estimate()
+    state.drumStorage = { usage, quota }
+  } catch {
+    /* a browser that will not say is not a problem to report */
+  }
+}
+
+/**
+ * What to say when the database refuses a batch.
+ *
+ * Everything written before it stays and plays, and the packs that finished are
+ * whole -- so this is where a job stops, not where it is lost. Which is worth
+ * saying, because twenty minutes in it looks like the latter.
+ */
+function storeTrouble(name) {
+  if (name === 'QuotaExceededError') {
+    return 'No more room on this machine — everything read so far is kept and plays'
+  }
+  return `The catalogue would not take more (${name}) — everything read so far is kept`
+}
+
+/** A number from a string, to seed the sampling. */
+function hashOf(text) {
+  let hash = 2166136261
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619)
+  return hash >>> 0
 }
 
 async function readByReference(root, path) {
@@ -979,10 +1158,14 @@ export async function notesFor(groove) {
 function classifyFolders(perFolder) {
   const folderKits = {}
   const tally = new Map()
+  const reasons = []
   for (const [shelf, hist] of perFolder) {
     const verdict = classifyKit(hist)
     folderKits[shelf] = verdict.kit
     tally.set(verdict.kit, (tally.get(verdict.kit) || 0) + 1)
+    if (!verdict.kit && verdict.reason && !reasons.includes(verdict.reason)) {
+      reasons.push(verdict.reason)
+    }
   }
 
   const known = [...tally.entries()].filter(([kit]) => kit)
@@ -993,7 +1176,7 @@ function classifyFolders(perFolder) {
     if (!folderKits[shelf] || folderKits[shelf] === setKit) delete folderKits[shelf]
   }
 
-  return { folderKits, setKit }
+  return { folderKits, setKit, reason: setKit ? '' : reasons[0] || '' }
 }
 
 /** A library, read. `files` is whatever a directory picker handed over. */
@@ -1007,7 +1190,8 @@ export async function importDrumFolder(files, name) {
   const progress = state.drumImport
   Object.assign(progress, {
     running: true, read: 0, skipped: 0, total: list.length,
-    name: name || 'library', cancel: false,
+    name: name || 'library', cancel: false, trouble: '',
+    packs: 0, packsDone: 0, packsKept: 0, packsMade: 0, pack: '', shelves: 0, shelvesDone: 0,
   })
 
   const setId = `s${Date.now().toString(36)}`
@@ -1045,6 +1229,10 @@ export async function importDrumFolder(files, name) {
   // Measured across this collection, packs genuinely disagree with themselves:
   // one folder is General MIDI and the next is a pad layout.
   const perFolder = new Map()
+  // Every pitch the library uses, not every pitch the sample uses. It is what
+  // says how much of a library the chosen kit has no drum for, and a sample
+  // would understate it. @see describeSet
+  const pitches = new Set()
 
   for (const file of list) {
     if (progress.cancel) break
@@ -1057,7 +1245,10 @@ export async function importDrumFolder(files, name) {
       const shelf = groove.folder
       let hist = perFolder.get(shelf)
       if (!hist) { hist = {}; perFolder.set(shelf, hist) }
-      for (const note of groove.notes) hist[note.note] = (hist[note.note] || 0) + 1
+      for (const note of groove.notes) {
+        hist[note.note] = (hist[note.note] || 0) + 1
+        pitches.add(note.note)
+      }
     } else {
       progress.skipped++
     }
@@ -1065,29 +1256,45 @@ export async function importDrumFolder(files, name) {
     // Written in batches so a library of several hundred thousand can be
     // interrupted, and so the page is not held for a minute at a time.
     if (batch.length >= 400) {
-      await putGrooves(batch)
+      // A browser keeps the notes rather than pointing at them, so this is the
+      // build that fills a database up. Stopping and saying so beats reading
+      // another hour of files into nowhere.
+      const trouble = await putGrooves(batch)
+      if (trouble) { progress.trouble = storeTrouble(trouble); break }
       batch = []
       await new Promise((resume) => setTimeout(resume, 0))
     }
   }
 
-  if (batch.length) await putGrooves(batch)
+  if (batch.length && !progress.trouble) {
+    const trouble = await putGrooves(batch)
+    if (trouble) progress.trouble = storeTrouble(trouble)
+  }
 
   // Each shelf gets the map its own notes say it was written for.
-  const { folderKits, setKit } = classifyFolders(perFolder)
+  const { folderKits, setKit, reason } = classifyFolders(perFolder)
 
   const count = await countGrooves(setId)
   await putSet({
     id: setId, name: name || 'library', kit: setKit, customMap: {},
     folderKits, folders: perFolder.size,
-    facts, count, addedAt: Date.now(),
+    kitReason: setKit ? '' : reason,
+    partial: Boolean(progress.cancel || progress.trouble),
+    // Now with every pitch rather than the sample's, which is only knowable
+    // once the whole library has gone past.
+    facts: samples.length
+      ? describeSet(samples, { pitches: [...pitches].sort((a, b) => a - b) })
+      : facts,
+    count, addedAt: Date.now(),
   })
   await refreshDrumSets()
 
   progress.running = false
-  toast(progress.cancel
-    ? `Stopped — ${count.toLocaleString()} kept`
-    : `${count.toLocaleString()} patterns from ${name || 'the folder'}`)
+  toast(progress.trouble
+    ? progress.trouble
+    : progress.cancel
+      ? `Stopped — ${count.toLocaleString()} kept`
+      : `${count.toLocaleString()} patterns from ${name || 'the folder'}`)
 
   await searchDrums()
   return setId

@@ -548,18 +548,29 @@ Licence before download, every time.
   redistributed here. (The GitHub repo's Apache-2.0 covers the code, not the
   data.) jamin therefore ships the *converter*, not the data: download it
   yourself and paste it into the importer. Your own use stays within CC-BY-NC.
-- **The Groove MIDI Dataset** (`src/data/grooveDrums.json`, 1.3MB of drum
+- **The Groove MIDI Dataset** (`src/data/grooveDrums.json`, 6.5MB of drum
   grooves) is **CC-BY-4.0**, which is one-way compatible with GPLv3 — so it is
-  the one corpus here that can be bundled outright, and it is. What ships is a
-  derived work: 1,150 human performances cut into loopable excerpts, with the
-  fills kept whole and the timing rounded to jamin's 24 pulses per quarter. The
-  attribution and the method are in `src/data/grooveDrums.LICENSE`, and
+  the one corpus here that can be bundled outright, and it is. What ships is
+  1,150 whole human performances — 391 songs, 647 fills, 112 beats, from one bar
+  to 639 — with nothing cut and nothing thrown away. The only change is the
+  timing, rounded to jamin's 24 pulses per quarter. It cost 5MB of bundle to
+  keep them whole and it was the right trade: these are takes, and a take cut
+  at an arbitrary bar line is not a shorter take, it is a broken one.
+  Attribution and method are in `src/data/grooveDrums.LICENSE`, and
   `scripts/extract_groove.mjs` rebuilds it from the original.
-- **Your own drum library** is imported, never bundled. Point jamin at a folder
-  and it reads what is there into this browser's own database; nothing is
-  copied into the project and nothing leaves the machine. Commercial MIDI packs
+- **Your own drum library** is imported, never bundled. Commercial MIDI packs
   and internet scrapes are both squarely in this category — a library you
   bought is yours to use and not ours to ship.
+
+  In the browser, pointing at a folder copies what is in it into that browser's
+  own database. In the plugin it does not copy at all: the tree is walked, an
+  index is built, and the files play from where they already live. Point at one
+  pack and it becomes one library; point at a folder of fifty packs and each
+  becomes its own, because a note map belongs to a vendor rather than to a
+  collection. A collection of 774,000 files across 25,000 shelves indexes to
+  about 160MB and takes a while, so it is a batch job: stopping leaves the packs
+  that finished alone, and starting again finishes the one it stopped in.
+  Nothing is copied into the project and nothing leaves the machine.
 - Several jazz corpora that fit the notation almost perfectly state **no licence
   at all** and are transcriptions of copyrighted songs. Import-only, never
   bundled.

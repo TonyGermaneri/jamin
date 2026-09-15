@@ -107,4 +107,82 @@ check('its notes', back.notes, [{ at: 0, note: 36, duration: 6, velocity: 110 }]
 check('and what the file said about itself', back.meta.track, 'GrooveMonkee')
 check('knowing which library it came from', back.setId, 'set1')
 
+/* ---------------- sampling a stream ------------------------------------- */
+// An import walks a tree it cannot hold, and keeping the first hundred keeps
+// the first shelf -- the mistake spread() exists to avoid, wearing different
+// clothes.
+const stream = reservoir(10, 12345)
+for (let i = 0; i < 1000; i++) stream.offer(i)
+check('it keeps what it was asked for', stream.take().length, 10)
+check('and knows how much went past', stream.seen, 1000)
+// Not the first ten, which is the whole point.
+check('and not the head of the stream', stream.take().every((n, i) => n === i), false)
+// Spread over the stream rather than bunched in it: the last of a thousand
+// should not all be under ten.
+check('drawn from all of it', stream.take().some((n) => n > 500), true)
+
+const again = reservoir(10, 12345)
+for (let i = 0; i < 1000; i++) again.offer(i)
+check('the same folder samples the same files', again.take(), stream.take())
+
+const small = reservoir(10, 1)
+for (let i = 0; i < 4; i++) small.offer(i)
+check('a stream shorter than the sample is all of it', small.take(), [0, 1, 2, 3])
+
+// What says how much of a library a kit has no drum for. A sample would
+// understate it, so the caller counts every pitch and hands them over.
+check('an exact pitch list beats a sampled one',
+      describeSet([{ meta: {}, notes: [{ note: 36 }] }], { pitches: [36, 42, 99] }).pitches,
+      [36, 42, 99])
+check('and the verdict follows the exact list',
+      describeSet([{ meta: {}, notes: [{ note: 36 }] }], { pitches: [36, 42, 99] }).kit,
+      'wider than General MIDI')
+
+/* ---------------- a collection of collections --------------------------- */
+// The real shape of somebody's accumulated library: fifty vendors' packs side
+// by side, two of them holding most of the files. Importing that as one library
+// would be one row of eight hundred thousand patterns and one note map covering
+// fifty vendors who each wrote for a different one.
+const collection = planPacks(
+  { path: '/Volumes/external/800k-drums', name: '800k-drums' },
+  ['', 'Bossa', 'Analogue Drums', 'Analogue Drums/Fills', 'Analogue Drums/Fills/2 bar',
+   'GM MIDI Pack', 'GM MIDI Pack/GM - Blues', 'GM MIDI Pack/GM - Rock 1']
+)
+
+// The loose shelf first, then one per folder at the top.
+check('one library per pack', collection.map((pack) => pack.name),
+      ['800k-drums', 'Bossa', 'Analogue Drums', 'GM MIDI Pack'])
+check('rooted where it lives', collection[2].root, '/Volumes/external/800k-drums/Analogue Drums')
+check('everything below it is its shelves', collection[2].shelves,
+      ['', 'Fills', 'Fills/2 bar'])
+check('a pack with no shelves is just itself', collection[1].shelves, [''])
+// The chosen folder's own files, if it has any. The shelf is scanned and no
+// library is written when nothing is on it.
+check('loose files get a shelf too', collection[0].shelves, [''])
+check('and it is rooted at the folder that was chosen', collection[0].root,
+      '/Volumes/external/800k-drums')
+
+// A plain pack is one library, exactly as before -- the rule needs no
+// configuring and no knowledge of any particular collection.
+const plain = planPacks({ path: '/loops/Funk Drums', name: 'Funk Drums' }, [''])
+check('a folder with no folders in it is one library', plain.length, 1)
+check('named after itself', plain[0].name, 'Funk Drums')
+check('with the whole tree as its shelves', plain[0].shelves, [''])
+
+// Windows hands back backslashes and every path here is compared and joined.
+const windows = planPacks(
+  { path: 'D:\\drums', name: 'drums' },
+  ['', 'Rock', 'Rock\\Fills']
+)
+check('backslashes are separators too', windows[1].shelves, ['', 'Fills'])
+check('and roots are built with one kind', windows[1].root, 'D:/drums/Rock')
+
+// Stable, so a job that stops picks up where it left off rather than importing
+// everything a second time.
+check('a folder always gets the same name',
+      idForPath('/x/Analogue Drums'), idForPath('/x/Analogue Drums'))
+check('and two folders do not share one',
+      idForPath('/x/Analogue Drums') === idForPath('/x/Vintage Drums'), false)
+check('nor do near misses', idForPath('/x/a') === idForPath('/x/b'), false)
+
 console.log(failed ? `drum-import: ${failed} FAILED` : 'drum-import: all checks passed')

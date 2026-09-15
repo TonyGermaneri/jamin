@@ -115,15 +115,33 @@ export async function deleteSet(id) {
 
 /* --------------------------------------------------------------- grooves */
 
-/** A batch. Import writes in batches so a library of several hundred thousand
-    can be interrupted, and so the page is not held for a minute at a time. */
+/**
+ * A batch. Import writes in batches so a library of several hundred thousand
+ * can be interrupted, and so the page is not held for a minute at a time.
+ *
+ * Returns nothing when it worked and the browser's own name for the trouble
+ * when it did not -- `QuotaExceededError`, most likely, twenty minutes into a
+ * job. Guessing at the reason in a message is worse than repeating the one
+ * word the browser used, which is a word somebody can look up.
+ */
 export async function putGrooves(rows) {
   const db = await open()
-  if (!db || !rows.length) return false
+  if (!db) return 'NoDatabase'
+  if (!rows.length) return ''
+
   const tx = db.transaction(GROOVES, 'readwrite')
   const store = tx.objectStore(GROOVES)
-  for (const row of rows) store.put(row)
-  return done(tx)
+  try {
+    for (const row of rows) store.put(row)
+  } catch (error) {
+    return (error && error.name) || 'UnknownError'
+  }
+
+  return new Promise((resolve) => {
+    tx.oncomplete = () => resolve('')
+    tx.onerror = () => resolve((tx.error && tx.error.name) || 'UnknownError')
+    tx.onabort = () => resolve((tx.error && tx.error.name) || 'AbortError')
+  })
 }
 
 export async function countGrooves(setId = null) {
@@ -238,8 +256,19 @@ export async function grooveFacets(setId = null, sample = 8000) {
   const db = await open()
   if (!db) return { folders: [], kinds: [], bars: [], signatures: [] }
 
-  const store = db.transaction(GROOVES, 'readonly').objectStore(GROOVES)
-  const source = setId ? store.index('set').openCursor(IDBKeyRange.only(setId)) : store.openCursor()
+  const tx = db.transaction(GROOVES, 'readonly')
+  const store = tx.objectStore(GROOVES)
+  const range = setId ? IDBKeyRange.only(setId) : undefined
+  const holds = setId ? await ask(store.index('set').count(range)).catch(() => 0)
+                      : await ask(store.count()).catch(() => 0)
+
+  // Every nth row rather than the first n. Rows arrive in the order they were
+  // imported, which is the order of the tree, so the first eight thousand of a
+  // library of four hundred thousand are its first few shelves -- and its
+  // filters would offer those shelves and no others. @see spread, which is the
+  // same mistake caught once before.
+  const stride = holds > sample ? Math.floor(holds / sample) : 1
+  const source = setId ? store.index('set').openCursor(range) : store.openCursor()
 
   const folders = new Map()
   const kinds = new Map()
@@ -263,7 +292,8 @@ export async function grooveFacets(setId = null, sample = 8000) {
       bump(kinds, row.k)
       bump(bars, row.r)
       bump(signatures, row.t)
-      cursor.continue()
+      if (stride > 1) cursor.advance(stride)
+      else cursor.continue()
     }
     source.onerror = () => resolve()
   })

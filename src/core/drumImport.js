@@ -169,6 +169,44 @@ export function spread(list, count) {
 }
 
 /**
+ * The same, for something being read rather than something already read.
+ *
+ * @see spread is for a list that is all there; this is for a stream. An import
+ * walks a tree of a hundred thousand files and cannot hold them, and keeping
+ * the first hundred keeps the first shelf -- the same mistake spread exists to
+ * avoid, wearing different clothes.
+ *
+ * Reservoir sampling, seeded, so the same folder samples the same files every
+ * time: a classification that changed between two runs over unchanged files
+ * would be untrustworthy even when it was right.
+ */
+export function reservoir(size, seed = 1) {
+  const kept = []
+  let seen = 0
+  let state = (seed >>> 0) || 1
+
+  // xorshift32. Nothing here needs a good generator, it needs the same one
+  // twice.
+  const next = () => {
+    state ^= state << 13; state >>>= 0
+    state ^= state >>> 17
+    state ^= state << 5; state >>>= 0
+    return state / 0x100000000
+  }
+
+  return {
+    offer(item) {
+      seen++
+      if (kept.length < size) { kept.push(item); return }
+      const at = Math.floor(next() * seen)
+      if (at < size) kept[at] = item
+    },
+    take: () => kept,
+    get seen() { return seen },
+  }
+}
+
+/**
  * What a whole folder has in common.
  *
  * Read from a sample rather than from everything: a hundred files say as much
@@ -180,7 +218,7 @@ export function spread(list, count) {
  * the *pattern's* name differs in every file and tells you nothing about the
  * folder; one that is the library's name is the same in all of them.
  */
-export function describeSet(samples, { agreement = 0.6, limit = 12 } = {}) {
+export function describeSet(samples, { agreement = 0.6, limit = 12, pitches: exact = null } = {}) {
   const counts = new Map()
 
   for (const groove of samples) {
@@ -201,8 +239,12 @@ export function describeSet(samples, { agreement = 0.6, limit = 12 } = {}) {
   // What the notes themselves say about which kit this was written for. A pack
   // that never goes outside General MIDI's percussion range is probably GM; one
   // that uses pitches below 35 is certainly not.
-  const pitches = new Set()
-  for (const groove of samples) for (const note of groove.notes) pitches.add(note.note)
+  // Every pitch the library uses, not every pitch the sample uses, when the
+  // caller has been counting: this is what says how much of a library a kit has
+  // no drum for, and a sample would understate it. A set of at most a hundred
+  // and twenty-eight numbers costs nothing to keep exactly.
+  const pitches = exact ? new Set(exact) : new Set()
+  if (!exact) for (const groove of samples) for (const note of groove.notes) pitches.add(note.note)
   if (pitches.size) {
     const low = Math.min(...pitches)
     const high = Math.max(...pitches)
@@ -219,6 +261,72 @@ export function describeSet(samples, { agreement = 0.6, limit = 12 } = {}) {
   return { ...facts, pitches: [...pitches].sort((a, b) => a - b) }
 }
 
+/** Whatever the platform's separator is, one separator. Windows hands back
+    backslashes and every path here is compared, split and joined. */
+export function slashes(path) {
+  return String(path || '').replace(/\\/g, '/')
+}
+
+/**
+ * Which folders are libraries.
+ *
+ * A collection of collections is the normal shape of a drum library somebody has
+ * actually accumulated: fifty vendors' packs sitting next to each other, each
+ * with its own shelves inside it. Importing that as one library would be one row
+ * holding eight hundred thousand patterns, one kit setting covering fifty
+ * vendors who each wrote for a different one, and no way to remove any of it
+ * without removing all of it.
+ *
+ * So the folders directly inside the chosen one are the libraries, and
+ * everything below each is its shelves. That is the level a vendor's name is at,
+ * which is the level a note map belongs to.
+ *
+ * A folder with no folders in it is simply itself -- one library, as before. The
+ * rule needs no configuring and no knowledge of this particular collection.
+ */
+export function planPacks(chosen, treeIn) {
+  const root = slashes(chosen.path)
+  const tree = (treeIn || []).map(slashes)
+  const under = (prefix) =>
+    tree.filter((dir) => dir && dir.startsWith(prefix)).map((dir) => dir.slice(prefix.length))
+
+  const top = tree.filter((dir) => dir && !dir.includes('/'))
+  if (!top.length) {
+    return [{ id: idForPath(root), name: chosen.name || 'library', root, shelves: tree }]
+  }
+
+  const packs = top.map((name) => ({
+    id: idForPath(`${root}/${name}`),
+    name,
+    root: `${root}/${name}`,
+    shelves: ['', ...under(`${name}/`)],
+  }))
+
+  // Files loose in the chosen folder, alongside the packs. Rare, and cheap to
+  // allow for: the shelf is scanned, and if there is nothing on it no library is
+  // written. @see importOnePack
+  packs.unshift({
+    id: idForPath(root),
+    name: chosen.name || 'loose',
+    root,
+    shelves: [''],
+  })
+
+  return packs
+}
+
+/** A stable name for a folder, so a job that stops can pick up where it left
+    off rather than importing everything twice. FNV-1a, with the length mixed
+    in, which is more than enough to tell fifty folders apart. */
+export function idForPath(path) {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < path.length; i++) {
+    hash ^= path.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return `p${hash.toString(36)}${path.length.toString(36)}`
+}
+
 /**
  * The compact shape the catalogue is stored in, matching the shipped file.
  *
@@ -230,6 +338,16 @@ export function describeSet(samples, { agreement = 0.6, limit = 12 } = {}) {
  * the notes.
  */
 export function packGroove(groove, setId, index, { byReference = false } = {}) {
+  // A track name that is the file's own name is the commonest thing a library
+  // writes, and at eight hundred thousand rows it is eight hundred thousand
+  // copies of a string already in the row. Dropping it loses nothing: it is the
+  // same string.
+  const meta = {}
+  for (const [key, value] of Object.entries(groove.meta || {})) {
+    if (value === groove.name || value === `${groove.name}.mid` || value === `${groove.name}.midi`) continue
+    meta[key] = value
+  }
+
   const row = {
     id: `${setId}:${index}`,
     s: setId,
@@ -245,7 +363,7 @@ export function packGroove(groove, setId, index, { byReference = false } = {}) {
     // count and the list line says so out loud. Free here: the file has just
     // been read.
     h: groove.notes.length,
-    m: groove.meta,
+    m: meta,
   }
   if (!byReference) {
     row.v = groove.notes.map((note) => [note.at, note.note, note.duration, note.velocity])
