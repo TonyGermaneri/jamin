@@ -91,26 +91,67 @@ export async function putSet(set) {
   return done(tx)
 }
 
-/** A set and everything in it. Deleting by index rather than by scanning the
-    whole catalogue, which for a library of this size is the difference between
-    a moment and a minute. */
-export async function deleteSet(id) {
+/** How many rows go in one deleting transaction. @see deleteSet */
+const SWEEP = 2000
+
+/**
+ * A set and everything in it, a batch at a time.
+ *
+ * It used to be one transaction holding a cursor over every row in the library.
+ * For a library of three hundred and sixty thousand that is minutes of work
+ * inside a single write lock, with nothing able to report on it and nothing
+ * else able to touch the database until it finished. It looked like the
+ * program had hung, because from the outside there is no difference.
+ *
+ * So it goes in sweeps: a page of keys, a transaction to delete them, and the
+ * interface gets a turn in between. `onProgress(done, total)` is called after
+ * each one, which is the whole point -- a number that moves is the difference
+ * between waiting and despairing.
+ *
+ * The set's own row goes last. While it is there the library is still listed,
+ * still says how many patterns it had, and a removal interrupted half way can
+ * simply be asked for again.
+ */
+export async function deleteSet(id, onProgress = null) {
   const db = await open()
   if (!db) return false
 
-  const tx = db.transaction([SETS, GROOVES], 'readwrite')
-  tx.objectStore(SETS).delete(id)
-
-  const index = tx.objectStore(GROOVES).index('set')
-  const cursorRequest = index.openKeyCursor(IDBKeyRange.only(id))
-  cursorRequest.onsuccess = () => {
-    const cursor = cursorRequest.result
-    if (!cursor) return
-    tx.objectStore(GROOVES).delete(cursor.primaryKey)
-    cursor.continue()
+  const range = IDBKeyRange.only(id)
+  let total = 0
+  try {
+    total = await ask(db.transaction(GROOVES, 'readonly').objectStore(GROOVES).index('set').count(range))
+  } catch {
+    total = 0
   }
 
-  return done(tx)
+  let removed = 0
+  if (onProgress) onProgress(0, total)
+
+  for (;;) {
+    let keys = []
+    try {
+      const store = db.transaction(GROOVES, 'readonly').objectStore(GROOVES)
+      keys = await ask(store.index('set').getAllKeys(range, SWEEP))
+    } catch {
+      break
+    }
+    if (!keys.length) break
+
+    const tx = db.transaction(GROOVES, 'readwrite')
+    const store = tx.objectStore(GROOVES)
+    for (const key of keys) store.delete(key)
+    if (!(await done(tx))) break
+
+    removed += keys.length
+    if (onProgress) onProgress(removed, total)
+    // A turn for the interface, so the number somebody is watching actually
+    // moves rather than arriving all at once at the end.
+    await new Promise((resume) => setTimeout(resume, 0))
+  }
+
+  const last = db.transaction(SETS, 'readwrite')
+  last.objectStore(SETS).delete(id)
+  return done(last)
 }
 
 /* --------------------------------------------------------------- grooves */

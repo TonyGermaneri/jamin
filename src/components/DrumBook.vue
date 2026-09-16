@@ -1100,6 +1100,25 @@ function resetMap() {
               </template>
             </div>
 
+            <!-- Taking a library out is minutes of work for a large one, and
+                 a window that has not changed looks like a window that has
+                 hung. -->
+            <div v-if="state.drumRemoval.running" class="mb-3">
+              <div class="d-flex align-center mb-1" style="gap: 8px">
+                <v-progress-circular indeterminate size="16" width="2" color="error" />
+                <span class="text-caption">
+                  Removing {{ state.drumRemoval.name }} —
+                  {{ state.drumRemoval.done.toLocaleString() }}<span v-if="state.drumRemoval.total">
+                    of {{ state.drumRemoval.total.toLocaleString() }}</span> patterns
+                </span>
+              </div>
+              <v-progress-linear
+                v-if="state.drumRemoval.total"
+                :model-value="100 * state.drumRemoval.done / state.drumRemoval.total"
+                color="error" height="4" rounded
+              />
+            </div>
+
             <v-table v-if="state.drumSets.length" density="compact">
               <thead>
                 <tr>
@@ -1163,6 +1182,7 @@ function resetMap() {
                   </td>
                   <td class="text-right">
                     <v-btn icon size="x-small" variant="text" color="error"
+                           :disabled="state.drumRemoval.running"
                            :aria-label="`Remove ${set.name}`" @click="forgetDrumSet(set.id)">
                       <v-icon size="16">mdi-delete-outline</v-icon>
                     </v-btn>

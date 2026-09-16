@@ -128,6 +128,8 @@ export const state = reactive({
   },
   // What the catalogue is taking on disk, when the browser will say.
   drumStorage: { usage: 0, quota: 0 },
+  // Taking a library out, which for a large one is minutes of work.
+  drumRemoval: { running: false, name: '', done: 0, total: 0 },
   // Imported grooves the chart has bound, fetched out of the database and kept
   // here. The catalogue itself is far too big to hold, but the four or five a
   // song actually uses have to be findable by id like any other groove.
@@ -1739,11 +1741,32 @@ export function cancelDrumImport() {
   state.drumImport.cancel = true
 }
 
+/**
+ * Take a library out, with something to watch while it happens.
+ *
+ * Three hundred and sixty thousand rows is a long time to stare at a window
+ * that has not changed. The count is what makes the difference between waiting
+ * and wondering whether it has hung.
+ */
 export async function forgetDrumSet(id) {
-  await deleteSet(id)
+  const set = state.drumSets.find((row) => row.id === id)
+  const name = (set && set.name) || 'library'
+
+  state.drumRemoval = { running: true, name, done: 0, total: (set && set.count) || 0 }
+  try {
+    await deleteSet(id, (done, total) => {
+      state.drumRemoval.done = done
+      if (total) state.drumRemoval.total = total
+    })
+  } finally {
+    state.drumRemoval = { running: false, name: '', done: 0, total: 0 }
+  }
+
+  // Whatever was being shown out of it is not there any more.
+  if (state.drumFilters.set === id) state.drumFilters.set = ''
   await refreshDrumSets()
   await searchDrums()
-  toast('Library removed')
+  toast(`${name} removed`)
 }
 
 /** The kit a library's notes were written for. */
