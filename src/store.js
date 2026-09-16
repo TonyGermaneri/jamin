@@ -120,6 +120,9 @@ export const state = reactive({
   // showing rather than implying it is everything. `total` is how many matched
   // and `exact` whether that was counted or estimated from an even sample.
   drumSearch: { total: 0, exact: true, scanned: 0 },
+  // What the database says each library holds, as against what its row claims.
+  // @see countEachDrumSet
+  drumCounts: {},
   // True while the browser is rebuilding the catalogue's indexes, which it does
   // once after an update and silently. @see core/drumStore.js whileUpgrading
   drumUpgrading: false,
@@ -131,7 +134,7 @@ export const state = reactive({
     set: '', kind: '', bars: 0, signature: '', text: '', folder: '',
     genre: '', feel: '', surface: '', part: '', era: '',
     // Which page of the answer, because the answer is not held in the browser.
-    page: 1, perPage: 12,
+    page: 1, perPage: 10,
   },
   // A batch job. `total` is the browser's, which knows how many files it was
   // handed; the plugin walks a tree it has not counted, so it measures itself in
@@ -2126,7 +2129,9 @@ function boundToImported(bindings) {
 
 /** What the filters are showing, out of the imported catalogue. */
 export async function searchDrums(filters = null, window = null) {
-  if (filters) state.drumFilters = { ...state.drumFilters, ...filters }
+  // A different question makes the remembered position meaningless: the same
+  // offset in a different answer is a different row.
+  if (filters) { rememberPageEnd(-1, null); state.drumFilters = { ...state.drumFilters, ...filters } }
   // Which library, remembered. Opening the plugin to the built-in corpus after
   // importing a collection reads as the collection having vanished.
   try {
@@ -2158,13 +2163,65 @@ export async function searchDrums(filters = null, window = null) {
     return state.drumHits
   }
 
-  const found = await searchGrooves(state.drumFilters, { limit, offset })
+  /*
+   * Where the last page ended, when this is the next one.
+   *
+   * IndexedDB has no skip index, so reaching page eighty thousand by offset
+   * means stepping over eight hundred thousand entries -- about 880ms, measured
+   * in the plugin's own WebKit. Resuming from the previous page's last key
+   * costs the same at the end of the catalogue as at the start, which is the
+   * difference between a catalogue somebody can browse and one they can only
+   * jump about in. @see core/drumStore.js pageOf
+   */
+  const after = window && window.after !== undefined ? window.after : nextPageFrom(offset)
+  const found = await searchGrooves(state.drumFilters, { limit, offset, after })
+  rememberPageEnd(offset + limit, found.ended)
   state.drumHits = found.rows.map(unpackGroove)
   state.drumSearch = { total: found.total, exact: found.exact, scanned: found.scanned }
   return state.drumHits
 }
 
 
+
+/**
+ * What each library actually holds, asked of the database rather than recalled.
+ *
+ * The number on a library's row is what the import counted as it went, written
+ * once when it finished. That is a record of what happened, not a reading of
+ * what is there -- an import that was interrupted, a browser that dropped rows
+ * when it ran out of room, a library half removed, all leave the two
+ * disagreeing, and the recorded one is the one that lies.
+ *
+ * So both are shown when they differ. Nobody should have to take the
+ * program's word for what is in it.
+ */
+export async function countEachDrumSet() {
+  const out = {}
+  for (const set of state.drumSets) out[set.id] = await countGrooves(set.id)
+  out[''] = await countGrooves()
+  state.drumCounts = out
+  return out
+}
+
+/*
+ * The end of the page that was just shown, and which page it was the end of.
+ *
+ * One page remembered, not a map of the catalogue: the point is to make *next*
+ * free, and next is the only thing that can ask for it. Anything else -- a jump
+ * in the pager, a new filter -- offsets from the start, which is correct and
+ * merely slower.
+ */
+let pageEndAt = -1
+let pageEnd = null
+
+function rememberPageEnd(at, ended) {
+  pageEndAt = ended ? at : -1
+  pageEnd = ended
+}
+
+function nextPageFrom(offset) {
+  return pageEnd && pageEndAt === offset ? pageEnd : null
+}
 
 /** What the filters can offer. No library means across all of them. */
 export async function drumFacetsFor(setId) {

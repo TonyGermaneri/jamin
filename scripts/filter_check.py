@@ -157,6 +157,42 @@ for (const [a, b] of [['genre', 'surface'], ['bars', 'kind'], ['era', 'feel'], [
                total: hit.total, real, got: hit.rows.length })
 }
 
+/*
+ * Turning the page from where the last one ended, all the way through.
+ *
+ * This is the path a person actually uses and the one that has to be both
+ * cheap and correct: resuming at the previous page's key costs the same at page
+ * eighty thousand as at page one, and it is exactly the kind of thing that
+ * silently drops a row at every boundary or shows one twice.
+ *
+ * So every row of the unfiltered catalogue is walked by resuming, and what
+ * comes out has to be all of them, each once, in order.
+ */
+const PER = 10
+const seenIds = new Set()
+let cursorAfter = null
+let repeated = 0
+let pages = 0
+let offset = 0
+for (;;) {
+  const page = await searchGrooves({}, { limit: PER, offset, after: cursorAfter })
+  if (!page.rows.length) break
+  for (const row of page.rows) {
+    if (seenIds.has(row.id)) repeated++
+    seenIds.add(row.id)
+  }
+  // A resume that lands back where it started never finishes. That is not a
+  // slow test, it is a hung one, and a check that hangs teaches nobody
+  // anything -- so it is caught here and reported as what it is.
+  const stuck = cursorAfter && page.ended && cursorAfter.id === page.ended.id
+  cursorAfter = page.ended
+  offset += PER
+  pages++
+  if (stuck) { repeated += PER; break }
+  if (pages > Math.ceil(stored / PER) + 2) break
+}
+const turning = { pages, walked: seenIds.size, repeated, of: stored }
+
 // Paging reaches the end rather than stopping at a few hundred.
 const biggest = (facets.bars || []).slice().sort((a, b) => b[1] - a[1])[0]
 let paging = null
@@ -178,7 +214,7 @@ if (biggest) {
 
 process.stdout.write(JSON.stringify({
   read: n, skipped, stored, holds: facets.holds, exact: facets.exact,
-  sets: [...setOf.entries()].length, report, searched, paging, pairs,
+  sets: [...setOf.entries()].length, report, searched, paging, pairs, turning,
   shelves: (facets.folders || []).length,
   shelfSum: (facets.folders || []).reduce((a, [, c]) => a + c, 0),
 }))
@@ -285,6 +321,18 @@ def main():
               f"{paging['pastTheEnd']} rows past the end")
         check("and no row appears on two pages", paging["dupes"] == 0,
               f"{paging['dupes']} repeated")
+
+    # Turning the page, from the first to the last, resuming each time.
+    turning = found.get("turning") or {}
+    if turning:
+        print(f"  turning    {turning['pages']:,} pages, {turning['walked']:,} rows seen")
+        # Every row, once. A resume that lands on the wrong side of the boundary
+        # either skips the first row of each page or repeats the last.
+        check("turning the page reaches every row",
+              turning["walked"] == turning["of"],
+              f"{turning['walked']} of {turning['of']}")
+        check("and shows none of them twice", turning["repeated"] == 0,
+              f"{turning['repeated']} repeated")
 
     check("the shelves add up", found["shelfSum"] == found["read"],
           f"{found['shelfSum']} against {found['read']}")

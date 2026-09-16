@@ -46,6 +46,7 @@ import {
   clearEverySlot,
   aimedElsewhere,
   instanceLabel,
+  countEachDrumSet,
 } from '../store.js'
 // The in-memory text search, which is not the store's searchDrums: that one
 // asks the database. Both are needed and they are not the same thing.
@@ -73,7 +74,7 @@ const onlyFitting = ref(false)
 const filtersOpen = ref(undefined)
 const selected = ref(null)
 const page = ref(1)
-const PER_PAGE = 12
+const PER_PAGE = 10
 
 const listEl = ref(null)
 
@@ -287,12 +288,16 @@ const filterValues = () => {
  * the database is asked for whatever is left of the page after the corpus has
  * filled what it can.
  */
-function ask() {
+function ask({ fresh = false } = {}) {
   if (!imported.value) return
   const before = builtinShowing.value ? fromCorpus.value.length : 0
   const at = (page.value - 1) * PER_PAGE
   const fromHere = Math.max(0, Math.min(PER_PAGE, before - at))
-  searchDrums(filterValues(), {
+  // Filters go down only when they have changed. Passing them again on a page
+  // turn is how the store learns the question is new, and a new question throws
+  // away where the last page ended -- which is the whole of what makes turning
+  // to page eighty thousand cost the same as turning to page two.
+  searchDrums(fresh ? filterValues() : null, {
     offset: Math.max(0, at - before),
     limit: PER_PAGE - fromHere,
   })
@@ -315,11 +320,11 @@ watch(
   () => [library.value, shelf.value, search.value, kind.value, bars.value, signature.value,
          genre.value, feel.value, surface.value, partTag.value, era.value,
          onlyFavourites.value, onlyFitting.value],
-  () => { page.value = 1; ask() }
+  () => { page.value = 1; ask({ fresh: true }) }
 )
 
-watch(page, ask)
-onMounted(ask)
+watch(page, () => ask())
+onMounted(() => ask({ fresh: true }))
 
 const drums = computed(() => state.drums)
 const settings = computed(() => state.settings.drums)
@@ -827,6 +832,21 @@ const waiting = computed(() => rows.value.filter((row) => !row.stale && !row.gro
  */
 const elsewhere = computed(() => aimedElsewhere())
 const whose = computed(() => instanceLabel(state.ui.targetInstance))
+
+/*
+ * What is really in there, counted rather than recalled.
+ *
+ * Asked when the Libraries tab is opened, because it is a count per library and
+ * nobody needs it until they are looking at the list.
+ */
+function reallyHolds(set) {
+  const held = state.drumCounts[set.id]
+  return held === undefined ? null : held
+}
+
+watch(() => [state.ui.book === 'drums', state.ui.drumsTab], ([open, tab]) => {
+  if (open && tab === 'sets') countEachDrumSet()
+}, { immediate: false })
 
 const boundGrooves = computed(() => rows.value.filter((row) => row.groove).length)
 const boundFills = computed(() => rows.value.filter((row) => row.fill).length)
@@ -1551,7 +1571,17 @@ function resetMap() {
                       <span v-if="set.partial">stopped part way</span>
                     </div>
                   </td>
-                  <td class="text-caption">{{ (set.count || 0).toLocaleString() }}</td>
+                  <!-- What the import counted, and what the database actually
+                       holds when the two disagree. The recorded number is a
+                       record of what happened rather than a reading of what is
+                       there, and it is the one that lies. -->
+                  <td class="text-caption">
+                    {{ (set.count || 0).toLocaleString() }}
+                    <div v-if="reallyHolds(set) !== null && reallyHolds(set) !== (set.count || 0)"
+                         class="text-warning">
+                      {{ reallyHolds(set).toLocaleString() }} in the database
+                    </div>
+                  </td>
                   <td style="min-width: 190px">
                     <v-select
                       :model-value="set.kit || ''"

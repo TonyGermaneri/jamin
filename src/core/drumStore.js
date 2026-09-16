@@ -399,9 +399,10 @@ async function narrowest(db, filters) {
  * Returns `{ rows, total, exact, scanned }`.
  */
 export async function searchGrooves(filters = {}, { limit = 24, offset = 0,
+                                                    after = null,
                                                     scanLimit = 400000 } = {}) {
   const db = await open()
-  if (!db) return { rows: [], total: 0, exact: true, scanned: 0 }
+  if (!db) return { rows: [], ended: null, total: 0, exact: true, scanned: 0 }
 
   const chosen = await narrowest(db, filters)
   const needle = String(filters.text || '').trim().toLowerCase()
@@ -416,16 +417,16 @@ export async function searchGrooves(filters = {}, { limit = 24, offset = 0,
    * advance whatever the catalogue holds.
    */
   if (chosen && !others.length && !needle) {
-    const rows = await pageOf(grooves(db).index(chosen.name),
-                              rangeFor(chosen.name, chosen.value), offset, limit)
-    return { rows, total: chosen.holds, exact: true, scanned: rows.length }
+    const page = await pageOf(grooves(db).index(chosen.name),
+                              rangeFor(chosen.name, chosen.value), offset, limit, after)
+    return { ...page, total: chosen.holds, exact: true, scanned: page.rows.length }
   }
 
   // Nothing indexed at all: the scope is the whole store.
   if (!chosen && !needle && !others.length) {
     const total = await ask(grooves(db).count()).catch(() => 0)
-    const rows = await pageOf(grooves(db), undefined, offset, limit)
-    return { rows, total, exact: true, scanned: rows.length }
+    const page = await pageOf(grooves(db), undefined, offset, limit, after)
+    return { ...page, total, exact: true, scanned: page.rows.length }
   }
 
   /*
@@ -456,7 +457,7 @@ export async function searchGrooves(filters = {}, { limit = 24, offset = 0,
     if (lists.every(Boolean)) {
       const keys = lists.reduce((into, list) => intersect(into, list))
       const rows = await byKeys(db, keys.slice(offset, offset + limit))
-      return { rows, total: keys.length, exact: true, scanned: keys.length }
+      return { rows, ended: null, total: keys.length, exact: true, scanned: keys.length }
     }
   }
 
@@ -493,7 +494,7 @@ export async function searchGrooves(filters = {}, { limit = 24, offset = 0,
     source.onerror = () => resolve()
   })
 
-  return { rows, total: matched, exact: !capped, scanned }
+  return { rows, ended: null, total: matched, exact: !capped, scanned }
 }
 
 /** Every primary key an indexed filter covers, without reading a row. */
@@ -532,30 +533,87 @@ async function byKeys(db, keys) {
   return (await Promise.all(asked)).filter(Boolean)
 }
 
-/** One page out of a source the range already answers: skip, then take. */
-function pageOf(source, range, offset, limit) {
+/**
+ * One page out of a source the range already answers.
+ *
+ * Two ways to reach it, and which one is used is the difference between a
+ * catalogue you can browse and one you can only address.
+ *
+ * **From where the last page ended**, when `after` says where that was. The
+ * cursor opens at the next key and takes ten. It costs the same at page eighty
+ * thousand as at page one.
+ *
+ * **By skipping**, otherwise. IndexedDB has no skip index, so `advance(n)`
+ * steps over n entries: measured in the plugin's own WebKit, 22ms for twenty
+ * thousand, which is about 880ms to reach the end of eight hundred thousand.
+ * Fine for jumping somewhere once, far too slow to do on every press of next --
+ * which is why `after` exists.
+ *
+ * Returns the rows and where they ended, so the next page can start there.
+ */
+function pageOf(source, range, offset, limit, after = null) {
   return new Promise((resolve) => {
     const rows = []
-    let skipped = offset <= 0
+    const onIndex = typeof source.objectStore !== 'undefined'
     let request
+    let resumed = !after
+    let skipped = offset <= 0 || Boolean(after)
+
+    const done = () => {
+      const last = rows[rows.length - 1]
+      resolve({
+        rows,
+        // Where this page ended, in whatever terms the cursor needs to resume:
+        // an index cursor is positioned by its index key *and* the primary key,
+        // because a hundred rows share one genre.
+        ended: last ? { key: after && !onIndex ? last.id : undefined, id: last.id,
+                        indexKey: after ? after.indexKey : undefined } : null,
+      })
+    }
+
     try {
       request = source.openCursor(range)
     } catch {
-      resolve(rows)
+      resolve({ rows: [], ended: null })
       return
     }
+
     request.onsuccess = () => {
       const cursor = request.result
-      if (!cursor || rows.length >= limit) { resolve(rows); return }
+      if (!cursor || rows.length >= limit) { done(); return }
+
+      if (!resumed) {
+        resumed = true
+        try {
+          // Straight to just past where the last page stopped.
+          if (onIndex && typeof cursor.continuePrimaryKey === 'function') {
+            cursor.continuePrimaryKey(after.indexKey, after.id)
+            return
+          }
+          if (!onIndex) {
+            cursor.continue(after.id)
+            return
+          }
+        } catch {
+          /* fall through to reading from here, which is correct but slower */
+        }
+      }
+
       if (!skipped) {
         skipped = true
         cursor.advance(offset)
         return
       }
+
+      // `continue`/`continuePrimaryKey` land *on* the key asked for, so the row
+      // the last page ended with is skipped rather than shown twice.
+      if (after && cursor.primaryKey === after.id) { cursor.continue(); return }
+
       rows.push(cursor.value)
+      if (after) after = { ...after, indexKey: cursor.key, id: cursor.primaryKey }
       cursor.continue()
     }
-    request.onerror = () => resolve(rows)
+    request.onerror = () => done()
   })
 }
 
@@ -893,6 +951,25 @@ export async function measureStore(rows = 50000) {
     const other = (await one(store().index('surface').getAllKeys(IDBKeyRange.only('Ride')))) || []
     return intersect(keys.slice().sort(), other.slice().sort()).length
   })
+  /*
+   * Deep paging, which is the thing an eight-hundred-thousand-row catalogue
+   * asks for and the thing IndexedDB has no shortcut for. There is no skip
+   * index: `advance(n)` steps. So the question is what it costs at depth, and
+   * whether a page late in the catalogue is reachable or merely addressable.
+   */
+  const deep = Math.max(0, rows - 200)
+  const [advanceMs] = await timed(() => new Promise((done) => {
+    const request = store().openCursor()
+    let first = true
+    request.onsuccess = () => {
+      const cursor = request.result
+      if (!cursor) { done(0); return }
+      if (first) { first = false; cursor.advance(deep); return }
+      done(1)
+    }
+    request.onerror = () => done(0)
+  }))
+
   const [walkMs] = await timed(() => new Promise((done) => {
     const request = store().index('genre').openCursor(IDBKeyRange.only('Rock'))
     let seen = 0
@@ -913,6 +990,7 @@ export async function measureStore(rows = 50000) {
 
   return `${rows} rows written in ${writeMs}ms · count ${counted} in ${countMs}ms`
        + ` · keys in ${keysMs}ms · two facets in ${crossMs}ms · row walk in ${walkMs}ms`
+       + ` · advance to row ${deep} in ${advanceMs}ms`
 }
 
 if (typeof window !== 'undefined') window.__jaminStorageProbe = measureStore
