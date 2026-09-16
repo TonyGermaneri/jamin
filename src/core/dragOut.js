@@ -45,6 +45,21 @@ export function draggableAsMidi(element, describe) {
     // The left button only. A right-click is a menu and a middle-click is
     // something else entirely.
     if (event.button !== 0) return
+
+    /*
+     * Stop the browser starting a text selection.
+     *
+     * Without this, pulling a row sideways selects its label instead of
+     * dragging anything -- and the selection takes the pointer with it, so the
+     * mouseleave this is waiting for never arrives. The row has no text worth
+     * selecting and every reason to be dragged.
+     *
+     * Not preventDefault on anything inside it: a field in a row is still a
+     * field, and somebody typing in one expects to be able to select what they
+     * typed.
+     */
+    if (!isTyping(event.target)) event.preventDefault()
+
     from = { x: event.clientX, y: event.clientY }
     started = false
   }
@@ -102,6 +117,16 @@ export function draggableAsMidi(element, describe) {
   }
 }
 
+/** Somewhere text really is meant to be selected. */
+function isTyping(node) {
+  for (let at = node; at && at.tagName; at = at.parentElement) {
+    const tag = at.tagName.toLowerCase()
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return true
+    if (at.isContentEditable) return true
+  }
+  return false
+}
+
 /** The browser's version: hand the file to whoever is looking at the page. */
 function saveFile(name, bytes) {
   try {
@@ -130,6 +155,10 @@ export const vDragMidi = {
     el.__jaminDescribe = binding.value
     el.__jaminUndrag = draggableAsMidi(el, () => el.__jaminDescribe && el.__jaminDescribe())
     el.style.cursor = 'grab'
+    // Belt as well as braces: preventDefault stops a selection beginning, this
+    // stops one being drawn if anything else starts one.
+    el.style.userSelect = 'none'
+    el.style.webkitUserSelect = 'none'
   },
   updated(el, binding) {
     el.__jaminDescribe = binding.value

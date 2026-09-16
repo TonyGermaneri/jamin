@@ -348,7 +348,6 @@ function runExport() {
                     :key="row.id || row.name"
                     v-drag-midi="() => midiForProgression(row)"
                     :active="selected && selected.name === row.name"
-                    :title="`${row.name} — drag onto a track for a MIDI clip`"
                     class="px-2"
                     @click="selected = row"
                   >

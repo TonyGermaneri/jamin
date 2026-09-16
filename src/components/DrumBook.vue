@@ -744,7 +744,6 @@ function resetMap() {
                     v-for="groove in list" :key="groove.id"
                     v-drag-midi="() => midiForGroove(groove)"
                     :active="selected && selected.id === groove.id"
-                    :title="`${groove.name} — drag onto a track for a MIDI clip`"
                     class="px-2" @click="choose(groove)"
                   >
                     <template #prepend>

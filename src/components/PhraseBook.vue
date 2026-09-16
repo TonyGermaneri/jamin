@@ -480,7 +480,6 @@ const assigningTo = computed(() => {
                     :key="entry.id"
                     v-drag-midi="() => midiForPhrase(entry)"
                     :active="selected && selected.id === entry.id"
-                    :title="`${entry.name} — drag onto a track for a MIDI clip`"
                     class="px-2"
                     @click="pick(entry)"
                     @contextmenu.prevent="setAccentPhrase(entry.id || entry.name)"
@@ -497,6 +496,12 @@ const assigningTo = computed(() => {
                       />
                     </template>
                     <v-list-item-title class="text-body-2 text-truncate">{{ entry.name }}</v-list-item-title>
+                    <!-- The id, because it is what you write in the chart. A
+                         name can be typed too and is nicer to read, but two
+                         phrases can share one and an id never does. -->
+                    <v-list-item-subtitle v-if="entry.id" class="text-caption jamin-mono">
+                      {{ '{' + entry.id + '}' }}
+                    </v-list-item-subtitle>
                     <template #append>
                       <v-icon v-if="isAccent(entry)" size="14" color="secondary" class="mr-2">mdi-flash-outline</v-icon>
                       <v-icon v-if="playing === entry.id" size="14" color="primary" class="mr-2">mdi-play</v-icon>
