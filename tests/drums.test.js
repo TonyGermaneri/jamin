@@ -286,6 +286,45 @@ check('and it knows what it is', reconcileBindings({}, [])[0].wholeSong, true)
 check('a repeated section is one row',
       reconcileBindings({}, parseScore('[A] C\n[B] F\n[A] G').sections).map((r) => r.name), ['A', 'B'])
 
+/* ---------------- the 1 lands on the 1 ----------------------------------- */
+/*
+ * A groove is locked to the song's bars, not to its own length.
+ *
+ * An imported library is full of patterns whose bar is not the song's: a 3/4
+ * pattern is 72 pulses against a 4/4 song's 96. Looped at its own length it
+ * walks off the grid -- hits at 72, 144, 216, 360 -- and its downbeat is on the
+ * 1 only every fourth time round. It sounds like a timing bug and it was one.
+ */
+const gmMap = kitById('gm').map
+const oneKick = (lengthPulses) => ({
+  id: 'k', name: 'k', kind: 'beat', bars: 1, lengthPulses,
+  notes: [{ at: 0, note: 36, duration: 6, velocity: 100 }],
+})
+const gridOf = (lengthPulses, chart = '| C | F | G | Am | C | F |') => buildDrumTrack(
+  parseScore(chart, { beatsPerBar: 4 }),
+  { groove: () => oneKick(lengthPulses), fill: () => null, map: gmMap, inbound: null,
+    fillOnEveryBoundary: false },
+).map((note) => note.at)
+
+check('a pattern in the song\'s own metre', gridOf(96), [0, 96, 192, 288, 384, 480])
+// The one that was broken: 72 against 96.
+check('a three-four pattern in a four-four song', gridOf(72), [0, 96, 192, 288, 384, 480])
+check('and nothing of it lands off the bar', gridOf(72).filter((at) => at % 96), [])
+// A two-bar pattern keeps its own phase -- it belongs on odd bars, not on every
+// bar -- but those are still bar lines.
+check('a two-bar pattern comes round every two bars', gridOf(192), [0, 192, 384])
+// A length that is no whole number of bars is given the bars it needs.
+check('an odd length is rounded up to whole bars', gridOf(150), [0, 192, 384])
+
+// A section beginning mid-bar must not take the drums off the 1 with it.
+const midBar = parseScore('| C [B] F | G | Am |', { beatsPerBar: 4 })
+const acrossSections = buildDrumTrack(midBar, {
+  groove: () => oneKick(96), fill: () => null, map: gmMap, inbound: null,
+  fillOnEveryBoundary: false,
+}).map((note) => note.at)
+check('a section starting mid-bar leaves the grid alone',
+      acrossSections.filter((at) => at % 96), [])
+
 /* ---------------- three states, one control ------------------------------ */
 // Any pattern can be a groove or a fill. What a library *calls* a pattern is a
 // guess from its file name and its length, and a guess is not a rule -- a

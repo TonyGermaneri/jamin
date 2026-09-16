@@ -150,27 +150,51 @@ export function fitsBars(groove, bars) {
 }
 
 /**
- * The groove, as this kit plays it, laid out over a span of chart.
+ * The groove, as this kit plays it, laid over a stretch of chart.
  *
  * Looped rather than stretched. A two-bar groove under an eight-bar verse plays
  * four times; it is not slowed down to last eight, because a drum groove
  * stretched to twice its length is not that groove played slower, it is a
- * different and much worse groove. A groove that does not divide the span
- * evenly is cut off at the end, which is what a drummer does when the section
- * changes under them.
+ * different and much worse groove.
+ *
+ * **Locked to the song's bars, not to the groove's own length.** This is the
+ * part that was wrong for a long time and sounded like a timing bug. An
+ * imported library is full of patterns whose bar is not the song's -- a 3/4
+ * pattern is 72 pulses against a 4/4 song's 96 -- and looping one at its own
+ * length walks it off the grid: hits at 72, 144, 216, 360, with the downbeat
+ * landing on the 1 only every fourth time round.
+ *
+ * So the loop is a whole number of the *song's* bars, wide enough to hold the
+ * pattern, and every repetition begins on a bar line. A 72-pulse pattern comes
+ * round every 96 and leaves a quarter of silence rather than dragging the 1
+ * with it. The pattern itself is untouched: what changes is only where each
+ * repetition starts.
+ *
+ * `startPulse` is where this stretch begins in the song, so the grid is the
+ * song's and not the section's -- a section starting mid-bar does not take the
+ * drums off the 1 with it. Notes come back relative to the stretch, as before.
  */
-export function layOutGroove(groove, spanPulses, map, inbound = undefined) {
+export function layOutGroove(groove, spanPulses, map, inbound = undefined, options = {}) {
   if (!groove || !groove.notes.length || spanPulses <= 0) return []
 
+  const { startPulse = 0, barPulses = 0 } = options
   const length = Math.max(1, groove.lengthPulses)
+  const step = barPulses > 0 ? Math.max(barPulses, Math.ceil(length / barPulses) * barPulses) : length
+
   const played = mapDrumNotes(groove.notes, map, inbound || undefined)
   const out = []
 
-  for (let start = 0; start < spanPulses; start += length) {
+  const from = startPulse
+  const to = startPulse + spanPulses
+  // The last repetition boundary at or before this stretch begins. Counted from
+  // the song's own zero, which is what puts the 1 on the 1.
+  const first = barPulses > 0 ? Math.floor(from / step) * step : from
+
+  for (let start = first; start < to; start += step) {
     for (const note of played) {
       const at = start + note.at
-      if (at >= spanPulses) continue
-      out.push({ ...note, at })
+      if (at < from || at >= to) continue
+      out.push({ ...note, at: at - from })
     }
   }
 
@@ -293,7 +317,11 @@ export function buildDrumTrack(score, options = {}) {
     // The groove stops where the fill starts. Both playing at once is two
     // drummers, which is not what a fill is.
     const grooveSpan = placed.length ? length - fill.lengthPulses : length
-    for (const note of layOutGroove(chosen, grooveSpan, mapFor(chosen), inFor(chosen))) {
+    // The song's bar, so the groove is locked to the chart's grid rather than
+    // to wherever this section happens to begin. @see layOutGroove
+    const bar = score.pulsesPerBar || 0
+    for (const note of layOutGroove(chosen, grooveSpan, mapFor(chosen), inFor(chosen),
+                                   { startPulse: span.startPulse, barPulses: bar })) {
       out.push({ ...note, at: span.startPulse + note.at })
     }
     for (const note of placed) {
