@@ -43,6 +43,7 @@ import {
   drumFacetsFor,
   sectionBars,
   partsItFits,
+  clearEverySlot,
 } from '../store.js'
 // The in-memory text search, which is not the store's searchDrums: that one
 // asks the database. Both are needed and they are not the same thing.
@@ -74,14 +75,27 @@ const PER_PAGE = 12
 
 const listEl = ref(null)
 
-/** The keys are useless until something has focus, and asking somebody to click
-    a list before the arrow keys work is asking them to discover a rule. */
+/**
+ * The keys are useless until something has focus, and asking somebody to click
+ * a list before the arrow keys work is asking them to discover a rule.
+ *
+ * Waited for rather than done on the next frame. The default source is now the
+ * whole catalogue, which is a database query, so on the frame after the dialog
+ * opens there is no list yet to give focus to -- and a focus call into nothing
+ * fails silently, which is what a keyboard that has stopped working looks like.
+ */
 watch(() => state.ui.drums, (open) => {
   if (!open) return
-  requestAnimationFrame(() => {
+  let tries = 0
+  const take = () => {
     const el = listEl.value && (listEl.value.$el || listEl.value)
-    if (el && typeof el.focus === 'function') el.focus({ preventScroll: true })
-  })
+    if (el && typeof el.focus === 'function') {
+      el.focus({ preventScroll: true })
+      return
+    }
+    if (tries++ < 40) requestAnimationFrame(take)
+  }
+  requestAnimationFrame(take)
 })
 
 /**
@@ -439,15 +453,27 @@ watch(selected, async (groove) => {
   if (selected.value === groove) resolved.value = whole
 }, { immediate: true })
 
+/**
+ * The groove as a piano roll, with the whole keyboard down the side.
+ *
+ * Every voice gets a row, not only the ones this pattern uses. It used to show
+ * the used ones alone, which reads well and answers the wrong question: the
+ * rows moved as you walked the list, so two grooves could not be compared, and
+ * the thing you most want to know about a beat -- that there is *no* ride in it
+ * -- had no row to be absent from. A fixed keyboard makes the silence visible.
+ *
+ * Which is why it scrolls: fourteen rows is taller than the space, and the
+ * alternative to scrolling is throwing rows away again.
+ */
 const preview = computed(() => {
   const groove = resolved.value
-  if (!groove || !groove.notes.length) return null
+  if (!groove) return null
 
   const steps = Math.max(1, groove.bars * STEPS_PER_BAR)
   const perStep = groove.lengthPulses / steps
   const used = new Map()
 
-  for (const note of groove.notes) {
+  for (const note of groove.notes || []) {
     const voice = TD11_TO_VOICE[note.note]
     if (!voice) continue
     if (!used.has(voice)) used.set(voice, new Array(steps).fill(0))
@@ -457,13 +483,60 @@ const preview = computed(() => {
     used.get(voice)[step] = Math.max(used.get(voice)[step], note.velocity || 1)
   }
 
-  const rows = VOICE_ORDER.filter((id) => used.has(id)).map((id) => ({
+  const empty = new Array(steps).fill(0)
+  const rows = VOICE_ORDER.map((id) => ({
     id,
     name: (DRUM_VOICES.find((voice) => voice.id === id) || {}).name || id,
-    cells: used.get(id),
+    cells: used.get(id) || empty,
+    plays: used.has(id),
   }))
 
-  return { steps, rows, beats: groove.beatsPerBar * groove.bars }
+  return { steps, rows, bars: groove.bars, perBar: STEPS_PER_BAR,
+           lengthPulses: groove.lengthPulses }
+})
+
+/**
+ * Where the transport is inside this pattern's loop, as a fraction across.
+ *
+ * The playhead runs the length of the song and the pattern is a loop a couple
+ * of bars long, so the line is the playhead taken modulo the loop -- and the
+ * loop is locked to the song's bars exactly as the player locks it, or the line
+ * would drift against what is actually being heard. A three-bar pattern in a
+ * four-four song repeats every four bars, not every three. @see drums.layOutGroove
+ *
+ * Null when nothing is rolling, which is when there is no line to draw rather
+ * than a line at nought.
+ */
+const transport = computed(() => {
+  const roll = preview.value
+  const playing = state.playing
+  if (!roll || !playing.running || !roll.lengthPulses) return null
+
+  const bar = playing.barPulses || 0
+  const step = bar > 0
+    ? Math.max(bar, Math.ceil(roll.lengthPulses / bar) * bar)
+    : roll.lengthPulses
+  const into = ((playing.pulse % step) + step) % step
+
+  // Past the end of a pattern shorter than its own slot: the loop has finished
+  // and is waiting for the next bar, so there is nothing to point at.
+  if (into >= roll.lengthPulses) return null
+  return into / roll.lengthPulses
+})
+
+/*
+ * Whether the line may glide to where it is going.
+ *
+ * The playhead is sampled about eight times a second, which over a two-bar loop
+ * is a line that hops in thirty steps rather than travelling. A transition the
+ * length of the sample interval turns the hops back into movement -- but only
+ * while it is going forwards. At the loop point the line would spend a tenth of
+ * a second sweeping right to left across the whole pattern, which looks like the
+ * music ran backwards, so the wrap is taken as a jump.
+ */
+const gliding = ref(false)
+watch(transport, (now, before) => {
+  gliding.value = now !== null && before !== null && now >= before
 })
 
 const folderInput = ref(null)
@@ -591,6 +664,24 @@ function turnPage(by) {
   page.value = Math.min(pageCount.value, Math.max(1, page.value + by))
 }
 
+/*
+ * The wheel walks the catalogue, the same as the phrase and progression books.
+ *
+ * One groove per notch whether the browser sends that as one big delta or as a
+ * stream of small ones, and it walks the whole of what the filters found rather
+ * than the page -- three quarters of a million patterns is not something to
+ * page through twelve at a time.
+ */
+let wheelAcc = 0
+function onWheel(event) {
+  event.preventDefault()
+  wheelAcc += event.deltaY
+  while (Math.abs(wheelAcc) >= 30) {
+    step(wheelAcc > 0 ? 1 : -1)
+    wheelAcc -= Math.sign(wheelAcc) * 30
+  }
+}
+
 /** 1-9 are the first nine parts and 0 is the tenth, as tabs and windows have
     numbered things for thirty years. */
 function assignToPartNumber(digit) {
@@ -621,26 +712,15 @@ const rows = computed(() => drumRows())
 const liveRows = computed(() => rows.value.filter((row) => !row.stale))
 const waiting = computed(() => rows.value.filter((row) => !row.stale && !row.groove).length)
 
-function assign(row, what) {
-  if (!selected.value) {
-    toast('Choose a groove first')
-    return
-  }
-
-  const where = row.wholeSong ? 'the whole song' : row.name
-  // Pressing the slot it is already in takes it off, so the same button that
-  // put it there can undo it.
-  if (slotFor(row.name, selected.value) === what) {
-    setGrooveFor(row.name, null, what)
-    toast(`${selected.value.name} off ${where}`)
-    return
-  }
-
-  setGrooveFor(row.name, selected.value.id, what)
-  toast(what === 'fill'
-    ? `${selected.value.name} leads out of ${where}`
-    : `${selected.value.name} → ${where}`)
-}
+/*
+ * How much is bound, for the two clear buttons to say.
+ *
+ * Counted over every row rather than the live ones, because that is what the
+ * buttons clear: a part whose marker has been deleted from the chart is still
+ * bound and still plays if the label comes back.
+ */
+const boundGrooves = computed(() => rows.value.filter((row) => row.groove).length)
+const boundFills = computed(() => rows.value.filter((row) => row.fill).length)
 
 /** Both slots at once, which is what "start this part again" means. */
 function clearPart(row) {
@@ -808,7 +888,8 @@ function resetMap() {
                         @keydown.page-down.prevent="step(PER_PAGE)"
                         @keydown.page-up.prevent="step(-PER_PAGE)"
                         @keydown.home.prevent="step(-matches.length)"
-                        @keydown.end.prevent="step(matches.length)">
+                        @keydown.end.prevent="step(matches.length)"
+                        @wheel="onWheel">
                   <!-- Drag a groove straight onto a track. Not an HTML5 drag:
                        the web view starts its own on dragstart and JUCE then
                        refuses to start one. @see core/dragOut.js -->
@@ -1018,6 +1099,35 @@ function resetMap() {
                   </v-expansion-panel>
                 </v-expansion-panels>
 
+                <!-- Two buttons rather than one. Starting a song over means
+                     clearing the grooves and keeping the fills about as often
+                     as the other way round, and one button that did both would
+                     be the one nobody dares press. Both are undoable from the
+                     toast, which is the only kind of confirmation a plugin web
+                     view can actually show. -->
+                <div class="d-flex align-center flex-wrap mb-3 flex-grow-0" style="gap: 6px">
+                  <v-btn size="x-small" variant="tonal"
+                         prepend-icon="mdi-close-circle-outline"
+                         :disabled="!boundGrooves"
+                         @click="clearEverySlot('groove')">
+                    Clear grooves<span v-if="boundGrooves"> ({{ boundGrooves }})</span>
+                  </v-btn>
+                  <v-btn size="x-small" variant="tonal"
+                         prepend-icon="mdi-flash-off"
+                         :disabled="!boundFills"
+                         @click="clearEverySlot('fill')">
+                    Clear fills<span v-if="boundFills"> ({{ boundFills }})</span>
+                  </v-btn>
+                  <InfoTip location="left">
+                    Takes every part's groove off, or every part's fill, in one go — including
+                    parts whose marker you have since deleted from the chart, which are still
+                    bound and would otherwise quietly come back the next time you retyped the
+                    label.
+                    <br /><br />
+                    Both can be undone from the message that appears.
+                  </InfoTip>
+                </div>
+
                 <div v-if="!selected" class="text-caption text-medium-emphasis pa-2">
                   Pick a groove to see what it is and bind it to a part of the song.
                 </div>
@@ -1045,29 +1155,49 @@ function resetMap() {
                     </div>
                   </div>
 
-                  <!-- What is actually in it. The names sit where a piano roll
-                       puts its keys, and only the drums this groove uses get a
-                       row -- fourteen rows of mostly nothing is a wall. -->
+                  <!-- What is actually in it, against the whole keyboard.
+                       Every voice gets a row whether or not this pattern uses
+                       it: the rows used to move as you walked the list, so two
+                       grooves could not be compared and the thing most worth
+                       knowing about a beat -- that there is no ride in it --
+                       had no row to be absent from. It scrolls because
+                       fourteen rows is taller than the space, and the
+                       alternative to scrolling is throwing rows away again. -->
                   <div v-if="preview" class="jamin-roll mb-3">
-                    <div v-for="row in preview.rows" :key="row.id" class="jamin-roll-row">
-                      <button
-                        type="button" class="jamin-roll-name"
-                        :class="{ 'is-struck': playingVoices.has(row.id) }"
-                        :title="`Hear the ${row.name.toLowerCase()} — ${gmName(noteFor(row.id))}`"
-                        @click="tapDrum(noteFor(row.id))"
-                      >{{ row.name }}</button>
-                      <span class="jamin-roll-cells">
-                        <i
-                          v-for="(velocity, step) in row.cells" :key="step"
-                          class="jamin-roll-cell"
-                          :class="{
-                            'is-hit': velocity > 0,
-                            'is-accent': velocity > 95,
-                            'is-beat': step % 4 === 0,
-                          }"
-                          :style="velocity ? { opacity: 0.35 + 0.65 * (velocity / 127) } : null"
-                        />
-                      </span>
+                    <div class="jamin-roll-keys">
+                      <div v-for="row in preview.rows" :key="row.id" class="jamin-roll-row"
+                           :class="{ 'is-silent': !row.plays }">
+                        <button
+                          type="button" class="jamin-roll-name"
+                          :class="{ 'is-struck': playingVoices.has(row.id) }"
+                          :title="`Hear the ${row.name.toLowerCase()} — ${gmName(noteFor(row.id))}`"
+                          @click="tapDrum(noteFor(row.id))"
+                        >{{ row.name }}</button>
+                        <span class="jamin-roll-cells">
+                          <i
+                            v-for="(velocity, step) in row.cells" :key="step"
+                            class="jamin-roll-cell"
+                            :class="{
+                              'is-hit': velocity > 0,
+                              'is-accent': velocity > 95,
+                              'is-beat': step % preview.perBar === 0,
+                              'is-quarter': step % 4 === 0,
+                            }"
+                            :style="velocity ? { opacity: 0.35 + 0.65 * (velocity / 127) } : null"
+                          />
+                          <!-- Where the transport is inside this pattern's
+                               loop, locked to the song's bars the same way the
+                               player locks it -- a line that drifted against
+                               what is being heard would be worse than none. -->
+                          <b v-if="transport !== null" class="jamin-roll-head"
+                             :class="{ 'is-gliding': gliding }"
+                             :style="{ left: `${transport * 100}%` }" />
+                        </span>
+                      </div>
+                    </div>
+                    <div class="jamin-roll-foot text-caption text-medium-emphasis">
+                      {{ preview.bars }} bar{{ preview.bars === 1 ? '' : 's' }} ·
+                      sixteenths · click a name to hear it
                     </div>
                   </div>
 
@@ -1091,28 +1221,6 @@ function resetMap() {
                     </InfoTip>
                   </div>
 
-                  <div class="text-caption mb-1">Bind it to</div>
-                  <v-list density="compact" class="py-0">
-                    <v-list-item v-for="row in rows" :key="row.name" class="px-1">
-                      <v-list-item-title class="text-body-2">
-                        {{ partLabel(row) }}
-                        <span v-if="row.stale" class="text-caption text-medium-emphasis">— not in the chart</span>
-                      </v-list-item-title>
-                      <!-- Neither is gated on what the pattern is called. A
-                           two-bar pattern nobody labelled is a perfectly good
-                           fill, and the label is a guess from a file name. -->
-                      <template #append>
-                        <v-btn size="x-small" class="mr-1"
-                               :variant="slotFor(row.name, selected) === 'groove' ? 'flat' : 'tonal'"
-                               :color="slotFor(row.name, selected) === 'groove' ? 'primary' : undefined"
-                               @click="assign(row, 'groove')">Groove</v-btn>
-                        <v-btn size="x-small"
-                               :variant="slotFor(row.name, selected) === 'fill' ? 'flat' : 'tonal'"
-                               :color="slotFor(row.name, selected) === 'fill' ? 'warning' : undefined"
-                               @click="assign(row, 'fill')">Fill</v-btn>
-                      </template>
-                    </v-list-item>
-                  </v-list>
                 </div>
               </v-col>
             </v-row>

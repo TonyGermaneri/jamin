@@ -495,7 +495,7 @@ const pool = [
 const rockBeat = { kind: 'beat', genre: 'rock', timeSignature: '4-4', bpm: 122, bars: 2 }
 
 check('the nearest tempo in the same genre', matchingFill(rockBeat, pool).id, 'f-rock-120')
-check('a beat is never offered as a fill',
+check('a labelled fill wins while there is one',
       matchingFill(rockBeat, pool).kind, 'fill')
 check('and the time signature has to match',
       matchingFill({ ...rockBeat, timeSignature: '3-4' }, pool).id, 'f-rock-34')
@@ -512,6 +512,26 @@ check('a one-bar fill when that is what fits',
       matchingFill(rockBeat, pool, { bars: 1 }).bars, 1)
 check('and a two-bar one when it is asked for',
       matchingFill(rockBeat, pool, { bars: 2 }).id, 'f-rock-124-2')
+
+/*
+ * And a preference rather than a gate.
+ *
+ * It used to refuse anything a library had not called a fill, which is the
+ * interface arguing with somebody about their own collection -- the label is a
+ * guess made from a file name, and a vendor who files their one-bar phrases
+ * under `Breaks`, or under nothing at all, has not said those are not fills.
+ * The fallback is bounded by length instead: a fill leads out of a section.
+ */
+const unlabelled = [
+  { id: 'b-rock-1', kind: 'beat', genre: 'rock', timeSignature: '4-4', bpm: 120, bars: 1 },
+  { id: 'b-rock-8', kind: 'beat', genre: 'rock', timeSignature: '4-4', bpm: 120, bars: 8 },
+]
+check('a pattern nobody labelled can still be a fill',
+      matchingFill(rockBeat, unlabelled).id, 'b-rock-1')
+check('but not an eight-bar one, which is a section rather than a fill',
+      matchingFill({ ...rockBeat, bars: 8 }, [unlabelled[1]]), null)
+check('and never itself',
+      matchingFill({ ...rockBeat, id: 'b-rock-1' }, [unlabelled[0]]), null)
 
 // Nothing at all is survivable.
 check('no fills, no answer', matchingFill(rockBeat, [], {}), null)

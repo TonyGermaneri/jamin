@@ -154,7 +154,10 @@ export const state = reactive({
   // struck since the last frame. Both are worked out from the chart and the
   // position rather than reported by anything -- inside the plugin the notes are
   // played by native code the page never hears. @see syncDrumsPlaying
-  playing: { section: null, voices: [] },
+  // `pulse` is where the transport is, so a preview can draw a line at it, and
+  // `barPulses` is the chart's bar, which is the grid a groove is locked to.
+  // @see core/drums.js layOutGroove
+  playing: { section: null, voices: [], pulse: 0, barPulses: 96, running: false },
   drumReport: { grooves: 0, error: null },
 
   // Every instance of jamin in this host: which track each is on, what it is
@@ -2121,6 +2124,49 @@ export function toggleGrooveOn(name, groove) {
 }
 
 /**
+ * Every part's groove, or every part's fill, off in one go.
+ *
+ * Two buttons rather than one, because they are two decisions. Starting a song
+ * over means clearing the grooves and keeping the fills about as often as the
+ * other way round, and one button that did both would be the one nobody dares
+ * press.
+ *
+ * Parts whose marker has been deleted from the chart are cleared too. They are
+ * still bound, they still play if the marker comes back, and leaving them
+ * behind would make a cleared song quietly un-clear itself on the next edit.
+ */
+export function clearEverySlot(what = 'groove') {
+  const slot = what === 'fill' ? 'fill' : 'groove'
+  const rows = drumRows().filter((row) => row[slot])
+  if (!rows.length) {
+    toast(slot === 'fill' ? 'No fills to clear' : 'No grooves to clear')
+    return 0
+  }
+
+  const before = state.drumBindings
+  let next = before
+  for (const row of rows) next = bindGroove(next, row.name, null, slot)
+
+  state.drumBindings = next
+  saveDrumBindings(next)
+  refreshDrums()
+
+  // Undone from the toast rather than guarded by a confirmation. A plugin web
+  // view has no dialog to confirm with -- window.confirm answers false the
+  // instant it is asked -- and an undo is the better answer anyway.
+  toast(`${rows.length} ${slot}${rows.length === 1 ? '' : 's'} cleared`, {
+    label: 'Undo',
+    run: () => {
+      state.drumBindings = before
+      saveDrumBindings(before)
+      rememberBoundGrooves().then(refreshDrums)
+      refreshDrums()
+    },
+  })
+  return rows.length
+}
+
+/**
  * One groove, every part.
  *
  * What auto-select does on a click: a beat becomes every section's groove, a
@@ -2388,14 +2434,20 @@ let lastDrumPulse = -1
 function syncDrumsPlaying() {
   const playing = state.playing
 
+  playing.barPulses = state.score.pulsesPerBar || 96
+
   if (!live.running) {
-    if (playing.section || playing.voices.length) {
+    if (playing.section || playing.voices.length || playing.running) {
       playing.section = null
       playing.voices = []
+      playing.running = false
     }
     lastDrumPulse = -1
     return
   }
+
+  playing.running = true
+  playing.pulse = live.position
 
   // Which part of the song we are in. The event carries it, having been given
   // it by the parser. @see core/score.js

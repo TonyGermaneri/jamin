@@ -58,7 +58,18 @@ export function draggableAsMidi(element, describe) {
      * field, and somebody typing in one expects to be able to select what they
      * typed.
      */
-    if (!isTyping(event.target)) event.preventDefault()
+    if (!isTyping(event.target)) {
+      event.preventDefault()
+      // And put back the one thing preventDefault took away.
+      //
+      // Stopping the default on mousedown stops the selection *and* stops the
+      // focus moving, and the second one is not wanted at all. The lists this
+      // sits on take the arrow keys, so a row that cannot take focus is a list
+      // whose keyboard silently stopped working -- which is exactly what
+      // happened, and it looks like the keys were removed rather than like a
+      // drag gesture eating them.
+      focusTaker(element)
+    }
 
     from = { x: event.clientX, y: event.clientY }
     started = false
@@ -114,6 +125,22 @@ export function draggableAsMidi(element, describe) {
     element.removeEventListener('mouseleave', leave)
     element.removeEventListener('mousemove', move)
     window.removeEventListener('mouseup', up)
+  }
+}
+
+/**
+ * Whatever would have taken focus if the browser had been allowed to do it.
+ *
+ * The row itself is not usually focusable -- it is the list around it that
+ * carries the tabindex and the key handlers -- so this walks outwards to the
+ * nearest thing that can hold focus and gives it to that.
+ */
+function focusTaker(element) {
+  for (let at = element; at && at.tagName; at = at.parentElement) {
+    if (at.tabIndex >= 0 && typeof at.focus === 'function') {
+      if (document.activeElement !== at) at.focus({ preventScroll: true })
+      return
+    }
   }
 }
 

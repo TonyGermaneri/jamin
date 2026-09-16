@@ -611,9 +611,15 @@ body,
   background: rgba(127, 127, 127, 0.14);
 }
 
-/* The downbeat of each beat, so four-four is countable without labels. */
+/* The downbeat of a bar, and of a beat. Two weights rather than one: with a
+   whole keyboard showing and two bars across, the bar lines are what stop the
+   grid reading as one long undifferentiated strip. */
+.jamin-roll-cell.is-quarter {
+  background: rgba(127, 127, 127, 0.22);
+}
+
 .jamin-roll-cell.is-beat {
-  background: rgba(127, 127, 127, 0.26);
+  background: rgba(127, 127, 127, 0.34);
 }
 
 .jamin-roll-cell.is-hit {
@@ -624,4 +630,77 @@ body,
    opacity, and a second colour would say something this does not know. */
 .jamin-roll-cell.is-accent {
   height: 14px;
+}
+
+
+/*
+ * The whole keyboard, scrolling.
+ *
+ * Every voice has a row now, used or not: the rows used to move as you walked
+ * the list, so two grooves could not be compared, and the thing most worth
+ * knowing about a beat -- that there is no ride in it -- had no row to be
+ * absent from. Fourteen rows is taller than the space it sits in, so it
+ * scrolls, which is the only alternative to throwing rows away again.
+ */
+.jamin-roll-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 226px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+}
+
+/* A voice this pattern never touches. Dimmed rather than hidden -- the empty
+   row is the point. */
+.jamin-roll-row.is-silent .jamin-roll-name {
+  opacity: 0.32;
+}
+
+.jamin-roll-row.is-silent .jamin-roll-cell {
+  background: rgba(127, 127, 127, 0.07);
+}
+
+/* Struck wins over silent: a voice with no hits in this pattern can still be
+   sounding, because what is playing is whatever is bound to the song. */
+.jamin-roll-row.is-silent .jamin-roll-name.is-struck {
+  opacity: 1;
+}
+
+/*
+ * Where the transport is inside this pattern's loop.
+ *
+ * Positioned against the cells rather than the row, so it lines up with the
+ * grid and not with the names. No transition: it is moved about eight times a
+ * second from the playhead, and easing between those would put the line
+ * somewhere the music is not.
+ */
+.jamin-roll-cells {
+  position: relative;
+}
+
+.jamin-roll-head {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: rgb(var(--v-theme-warning));
+  opacity: 0.85;
+  pointer-events: none;
+  transition: none;
+}
+
+/* Only while it is going forwards. @see DrumBook gliding -- at the loop point
+   an eased line sweeps right to left across the whole pattern, which reads as
+   the music having run backwards. */
+.jamin-roll-head.is-gliding {
+  transition: left 120ms linear;
+}
+
+.jamin-roll-foot {
+  padding-left: 90px;
+  padding-top: 2px;
 }

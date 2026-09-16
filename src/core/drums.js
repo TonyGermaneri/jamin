@@ -358,9 +358,26 @@ export function buildDrumTrack(score, options = {}) {
 export function matchingFill(beat, fills, { bars = null, prefer = 'closest' } = {}) {
   if (!beat || !fills || !fills.length) return null
 
-  const only = fills.filter((fill) => fill.kind === 'fill'
-    && fill.timeSignature === beat.timeSignature
-    && (bars === null || fill.bars === bars))
+  const fits = (one) => one.timeSignature === beat.timeSignature
+    && (bars === null || one.bars === bars)
+
+  /*
+   * Labelled fills first, anything short enough after.
+   *
+   * It used to refuse everything a library had not called a fill, which is the
+   * interface arguing with somebody about their own collection: the label is a
+   * guess made from a file name, and a vendor who files their one-bar phrases
+   * under `Breaks` or `Turnarounds` or nothing at all has not said those are
+   * not fills. Five genres in the bundled corpus have no labelled fills at all.
+   *
+   * So it is a preference rather than a gate, and the fallback is bounded by
+   * length instead: a fill leads out of a section, and two bars is the most of
+   * one anybody wants. A labelled fill still wins whenever there is one.
+   */
+  const labelled = fills.filter((one) => one.kind === 'fill' && fits(one))
+  const only = labelled.length
+    ? labelled
+    : fills.filter((one) => one.id !== beat.id && one.bars <= 2 && fits(one))
 
   if (!only.length) return null
 
