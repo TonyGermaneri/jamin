@@ -251,6 +251,50 @@ function matchIn(text) {
   return ''
 }
 
+/**
+ * Whether two catalogues mean the same genre.
+ *
+ * Three vocabularies have to agree here and none of them was written with the
+ * others in mind. The bundled corpus says `afrocuban`, `neworleans`, `hiphop`.
+ * The imported catalogue says `Afro-Cuban`, `Hip Hop`, in title case from the
+ * genre list. The progressions say `jazz`, `blues`, `modal`. Comparing them as
+ * written matches almost nothing.
+ *
+ * So they are compared with the spaces, hyphens and case taken out, which is
+ * enough for every pair that actually occurs.
+ */
+const plainly = (name) => String(name || '').toLowerCase().replace(/[^a-z]/g, '')
+
+export function sameGenre(a, b) {
+  const left = plainly(a)
+  const right = plainly(b)
+  if (!left || !right) return false
+  // One containing the other catches `jazz` against `jazzfusion` and `blues`
+  // against `bluesrock`, which are the same answer for choosing a drum part.
+  return left === right || left.includes(right) || right.includes(left)
+}
+
+/** The bars of a progression, without its leading and trailing pipes. */
+function barsOfProgression(text) {
+  return String(text || '')
+    .split('|')
+    .map((bar) => bar.trim())
+    .filter(Boolean)
+}
+
+/**
+ * A whole song from the things to hand.
+ *
+ * One progression supplies the harmony, because a song has one set of changes
+ * and six unrelated ones is a medley. What differs between sections is how they
+ * are *played*: each gets its own articulation, written into the chart against
+ * its first chord, and its own groove and fill.
+ *
+ * Written into the chart rather than held somewhere else, so it can be read,
+ * edited and understood afterwards -- and so the phrase markers mean the chart
+ * asks for per-chord articulation whether or not the setting is on.
+ * @see resolvePhraseSections
+ */
 /** Every genre this vocabulary knows, for a filter to offer. */
 export function everyGenre() {
   return [...new Set(SPELLINGS.map((entry) => entry.name))].sort((a, b) => a.localeCompare(b))

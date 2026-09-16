@@ -122,4 +122,30 @@ check(`and none of them is an ordinary name (${plain.join(', ')})`, plain.length
 check('music is not a genre here', genreOf('pack/MIDI Music'), '')
 check('nor is traditional', genreOf('pack/Traditional Kit'), '')
 
+/* ---------------- three catalogues, one genre --------------------------- */
+/*
+ * Three vocabularies have to agree and none was written with the others in
+ * mind. The bundled corpus says `afrocuban`, `neworleans`, `hiphop`. An
+ * imported library says `Afro-Cuban`, `Hip Hop`, title-cased from the genre
+ * list. The progressions say `jazz`, `blues`, `modal`. Compared as written,
+ * almost nothing matches -- and the die would put a bossa nova progression
+ * under a metal beat, which is a joke rather than a song.
+ */
+check('the corpus and the genre list agree', sameGenre('afrocuban', 'Afro-Cuban'), true)
+check('however it is spaced', sameGenre('hiphop', 'Hip Hop'), true)
+check('and hyphenated', sameGenre('neworleans', 'New Orleans'), true)
+check('and cased', sameGenre('JAZZ', 'jazz'), true)
+
+// One containing the other is the same answer for choosing a drum part: a
+// blues-rock groove is what you want under a blues progression.
+check('a narrower genre matches its broader one', sameGenre('blues', 'Blues Rock'), true)
+check('either way round', sameGenre('Jazz Fusion', 'jazz'), true)
+
+// But different things stay different, or the matching is worthless.
+check('funk is not punk', sameGenre('funk', 'punk'), false)
+check('rock is not reggae', sameGenre('rock', 'Reggae'), false)
+check('and nothing matches nothing', sameGenre('', 'jazz'), false)
+check('in either position', sameGenre('jazz', ''), false)
+check('or when both are missing', sameGenre('', ''), false)
+
 console.log(failed ? `genres: ${failed} FAILED` : 'genres: all checks passed')

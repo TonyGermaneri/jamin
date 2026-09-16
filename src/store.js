@@ -27,6 +27,7 @@ import {
 } from './core/drumBindings.js'
 import { resourceOk } from './core/fetchResource.js'
 import { rebuild, docSize } from './core/crdt.js'
+import { sameGenre } from './core/genres.js'
 import { realizeChord } from './core/voicing.js'
 import { scoreOptions } from './core/compile.js'
 import { Player } from './core/player.js'
@@ -898,30 +899,26 @@ const FORMS = [
 
 const pick = (list) => (list && list.length ? list[Math.floor(Math.random() * list.length)] : null)
 
-/** The bars of a progression, without its leading and trailing pipes. */
-function barsOfProgression(text) {
-  return String(text || '')
-    .split('|')
-    .map((bar) => bar.trim())
-    .filter(Boolean)
-}
-
-/**
- * A whole song from the things to hand.
- *
- * One progression supplies the harmony, because a song has one set of changes
- * and six unrelated ones is a medley. What differs between sections is how they
- * are *played*: each gets its own articulation, written into the chart against
- * its first chord, and its own groove and fill.
- *
- * Written into the chart rather than held somewhere else, so it can be read,
- * edited and understood afterwards -- and so the phrase markers mean the chart
- * asks for per-chord articulation whether or not the setting is on.
- * @see resolvePhraseSections
- */
-export function rollSong() {
+export async function rollSong() {
   const before = state.text
-  const progression = pick(allProgressions())
+
+  /*
+   * A genre first, and then everything to match it.
+   *
+   * Rolling each part separately gives a bossa nova progression under a metal
+   * beat, which is a joke rather than a song. So the genre is drawn from what
+   * the drums actually have -- that is the catalogue with the most of it -- and
+   * the progression and the grooves are then chosen to suit.
+   */
+  const genre = pick(genresToDrawOn())
+
+  const suited = allProgressions().filter(
+    (row) => (row.tags || []).some((tag) => sameGenre(tag, genre))
+  )
+  // Nothing in the same genre is not a reason to refuse: most progressions
+  // carry no tag at all, and a song with the right drums and an untagged set of
+  // changes is still a song.
+  const progression = pick(suited.length ? suited : allProgressions())
   if (!progression) {
     toast('No progressions to draw on')
     return false
@@ -958,13 +955,68 @@ export function rollSong() {
   }
 
   setText(lines.join('\n'))
-  const placed = rollDrums()
+  const placed = await rollDrums(genre)
 
   // What it replaced, offered back rather than asked about first.
-  const summary = `${form.length} sections, ${used.length} articulation${used.length === 1 ? '' : 's'}`
+  const summary = `${genre || 'anything'} — ${form.length} sections, `
+    + `${used.length} articulation${used.length === 1 ? '' : 's'}`
     + (placed ? `, ${placed} drum part${placed === 1 ? '' : 's'}` : '')
   toast(summary, before.trim() ? { label: 'Undo', run: () => setText(before) } : null)
   return true
+}
+
+/**
+ * The genres there are enough drums in to build a song from.
+ *
+ * Drawn from the drums rather than from the genre list, because the list has
+ * sixteen hundred entries and the drums have what they have. A genre with one
+ * groove in it makes a song where every section is the same bar.
+ */
+function genresToDrawOn(least = 4) {
+  const counts = new Map()
+  for (const groove of state.drums) {
+    if (!groove.genre) continue
+    counts.set(groove.genre, (counts.get(groove.genre) || 0) + 1)
+  }
+  for (const set of state.drumSets) {
+    // What an imported library said about itself, which is a coarse signal and
+    // the only one available without reading the catalogue.
+    const named = (set.facts || {}).genre
+    if (named) counts.set(named, (counts.get(named) || 0) + least)
+  }
+
+  const enough = [...counts.entries()].filter(([, n]) => n >= least).map(([name]) => name)
+  return enough.length ? enough : [...counts.keys()]
+}
+
+/**
+ * Grooves of one genre, from everywhere there are any.
+ *
+ * The bundled corpus is in memory and an imported catalogue is a database, so
+ * they are asked in different ways and the answers put together. A die that
+ * drew only on what ships with jamin would ignore three quarters of a million
+ * patterns somebody went to the trouble of importing.
+ */
+async function groovesForGenre(genre, kind) {
+  const here = state.drums.filter(
+    (groove) => groove.kind === kind && (!genre || sameGenre(groove.genre, genre))
+  )
+
+  let imported = []
+  if (state.drumSets.length) {
+    try {
+      const found = await searchGrooves({ kind, genre: genre || '' }, 200, 20000)
+      imported = found.rows.map(unpackGroove)
+    } catch {
+      imported = []
+    }
+  }
+
+  const both = [...here, ...imported]
+  // Nothing in this genre is not a reason to leave the drums empty: the song
+  // has been written and it needs a part.
+  if (both.length) return both
+  return state.drums.filter((groove) => groove.kind === kind)
 }
 
 /**
@@ -972,17 +1024,27 @@ export function rollSong() {
  *
  * Each section gets its own beat rather than the song getting one: that is what
  * makes a chorus sound like a chorus. The fill is chosen to suit the beat it
- * leads out of -- same feel, same metre -- which is what @see matchingFill is
- * for, and separately per section so the song does not end every part with the
- * same flurry.
+ * leads out of -- same feel, same metre -- and separately per section so the
+ * song does not end every part with the same flurry.
+ *
+ * All of one genre, and where the patterns say so, all of one era. A library
+ * that knows a groove is from the sixties can keep a whole song there, which is
+ * a thing no amount of choosing at random will do.
  */
-function rollDrums() {
+async function rollDrums(genre) {
   const rows = drumRows().filter((row) => !row.stale)
   if (!rows.length) return 0
 
-  const beats = state.drums.filter((groove) => groove.kind === 'beat')
-  const pool = beats.length ? beats : state.drums
-  if (!pool.length) return 0
+  const beats = await groovesForGenre(genre, 'beat')
+  if (!beats.length) return 0
+
+  // Whichever era the first groove belongs to, the rest follow where they can.
+  const first = pick(beats)
+  const era = first && first.tags ? first.tags.era : ''
+  const sameEra = era ? beats.filter((groove) => (groove.tags || {}).era === era) : []
+  const pool = sameEra.length >= rows.length ? sameEra : beats
+
+  const fills = await groovesForGenre(genre, 'fill')
 
   let next = state.drumBindings
   let placed = 0
@@ -993,7 +1055,7 @@ function rollDrums() {
     next = bindGroove(next, row.name, beat.id, 'groove')
     placed++
 
-    const fill = matchingFill(beat, state.drums, { prefer: 'random' })
+    const fill = matchingFill(beat, fills.length ? fills : state.drums, { prefer: 'random' })
     if (fill) {
       next = bindGroove(next, row.name, fill.id, 'fill')
       placed++
