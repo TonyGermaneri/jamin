@@ -139,27 +139,8 @@ async function retryMidi() {
               density="compact" hide-details color="success" class="mb-2"
               label="A fill into every section change"
             />
-            <div class="text-caption text-medium-emphasis mb-2">
+            <div class="text-caption text-medium-emphasis mb-4">
               Write <code>[d:nofill]</code> in a section to stop just that one.
-            </div>
-
-            <div class="d-flex align-center mb-4">
-              <v-switch
-                v-model="state.settings.drums.only"
-                :disabled="!state.settings.drums.enabled"
-                density="compact" hide-details color="warning"
-                label="Send the drums and nothing else"
-              />
-              <InfoTip>
-                For a track whose instrument is a drum kit. A plugin has one MIDI output — the
-                track it is on — so the chords go out on channel 1 and the drums on channel 10,
-                and it is the instrument that decides whether to care.
-                <br /><br />
-                A drum sampler generally does not. Ableton's Drum Rack takes every note on every
-                channel, so the chords land on whichever pads happen to sit under them and the kit
-                plays the harmony. This stops the chords, the bass and the phrases being sent at
-                all; the drums are untouched.
-              </InfoTip>
             </div>
 
             <v-select

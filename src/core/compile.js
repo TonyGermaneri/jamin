@@ -132,6 +132,9 @@ export function compileSong(request) {
   const phrases = request.phrases || {}
   const recorder = new Recorder()
   const player = new Player(recorder, settings)
+  // Which part this instance plays. Not a setting -- it belongs to the track --
+  // so it travels with the request. @see store state.ui.sends
+  player.sends = request.sends === 'drums' ? 'drums' : 'phrases'
   player.getPhrase = (id) => phrases[id] || null
 
   // The drums, resolved the same way and for the same reason: the catalogue is

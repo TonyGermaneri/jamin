@@ -304,7 +304,6 @@ check('a repeated section is one row',
   settings.midi.chordOutputId = 'out'
   settings.midi.drumOutputId = 'out'
   settings.drums.enabled = true
-  settings.drums.only = true
 
   const beat = {
     id: 'k', name: 'k', kind: 'beat', bars: 1, lengthPulses: 96,
@@ -312,6 +311,7 @@ check('a repeated section is one row',
   }
 
   const player = new Player(engine, settings)
+  player.sends = 'drums'
   player.getGroove = () => beat
   player.getFill = () => null
   player.setScore(parseScore('| Cmaj7 | F | G |', { beatsPerBar: 4 }))
@@ -324,7 +324,8 @@ check('a repeated section is one row',
   check('and nothing else does', elsewhere.length, 0)
 })()
 
-// With it off, the chords come back -- this is a switch, not a removal.
+// The other way round: articulations play and the drums stay quiet, even with
+// a groove bound and the drums switched on. One output, one part.
 ;(() => {
   const heard = []
   const engine = {
@@ -333,13 +334,24 @@ check('a repeated section is one row',
   }
   const settings = defaultSettings()
   settings.midi.chordOutputId = 'out'
-  settings.drums.enabled = false
-  settings.drums.only = false
+  settings.midi.drumOutputId = 'out'
+  settings.drums.enabled = true
+
+  const beat = {
+    id: 'k', name: 'k', kind: 'beat', bars: 1, lengthPulses: 96,
+    notes: [{ at: 0, note: 36, duration: 6, velocity: 100 }],
+  }
 
   const player = new Player(engine, settings)
-  player.setScore(parseScore('| Cmaj7 |', { beatsPerBar: 4 }))
-  for (let p = 1; p <= 90; p++) player.tick(p)
-  check('with it off the chords play', heard.length > 0, true)
+  player.sends = 'phrases'
+  player.getGroove = () => beat
+  player.getFill = () => null
+  player.setScore(parseScore('| Cmaj7 | F |', { beatsPerBar: 4 }))
+  for (let p = 1; p <= 190; p++) player.tick(p)
+
+  const onDrums = heard.filter((n) => n.channel === settings.midi.drumChannel)
+  check('the chords play', heard.length > onDrums.length, true)
+  check('and the drums do not', onDrums.length, 0)
 })()
 
 /* ---------------- the 1 lands on the 1 ----------------------------------- */
@@ -454,6 +466,8 @@ check('and nothing cycles without a groove', cycleBinding({}, 'Verse', null, 'be
     controlChange: () => true,
   }
   const p = new Player(engine, s)
+  // This instance is the one playing the drums. One output plays one part.
+  p.sends = 'drums'
   p.getGroove = () => beat
   p.getFill = () => null
   const score = parseScore('[Verse] | C | F |\n[Chorus] | G |', { beatsPerBar: 4 })

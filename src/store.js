@@ -191,6 +191,14 @@ export const state = reactive({
     progressions: false,
     settingsTab: 'midi',
     toastAction: null,
+    /**
+     * Which part this instance plays: 'phrases' or 'drums'.
+     *
+     * Here rather than in settings on purpose. It belongs to the track, not to
+     * the person -- one instance on a piano and one on a kit is the ordinary
+     * arrangement -- so it must not follow anybody into their next session.
+     */
+    sends: 'phrases',
     phrasesTab: 'catalogue',
     lickTexture: 'any',
     drums: false,
@@ -535,6 +543,9 @@ function compileRequest(grooves = null) {
     phrases,
     grooves: grooves || groovesInUse(),
     drumBindings: state.drumBindings,
+    // Travels with the request rather than with the settings, because it is
+    // not a setting. @see state.ui.sends
+    sends: state.ui.sends,
     accentAt,
     accent: accentAt === null ? null : accentPhrase(),
     generation: ++hostGeneration,
@@ -1801,6 +1812,24 @@ export async function setDrumSetKit(id, kit, customMap = null) {
  * opening the *book* needs, and it is only ever a click away from being asked
  * for.
  */
+/**
+ * Play the drums here, or play the articulations. Never both.
+ *
+ * A plugin plays into one track, and a drum sampler takes every note on every
+ * channel -- Ableton's Drum Rack does not look at the channel at all. So
+ * sending chords and drums to the same instrument puts the harmony on the pads.
+ * Two instances, one on each, is the arrangement that works.
+ */
+export function setSends(what) {
+  const next = what === 'drums' ? 'drums' : 'phrases'
+  if (state.ui.sends === next) return
+  state.ui.sends = next
+  player.sends = next
+  player.stopAll()
+  refreshDrums()
+  toast(next === 'drums' ? 'Playing the drums here' : 'Playing the articulations here')
+}
+
 export async function openDrumBook() {
   state.ui.drums = true
   await refreshDrumSets()

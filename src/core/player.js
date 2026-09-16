@@ -97,6 +97,15 @@ export class Player {
       lengthPulses: 0,
       sounding: new Set(),
     }
+    /**
+     * Which part this instance is playing: `phrases` or `drums`.
+     *
+     * Not a setting. It belongs to the track rather than to the person -- one
+     * instance on a piano and one on a kit is the ordinary arrangement -- so it
+     * does not follow somebody into their next session.
+     */
+    this.sends = 'phrases'
+
     /** The phrase a heard chord is played through. The catalogue is the
         application's, so the application chooses. */
     this.getLivePhrase = () => null
@@ -235,18 +244,18 @@ export class Player {
     const accompany = this.settings.accompany
 
     /*
-     * The drums and nothing else.
+     * One output, one part.
      *
-     * A plugin has one output, so everything it plays arrives at the same
-     * instrument, and a drum sampler takes every note on every channel --
-     * Ableton's Drum Rack does not look at the channel at all. The chords then
-     * land on whatever pads sit under them and the kit plays the harmony.
+     * A plugin plays into the track it is on, so everything it sends arrives at
+     * the same instrument -- and a drum sampler takes every note on every
+     * channel. Ableton's Drum Rack does not look at the channel at all, so
+     * chords land on whichever pads sit under them and the kit plays the
+     * harmony. Sending both is not a preference, it is a mistake with a
+     * setting in front of it.
      *
-     * The drums are not touched here: they run off the song's own clock rather
-     * than off chord events, and stopping them is nothing to do with what a
-     * chord is doing. @see flushDrums
+     * So it is one or the other. @see sends
      */
-    if (this.settings.drums.only) {
+    if (this.sends === 'drums') {
       this.activePhrase = null
       this.phraseQueue = []
       this.phraseCursor = 0
@@ -404,6 +413,8 @@ export class Player {
    * tom. It is the one part of jamin that plays exactly what it was given.
    */
   flushDrums(position, wrapped) {
+    if (this.sends !== 'drums') return
+
     if (!this.drumTrack.length) return
 
     const midi = this.settings.midi

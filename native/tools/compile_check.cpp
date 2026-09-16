@@ -161,6 +161,11 @@ int main (int argc, char** argv)
             R"({"text":"[Verse] | C | F |\n[Chorus] | G |",)"
             R"("grooves":{"gTest":)" + groove + "},"
             R"("drumBindings":{"Verse":{"groove":"gTest"},"Chorus":{"groove":"gTest"}},)"
+            // Which part this instance plays. One output plays one: a plugin
+            // sends into the track it is on, and a drum sampler takes every
+            // note on every channel, so chords and drums together put the
+            // harmony on the pads.
+            R"("sends":"drums",)"
             R"("settings":)" + settingsJson() + "}";
 
         const auto drummed = compiler.compile (request);

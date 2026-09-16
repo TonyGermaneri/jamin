@@ -18,6 +18,7 @@ import {
   openDrumBook,
   rollSong,
   runToastAction,
+  setSends,
 } from './store.js'
 
 const idle = ref(false)
@@ -126,6 +127,25 @@ function toggleListen() {
       <ChordCanvas />
 
       <div class="jamin-chrome" :class="{ 'is-idle': idle }">
+        <!-- What this instance plays into its track. Never both: a plugin
+             plays into one instrument and a drum sampler takes every note on
+             every channel, so chords and drums together put the harmony on the
+             pads. In the toolbar rather than the settings because it belongs to
+             the track, not to the person -- and must not follow anybody into
+             their next session. -->
+        <v-btn-toggle
+          :model-value="state.ui.sends"
+          density="compact" variant="text" mandatory class="mr-1"
+          @update:model-value="setSends"
+        >
+          <v-btn value="phrases" size="small" title="Play the phrase book's articulations here">
+            <v-icon size="18">mdi-music-note-eighth</v-icon>
+          </v-btn>
+          <v-btn value="drums" size="small" title="Play the drums here">
+            <v-icon size="18">mdi-circle-multiple-outline</v-icon>
+          </v-btn>
+        </v-btn-toggle>
+
         <!-- A whole song, at once. First in the row because it is where you
              start from nothing, and everything else here adjusts what it made. -->
         <v-btn
