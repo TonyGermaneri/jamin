@@ -565,6 +565,7 @@ body,
   font-size: 0.7rem;
 }
 
+
 .jamin-roll-row {
   display: flex;
   align-items: center;
@@ -653,10 +654,21 @@ body,
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 226px;
+  /* Take the room there is and scroll only when there is not enough.
+     A fixed ceiling meant the roll stayed 226px tall in a window with four
+     hundred to spare, which wastes the one part of the pane that gets better
+     with height -- fourteen rows of a beat you can read rather than six. */
+  flex: 1 1 auto;
+  min-height: 120px;
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 2px;
+}
+
+/* The roll is the thing that grows, so it needs a parent that lets it. */
+.jamin-roll {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* A voice this pattern never touches. Dimmed rather than hidden -- the empty

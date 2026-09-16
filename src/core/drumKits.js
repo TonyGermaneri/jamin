@@ -338,31 +338,48 @@ export function classifyKit(histogram) {
   }
 
   /**
-   * A verdict a kit cannot actually play is not a verdict.
+   * A verdict a kit cannot actually play is not a verdict -- but neither is no
+   * verdict at all.
    *
-   * This is what was wrong for a long time and it was not subtle: measured
-   * across the collection, `Africa`, `Asia` and `Europe` put **100% of their
-   * notes outside anything General MIDI can read** -- they are hand-percussion
-   * packs living between 60 and 81, where this vocabulary of fourteen kit
-   * voices has no room at all -- and every one of them came back "General
-   * MIDI" with a coverage of nothing. Named, filed, and silent on playback.
+   * Two faults, one after the other. First, every pack was called General MIDI
+   * whatever was in it: measured across the collection, `Africa`, `Asia` and
+   * `Europe` put **100% of their notes outside anything General MIDI can
+   * read** -- hand-percussion packs living between 60 and 81, where a
+   * vocabulary of fourteen kit voices has no room at all -- and each was
+   * named, filed and silent on playback.
    *
-   * So a name is only given when the kit can make sense of most of what is
-   * there. Below that it is honest to say so: an unclassified library falls
-   * back to whatever the Kit tab says and the interface reports the reason,
-   * which is a great deal better than a label that plays nothing.
+   * The fix for that was to refuse: below a threshold, name nothing and let the
+   * library follow whatever the Kit tab said. Which is worse, because it is not
+   * an answer. Which numbering a library's files are written in is a **fact
+   * about those files**; it does not change when somebody picks a different
+   * drum instrument for the track, and a library whose map follows a global
+   * setting is one whose notes move under it for reasons that have nothing to
+   * do with the library.
+   *
+   * So there is always a kit. When the obvious one cannot read the notes, every
+   * kit is tried and the one that reads the most wins -- and when they are all
+   * poor, the best of a bad set is still named and `coverage` says plainly how
+   * bad. A wrong answer you can see and change beats a deferral you cannot.
    */
   const ENOUGH = 0.6
+
+  /** Whichever kit makes sense of the most of this, when the likely one does not. */
+  const bestOfAll = () => DRUM_KITS
+    .map((kit) => ({ id: kit.id, covered: playable(kit.id) }))
+    .sort((a, b) => b.covered - a.covered)[0] || { id: DEFAULT_KIT, covered: 0 }
 
   const verdict = (kit, confidence, reason) => {
     const covered = playable(kit)
     if (covered >= ENOUGH) return { kit, confidence, coverage: covered, reason }
+
+    const best = bestOfAll()
     return {
-      kit: '',
+      kit: best.id,
       confidence: 0,
-      coverage: covered,
+      coverage: best.covered,
       reason: `${Math.round((1 - covered) * 100)}% of these notes are outside `
-        + `${kitById(kit).name}, so it is not that`,
+        + `${kitById(kit).name}; ${kitById(best.id).name} reads the most of them `
+        + `(${Math.round(best.covered * 100)}%)`,
     }
   }
 
@@ -380,8 +397,12 @@ export function classifyKit(histogram) {
     return verdict('gm', Math.min(1, percussion), 'hand percussion, in the General MIDI range')
   }
 
-  return { kit: '', confidence: 0, coverage: playable('gm'),
-           reason: 'nothing here is where a standard kit would be' }
+  // Nothing is where a standard kit would be, which is still not a reason to
+  // leave the library without a map. @see verdict
+  const best = bestOfAll()
+  return { kit: best.id, confidence: 0, coverage: best.covered,
+           reason: `nothing here is where a standard kit would be; ${kitById(best.id).name} `
+             + `reads ${Math.round(best.covered * 100)}% of it` }
 }
 
 /** A custom map, sanitised: known voices, whole numbers, in range. */

@@ -34,6 +34,7 @@ import {
   importDrumFolder,
   cancelDrumImport,
   forgetDrumSet,
+  forgetEveryDrumSet,
   setDrumSetKit,
   importDrumFolderByReference,
   notesFor,
@@ -51,7 +52,7 @@ import {
 // The in-memory text search, which is not the store's searchDrums: that one
 // asks the database. Both are needed and they are not the same thing.
 import { searchDrums as searchGrooveList, summarizeGroove } from '../core/drums.js'
-import { DRUM_KITS, DRUM_VOICES, kitById, gmName, mapDrumNote, TD11_TO_VOICE } from '../core/drumKits.js'
+import { DRUM_KITS, DRUM_VOICES, DEFAULT_KIT, kitById, gmName, mapDrumNote, TD11_TO_VOICE } from '../core/drumKits.js'
 import InfoTip from './InfoTip.vue'
 import { vDragMidi } from '../core/dragOut.js'
 import { everyTag } from '../core/drumTags.js'
@@ -915,6 +916,33 @@ function voiceShare(id) {
   return `${share < 0.1 ? '<0.1' : share.toFixed(1)}%`
 }
 
+/**
+ * Erasing the lot, confirmed by a second press rather than by a dialog.
+ *
+ * A plugin web view has no dialog to confirm with -- `window.confirm` answers
+ * false the instant it is asked -- so the button asks by changing what it says
+ * and waiting. @see store.rollSong for the same problem solved with an undo;
+ * this one cannot be undone, so it asks first.
+ */
+const eraseArmed = ref(false)
+let eraseTimer = null
+
+function eraseEverything() {
+  if (!eraseArmed.value) {
+    eraseArmed.value = true
+    toast('Press again to erase every imported library')
+    clearTimeout(eraseTimer)
+    eraseTimer = setTimeout(() => { eraseArmed.value = false }, 6000)
+    return
+  }
+  clearTimeout(eraseTimer)
+  eraseArmed.value = false
+  forgetEveryDrumSet()
+}
+
+/** What a library written before kits were always named falls back to. */
+const defaultKitId = DEFAULT_KIT
+
 const overridden = computed(() => Object.keys(settings.value.customMap || {}).length)
 function resetMap() {
   settings.value.customMap = {}
@@ -1038,7 +1066,15 @@ function resetMap() {
                         {{ groove.kind === 'fill' ? 'mdi-flash-outline' : 'mdi-circle-multiple-outline' }}
                       </v-icon>
                     </template>
-                    <v-list-item-title class="text-body-2">{{ groove.name }}</v-list-item-title>
+                    <v-list-item-title class="text-body-2">
+                      {{ groove.name }}
+                      <!-- The id, because a name is shared and an id is not --
+                           the same reason the phrase list carries one. It is
+                           what `[d:...]` in the chart refers to. -->
+                      <span class="text-caption text-medium-emphasis jamin-mono ml-1">
+                        {{ '{' + groove.id + '}' }}
+                      </span>
+                    </v-list-item-title>
                     <v-list-item-subtitle class="text-caption">
                       {{ groove.bars }} bar{{ groove.bars === 1 ? '' : 's' }} ·
                       {{ groove.timeSignature }} · {{ groove.bpm }}bpm
@@ -1101,10 +1137,6 @@ function resetMap() {
                                 :total-visible="5" density="compact" size="small" />
                   <v-spacer />
                   <span class="text-caption text-medium-emphasis">
-                    <span class="jamin-keyhint mr-2">
-                      <kbd>↑↓</kbd> groove · <kbd>←→</kbd> page ·
-                      <kbd>1–0</kbd> cycle part · <kbd>space</kbd> all
-                    </span>
                     <template v-if="state.drumUpgrading">
                       <v-progress-circular indeterminate size="12" width="2" class="mr-1" />
                       Rebuilding the catalogue's index, once
@@ -1267,8 +1299,15 @@ function resetMap() {
                 <div v-if="!selected" class="text-caption text-medium-emphasis pa-2">
                   Pick a groove to see what it is and bind it to a part of the song.
                 </div>
-                <div v-else class="jamin-book-scroll pa-1">
-                  <div class="text-body-2 mb-1">{{ selected.name }}</div>
+                <!-- A column rather than a scroll box, so the roll inside it
+                     can be the thing that takes the leftover height. -->
+                <div v-else class="jamin-book-scroll pa-1 d-flex flex-column">
+                  <div class="text-body-2 mb-1">
+                    {{ selected.name }}
+                    <span class="text-caption text-medium-emphasis jamin-mono ml-1">
+                      {{ '{' + selected.id + '}' }}
+                    </span>
+                  </div>
                   <div class="text-caption text-medium-emphasis mb-3">
                     {{ summarizeGroove(selected) }}
                     <!-- Worked out from the notes at import and kept on the
@@ -1583,10 +1622,13 @@ function resetMap() {
                     </div>
                   </td>
                   <td style="min-width: 190px">
+                    <!-- No "whatever the Kit tab says". Which numbering a
+                         library's files are written in is a fact about the
+                         files; it does not change because somebody picked a
+                         different drum instrument for the track. -->
                     <v-select
-                      :model-value="set.kit || ''"
-                      :items="[{ title: `Whatever the Kit tab says (${chosenKit.name})`, value: '' },
-                               ...DRUM_KITS.map((k) => ({ title: k.name, value: k.id }))]"
+                      :model-value="set.kit || defaultKitId"
+                      :items="DRUM_KITS.map((k) => ({ title: k.name, value: k.id }))"
                       density="compact" hide-details variant="plain"
                       @update:model-value="setDrumSetKit(set.id, $event)"
                     />
@@ -1640,6 +1682,22 @@ function resetMap() {
 
             <div v-else-if="!state.drumSets.length" class="text-caption text-medium-emphasis pa-4">
               No libraries yet. The bundled corpus is on the Grooves tab and works without any.
+            </div>
+
+            <!-- Start again. One library at a time is fifty confirmations when
+                 what somebody means is "clear it out", which after a run of
+                 broken imports is a thing they mean often. -->
+            <div v-if="state.drumSets.length" class="d-flex align-center mt-4" style="gap: 8px">
+              <v-btn size="small" variant="tonal" color="error"
+                     prepend-icon="mdi-delete-sweep-outline"
+                     :disabled="state.drumRemoval.running"
+                     @click="eraseEverything">
+                {{ eraseArmed ? 'Press again to erase them' : `Erase all ${state.drumSets.length} imported libraries` }}
+              </v-btn>
+              <span class="text-caption text-medium-emphasis">
+                The MIDI files are not touched — these are pointers into folders that stay
+                where they are.
+              </span>
             </div>
           </v-window-item>
 

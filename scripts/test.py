@@ -168,4 +168,22 @@ sys.stderr.write(check.stderr)
 if check.returncode != 0:
     failed += 1
 
+# And every name a file uses is one it defined or imported.
+#
+# eslint with a single rule, no-undef. Eight of these have shipped -- toast,
+# resourceOk, mapDrumNotes, realizeChord, scoreOptions, SAMPLE_CHART, openBook,
+# barsOfProgression -- and vite bundles every one of them without a word, so the
+# first sign is a button that does nothing. @see eslint.config.js
+lint = os.path.join(ROOT, "node_modules", ".bin", "eslint")
+if os.path.exists(lint):
+    result = subprocess.run([lint, "src"], cwd=ROOT, capture_output=True, text=True)
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    print("undefined names: none" if result.returncode == 0
+          else "undefined names: FOUND — vite would have bundled these silently")
+    if result.returncode != 0:
+        failed += 1
+else:
+    print("     (eslint is not installed; skipping the undefined-name check)")
+
 sys.exit(1 if failed else 0)

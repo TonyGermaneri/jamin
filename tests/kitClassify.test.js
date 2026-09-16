@@ -44,21 +44,28 @@ check('hat edges alone are not a Roland kit', classifyKit(edgesButGmToms).kit, '
 
 /* ---------------- hand percussion --------------------------------------- */
 /*
- * No kit at all: congas, bongos, agogo, living between 60 and 81.
+ * No kit really fits: congas, bongos, agogo, living between 60 and 81.
  *
- * This used to come back "General MIDI" and this test used to assert it, with
- * a note that the coverage said plainly a fourteen-voice vocabulary had nowhere
- * to put it. That was documenting the fault rather than catching it. Measured
- * on the real collection, whole packs -- `Africa`, `Asia`, `Europe` -- had
- * *every single note* outside anything General MIDI can read, and every one of
- * them was filed as General MIDI and silent on playback.
+ * Two faults in a row here, and the test has asserted both of them. It used to
+ * come back "General MIDI" with a coverage of nothing -- measured on the real
+ * collection, `Africa`, `Asia` and `Europe` have *every single note* outside
+ * anything General MIDI can read, and each was filed as General MIDI and silent
+ * on playback.
  *
- * A verdict a kit cannot play is not a verdict. It says so instead.
+ * The fix was to refuse, and a refusal made the library follow whatever the Kit
+ * tab said, which is not an answer either: which numbering a library's files
+ * are written in is a fact about the files and does not change because somebody
+ * picked a different drum instrument for the track.
+ *
+ * So a kit is always named, the coverage says how well it fits, and a poor fit
+ * is visible and changeable rather than deferred.
  */
 const congas = { 61: 300, 62: 200, 63: 180, 64: 150, 67: 90, 68: 60 }
-check('hand percussion is not any kit here', classifyKit(congas).kit, '')
-check('and the coverage says why', classifyKit(congas).coverage < 0.6, true)
-check('and so does the reason', /outside/.test(classifyKit(congas).reason), true)
+check('hand percussion still gets a map', Boolean(classifyKit(congas).kit), true)
+check('and the coverage says how badly it fits', classifyKit(congas).coverage < 0.6, true)
+check('and the reason names what reads the most of it',
+      /reads/.test(classifyKit(congas).reason), true)
+check('and it is not confident about it', classifyKit(congas).confidence, 0)
 
 // A kit that mostly can be read is still named. Most drum MIDI really is
 // General MIDI, and saying so is not the same fault in reverse.
@@ -67,11 +74,13 @@ check('a pack General MIDI can read is General MIDI', classifyKit(mostlyGm).kit,
 check('with nowhere for it to go', classifyKit(congas).coverage, 0)
 
 /* ---------------- and things it will not name --------------------------- */
-// A pad map with nothing where a kit belongs. Saying so is more use than
-// guessing: the kit selector is right there.
+// A pad map with nothing where a kit belongs. Still given one, because a
+// library with no map is a library whose notes move whenever the track's drum
+// instrument changes -- and the selector is right there to correct it.
 const pads = { 5: 300, 6: 200, 10: 100, 116: 80, 97: 60 }
-check('a pad map is not named', classifyKit(pads).kit, '')
+check('a pad map is still given a map', Boolean(classifyKit(pads).kit), true)
 check('and it says why', classifyKit(pads).reason.includes('standard kit'), true)
+check('and admits it reads almost none of it', classifyKit(pads).coverage < 0.2, true)
 
 check('nothing at all is survivable', classifyKit({}).kit, 'gm')
 check('and honest about it', classifyKit({}).confidence, 0)
@@ -85,5 +94,14 @@ const scaled = Object.fromEntries(Object.entries(rock).map(([k, v]) => [k, v * 3
 check('ten times the sample is the same verdict', classifyKit(scaled).kit, classifyKit(rock).kit)
 check('and the same coverage',
       Math.round(classifyKit(scaled).coverage * 1000), Math.round(classifyKit(rock).coverage * 1000))
+
+/* ---------------- and never nothing -------------------------------------
+ *
+ * The invariant the whole thing rests on. A library with no map is a library
+ * whose notes move whenever somebody changes the track's drum instrument, which
+ * is a fact about the track being used to answer a question about the files.
+ */
+for (const shape of [rock, sixties, roland, congas, pads, mostlyGm, {}, null])
+  check('every verdict names a kit', Boolean(classifyKit(shape).kit), true)
 
 console.log(failed ? `kit-classify: ${failed} FAILED` : 'kit-classify: all checks passed')

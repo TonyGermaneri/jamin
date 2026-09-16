@@ -155,6 +155,33 @@ export function toShorthand(text) {
 /** Does this chart use bar lines? */
 export const usesBarlines = (text) => String(text || '').includes('|')
 
+/**
+ * A progression's bars, as the chords in each.
+ *
+ * Written for the die, which builds a chart out of a progression by repeating
+ * its bars across a form -- so it needs them one at a time rather than as a
+ * block of text.
+ *
+ * Two spellings and the same rule as everywhere else: one `|` anywhere means
+ * bar lines say where the bars are, and otherwise a bar is a group of chords
+ * separated by spaces. Section labels are not bars and neither are repeat
+ * marks; a progression is changes, and the form comes from the die.
+ */
+export function barsOfProgression(text) {
+  const source = String(text || '').replace(/\[[^\]]*\]/g, ' ')
+
+  if (usesBarlines(source)) {
+    return source
+      .split(/\|+/)
+      .map((bar) => bar.replace(/:/g, ' ').replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+  }
+
+  // No bar lines: a space is a bar. Newlines are bar breaks too, which is what
+  // a progression written over several lines means.
+  return source.split(/\s+/).map((one) => one.trim()).filter(Boolean)
+}
+
 /* ------------------------------------------------------------------ *
  * Storage
  * ------------------------------------------------------------------ */

@@ -66,6 +66,7 @@ import {
   preferFlatForRoot,
   toShorthand,
   usesBarlines,
+  barsOfProgression,
   parseProgressionImport,
   exportProgressions,
 } from './core/progressions.js'
@@ -2001,6 +2002,53 @@ export function cancelDrumImport() {
  * that has not changed. The count is what makes the difference between waiting
  * and wondering whether it has hung.
  */
+/**
+ * Every imported library, gone.
+ *
+ * One at a time is fifty confirmations and fifty progress bars when what
+ * somebody means is "start again" -- which after a run of broken imports is a
+ * thing they mean often.
+ *
+ * Library by library rather than one clear, so the progress meter keeps moving
+ * and says which one it is on. A single transaction over three quarters of a
+ * million rows holds a write lock for minutes with nothing able to report on
+ * it, which is indistinguishable from a hang. @see drumStore.deleteSet
+ *
+ * Nothing on disk is touched. These are pointers into folders that stay exactly
+ * where they are.
+ */
+export async function forgetEveryDrumSet() {
+  const sets = [...state.drumSets]
+  if (!sets.length) {
+    toast('Nothing imported')
+    return 0
+  }
+
+  const total = sets.reduce((sum, set) => sum + (set.count || 0), 0)
+  let done = 0
+
+  for (const set of sets) {
+    state.drumRemoval = { running: true, name: set.name || 'library', done, total }
+    try {
+      await deleteSet(set.id, (removed) => {
+        state.drumRemoval.done = done + removed
+      })
+    } catch {
+      /* one library that will not go is not a reason to keep the other forty */
+    }
+    done += set.count || 0
+  }
+
+  state.drumRemoval = { running: false, name: '', done: 0, total: 0 }
+  state.drumFilters.set = ''
+  state.drumFilters.source = 'all'
+  await refreshDrumSets()
+  await searchDrums(state.drumFilters)
+  state.drumCounts = {}
+  toast(`${sets.length} librar${sets.length === 1 ? 'y' : 'ies'} removed — the files are untouched`)
+  return sets.length
+}
+
 export async function forgetDrumSet(id) {
   const set = state.drumSets.find((row) => row.id === id)
   const name = (set && set.name) || 'library'
