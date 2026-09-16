@@ -20,6 +20,8 @@ check('crashes', tagsFor('Pack/000043@GRIND_&_BLAST/Crash Hits').surface, 'Crash
 check('toms', tagsFor('Pack/Tribal/Floor Tom Groove').surface, 'Toms')
 check('percussion', tagsFor('Pack/000045@EZX_LATIN_PERCUSSION/61@CRICKETS').surface, 'Percussion')
 check('and the whole kit', tagsFor('Superior/FullKit Variation 12').surface, 'Full kit')
+// Welded together, which is how half the collection writes it.
+check('a hi-hat with no space in it', tagsFor('Pack/Rock/FullKitHiHat8ths').surface, 'Hi-hat')
 
 /* ---------------- feel --------------------------------------------------- */
 check('straight', tagsFor('Pack/109@STRAIGHT_6#8').feel, 'Straight')
@@ -56,6 +58,11 @@ check('the first one wins', signatureIn('Pack/508@3#4_AND_6#8'), '3/4')
 
 // The list of metres is what keeps a path full of numbers from filling the
 // filter with nonsense. A catalogue number is not a time signature.
+// Underscore too. A pack called Odd Meter Drums whose folders are
+// `11_8_IndieQuirk` and `7_8_FunkStep` was reading none of its own metres.
+check('an underscore for a slash', signatureIn('Odd Meter Drums/11_8_IndieQuirk'), '11/8')
+check('and another', signatureIn('Odd Meter Drums/7_8_FunkStep'), '7/8')
+
 check('a catalogue number is not a metre', signatureIn('Pack/150-S033@THEME'), '')
 check('nor is a subdivision', signatureIn('Pack/30@GRIND (1#16_Triplet)'), '')
 check('nor a range', signatureIn('Pack/Grooves 2-13'), '')

@@ -35,10 +35,35 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 DRIVER = r"""
 import 'fake-indexeddb/auto'
+/*
+ * A catalogue as an older jamin left it.
+ *
+ * Built by hand before the store module is asked for anything: the grooves
+ * store and the single-field indexes, and none of the paired ones. That is what
+ * somebody who imported a library last week actually has, and it is the only
+ * state in which the promise -- that opening never triggers a minute of
+ * index-building -- can be tested at all. A database created fresh has nothing
+ * to build and would pass without proving a thing.
+ */
+await new Promise((done) => {
+  const open = indexedDB.open('jamin.drums', 1)
+  open.onupgradeneeded = () => {
+    const db = open.result
+    db.createObjectStore('sets', { keyPath: 'id' })
+    const store = db.createObjectStore('grooves', { keyPath: 'id' })
+    for (const [name, field] of Object.entries({
+      set: 's', kind: 'k', bars: 'r', genre: 'g', signature: 't', folder: 'f',
+      feel: 'x.feel', surface: 'x.surface', part: 'x.part', era: 'x.era',
+    })) store.createIndex(name, field)
+  }
+  open.onsuccess = () => { open.result.close(); done() }
+  open.onerror = () => done()
+})
 import fs from 'node:fs'
 import path from 'node:path'
 import { readGrooveFile, packGroove } from 'SRC/core/drumImport.js'
-import { putGrooves, searchGrooves, grooveFacets, countGrooves } from 'SRC/core/drumStore.js'
+import { putGrooves, searchGrooves, grooveFacets, countGrooves,
+         buildIndexes, indexesAreCurrent } from 'SRC/core/drumStore.js'
 
 const ROOT = process.argv[2]
 const WANT = Number(process.argv[3] || 50000)
@@ -96,6 +121,23 @@ for (const file of files) {
 if (batch.length) await putGrooves(batch)
 
 const stored = await countGrooves()
+/*
+ * Opening does not upgrade.
+ *
+ * Building the indexes over a catalogue already imported is the better part of
+ * a minute with nothing able to report on it, so it happens when somebody has
+ * asked for a long job and been told so -- never because they opened the
+ * plugin. This is that promise, checked: a database left at an older version
+ * stays there until something asks.
+ */
+const beforeAsking = await indexesAreCurrent()
+await countGrooves()
+await searchGrooves({}, { limit: 1 })
+const afterAsking = await indexesAreCurrent()
+const built = await buildIndexes()
+const afterBuilding = await indexesAreCurrent()
+const upgrading = { beforeAsking, afterAsking, built, afterBuilding }
+
 const facets = await grooveFacets(null)
 
 const plural = { kind: 'kinds', bars: 'bars', genre: 'genres', signature: 'signatures',
@@ -282,7 +324,7 @@ if (biggest) {
 
 process.stdout.write(JSON.stringify({
   read: n, skipped, stored, holds: facets.holds, exact: facets.exact,
-  sets: [...setOf.entries()].length, report, searched, paging, pairs, turning, perSet, scoped,
+  sets: [...setOf.entries()].length, report, searched, paging, pairs, turning, perSet, scoped, upgrading,
   shelves: (facets.folders || []).length,
   shelfSum: (facets.folders || []).reduce((a, [, c]) => a + c, 0),
 }))
@@ -414,6 +456,19 @@ def main():
           all(one["holds"] == one["rows"] for one in found.get("perSet", [])),
           "; ".join(f"{one['set']} says {one['holds']} of {one['rows']}"
                     for one in found.get("perSet", []) if one["holds"] != one["rows"]))
+
+    # Opening never upgrades. Building the indexes over a catalogue already
+    # imported is the better part of a minute with nothing able to report on
+    # it, so it belongs to an import somebody asked for and never to a plugin
+    # somebody opened.
+    up = found.get("upgrading") or {}
+    if up:
+        print(f"  indexing   indexed on open: {up['beforeAsking']}, "
+              f"after querying: {up['afterAsking']}, after asking: {up['afterBuilding']}")
+        check("using the catalogue does not upgrade it",
+              up["afterAsking"] == up["beforeAsking"],
+              "opening or querying triggered the index build")
+        check("and asking for it does", up["afterBuilding"], "buildIndexes did nothing")
 
     # A library and one facet, which goes through the paired index.
     for one in found.get("scoped", []):

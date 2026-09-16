@@ -48,6 +48,8 @@ import {
   aimedElsewhere,
   instanceLabel,
   countEachDrumSet,
+  buildIndexes,
+  indexesAreCurrent,
   setDrumVoiceMuted,
   drumVoiceMuted,
   unmuteEveryDrumVoice,
@@ -958,6 +960,30 @@ function eraseEverything() {
   forgetEveryDrumSet()
 }
 
+/*
+ * A catalogue imported before the paired indexes existed.
+ *
+ * It works without them -- the facets fall back to a walk of the library, which
+ * is correct and slow -- so this is an offer rather than a warning, and it is
+ * made where somebody is already looking at their libraries.
+ */
+const indexesOld = ref(false)
+
+watch(() => [state.ui.book === 'drums', state.ui.drumsTab, state.drumSets.length],
+      async ([open]) => {
+        if (open) indexesOld.value = !(await indexesAreCurrent())
+      }, { immediate: false })
+
+async function bringIndexesUpToDate() {
+  state.drumImport.preparing = true
+  state.drumImport.name = 'Preparing the catalogue'
+  await buildIndexes()
+  state.drumImport.preparing = false
+  indexesOld.value = false
+  await refreshDrumSets()
+  toast('The catalogue is indexed')
+}
+
 /** What a library written before kits were always named falls back to. */
 const defaultKitId = DEFAULT_KIT
 
@@ -1572,7 +1598,20 @@ function resetMap() {
               <input ref="folderInput" type="file" webkitdirectory directory multiple
                      style="display: none" @change="onFolderPicked" />
 
-              <template v-if="state.drumImport.running">
+              <!-- Building the indexes, which happens once at the start of an
+                   import and never on its own. There is no progress to be had
+                   from inside an upgrade transaction, so what it says is what
+                   there is: what it is doing, why, and that it is once. -->
+              <template v-if="state.drumImport.preparing">
+                <v-progress-circular indeterminate size="18" width="2" color="primary" />
+                <span class="text-caption">
+                  Preparing the catalogue — building the filter indexes over the patterns
+                  already imported. This happens once and may take up to a minute on a
+                  large collection.
+                </span>
+              </template>
+
+              <template v-else-if="state.drumImport.running">
                 <!-- Packs, because that is the only count known before the
                      work starts. The tree below each is walked while it is read
                      rather than measured first, so folders and files are
@@ -1720,6 +1759,24 @@ function resetMap() {
 
             <div v-else-if="!state.drumSets.length" class="text-caption text-medium-emphasis pa-4">
               No libraries yet. The bundled corpus is on the Grooves tab and works without any.
+            </div>
+
+            <!-- Imported before this version knew how to index them. It works
+                 either way; without the indexes a library's own filters are a
+                 walk of its rows, which on a large one is a wait every time. -->
+            <div v-if="indexesOld && state.drumSets.length && !state.drumImport.preparing"
+                 class="d-flex align-center mt-4" style="gap: 8px">
+              <v-btn size="small" variant="tonal" color="primary"
+                     prepend-icon="mdi-database-refresh-outline"
+                     @click="bringIndexesUpToDate">
+                Index the catalogue
+              </v-btn>
+              <span class="text-caption text-medium-emphasis">
+                These libraries were imported before the filter indexes existed. Filtering
+                works without them by reading each library, which on a large one is a wait
+                every time you choose it. Building them takes up to a minute, once — it
+                happens on its own at the start of your next import.
+              </span>
             </div>
 
             <!-- Start again. One library at a time is fifty confirmations when

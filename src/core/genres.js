@@ -101,9 +101,32 @@ const NOT_A_GENRE = new Set([
   'full', 'half', 'long', 'short', 'slow', 'fast', 'medium',
 ])
 
+/**
+ * Words run together, pulled apart.
+ *
+ * A vendor who cannot put a space in a folder name capitalises instead, and
+ * `11_8_IndieQuirk` is an eleven-eight indie groove with the word indie welded
+ * to the word quirk. Lowercasing first destroys the only evidence of where one
+ * word ends, so this happens before that.
+ *
+ * Two rules, which between them are what camel case is: a small letter or digit
+ * followed by a capital is a break, and a run of capitals followed by a capital
+ * and a small letter is a break before the last capital -- so `GMBlues` is GM
+ * Blues rather than GMB lues, and `GM` alone is left as it is.
+ */
+export function unglue(text) {
+  return String(text || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    // And a letter running into a digit, which is the third way a vendor joins
+    // two words: `FullKitHiHat8ths` is a hi-hat groove in eighths, and without
+    // this the hat is welded to the eighths and reads as neither.
+    .replace(/([A-Za-z])(\d)/g, '$1 $2')
+}
+
 /** Everything a vendor puts between words, made into spaces. */
 function words(segment) {
-  return String(segment || '')
+  return unglue(segment)
     .toLowerCase()
     // A leading number or catalogue id: "02 Heavy Metal", "000210@JAZZ",
     // "GM - Blues", "150-S033@THEME".

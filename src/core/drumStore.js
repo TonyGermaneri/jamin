@@ -80,6 +80,17 @@ const SETS = 'sets'
 const GROOVES = 'grooves'
 
 let handle = null
+/**
+ * The version this open should ask for, or null for "whatever is there".
+ *
+ * Set only by @see buildIndexes, which is the one thing allowed to upgrade.
+ */
+let wantVersion = null
+
+/** An open request, at a version or at none. */
+function openAt(version) {
+  return version ? indexedDB.open(DB_NAME, version) : indexedDB.open(DB_NAME)
+}
 
 /**
  * Somebody to tell while the browser is rebuilding the indexes.
@@ -101,6 +112,65 @@ export function whileUpgrading(listener) {
   onUpgrade = typeof listener === 'function' ? listener : () => {}
 }
 
+/**
+ * Whether this catalogue has the indexes this version knows how to use.
+ *
+ * Asked of the indexes rather than of the version number. A database opened
+ * without a version and created on the spot lands at version 1 holding every
+ * index this build knows about -- correct, and reported as out of date by
+ * anything comparing 1 against 4, which would send somebody through a minute of
+ * rebuilding that had nothing to rebuild.
+ *
+ * The version is how the browser is *told* to build them. What matters is
+ * whether they are there.
+ */
+export async function indexesAreCurrent() {
+  const db = await open()
+  if (!db) return true
+  if (!db.objectStoreNames.contains(GROOVES)) return false
+
+  try {
+    const store = grooves(db)
+    for (const name of [...Object.keys(INDEXED), ...Object.keys(PAIRED)]) {
+      if (!store.indexNames.contains(name)) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Build the indexes, deliberately, now.
+ *
+ * The one thing that upgrades. It is called by the import before it reads a
+ * file, because that is a moment somebody has already chosen to wait through --
+ * and it must never be the moment they opened the plugin, which is what asking
+ * for a version on every open would make it.
+ *
+ * Roughly five seconds per index per three quarters of a million rows, measured
+ * in the plugin's own WebKit. There is no progress to be had from inside an
+ * upgrade transaction; @see whileUpgrading is the only thing there is to say.
+ */
+export async function buildIndexes() {
+  if (typeof indexedDB === 'undefined') return true
+  if (await indexesAreCurrent()) return true
+
+  const db = await open()
+  // One past whatever is there, so the browser runs an upgrade whatever version
+  // this catalogue happens to sit at -- a database created without a version is
+  // at 1 and would never be upgraded by asking for 4... except that it would,
+  // and asking for "the next one" is the rule that holds in both cases.
+  const next = db ? Math.max(DB_VERSION, db.version + 1) : DB_VERSION
+  if (db) db.close()
+
+  handle = null
+  wantVersion = next
+  const built = await open()
+  wantVersion = null
+  return Boolean(built)
+}
+
 function open() {
   if (handle) return handle
 
@@ -110,7 +180,22 @@ function open() {
       return
     }
 
-    const request = indexedDB.open(DB_NAME, DB_VERSION)
+    /*
+     * Opened at whatever version is already there, not at the newest one.
+     *
+     * Asking for a version is what triggers the upgrade, and an upgrade over
+     * three quarters of a million rows is the better part of a minute with
+     * nothing able to report on it. That is a fine thing to wait through when
+     * you have just asked to import a library and a very bad thing to find
+     * happening because you opened the plugin.
+     *
+     * So the version is only ever asked for deliberately. @see buildIndexes,
+     * which the import calls before it reads a single file, and which is the
+     * only thing that upgrades. A catalogue imported before an index existed
+     * goes on working without it -- slower, and @see tallyWithin says how it
+     * copes -- until the next import brings it up to date.
+     */
+    const request = openAt(wantVersion)
 
     request.onupgradeneeded = () => {
       onUpgrade(true)
@@ -154,7 +239,26 @@ function open() {
       }
     }
 
-    request.onsuccess = () => { onUpgrade(false); resolve(request.result) }
+    request.onsuccess = () => {
+      onUpgrade(false)
+      const db = request.result
+
+      /*
+       * A database that does not exist yet opens at version 1 with nothing in
+       * it, which is not a database anybody can use. So the one case that must
+       * upgrade without being asked is the empty one -- where there is nothing
+       * to build an index over and the wait is nil.
+       */
+      if (!db.objectStoreNames.contains(GROOVES)) {
+        db.close()
+        wantVersion = DB_VERSION
+        handle = null
+        resolve(open())
+        return
+      }
+
+      resolve(db)
+    }
     request.onerror = () => { onUpgrade(false); resolve(null) }
   })
 
@@ -851,10 +955,54 @@ async function tallyEverywhere(db) {
  * for the distinct values and one count each, neither of which reads a row.
  */
 async function tallyWithin(db, setId) {
+  // A catalogue imported before the paired indexes existed has none of them and
+  // is not going to be upgraded behind somebody's back. It still has to answer.
+  // @see buildIndexes, and walkWithin for what it costs.
+  if (!grooves(db).indexNames.contains(PAIR_FOR.genre)) return walkWithin(db, setId)
+
   const out = { folders: [] }
   for (const name of FACETS) {
     out[plural(name)] = order(name, await pairsWithin(db, setId, PAIR_FOR[name]))
   }
+  return out
+}
+
+/**
+ * The same answer, the slow way, for a catalogue with no paired indexes.
+ *
+ * One pass over the library's rows tallying every facet at once -- 23ms per
+ * thousand rows in the plugin's WebKit, so a third of a minute for the largest
+ * library anybody has. Correct, and the reason the indexes exist.
+ */
+async function walkWithin(db, setId) {
+  const seen = {}
+  for (const name of FACETS) seen[name] = new Map()
+  const folders = new Map()
+
+  await new Promise((resolve) => {
+    const request = grooves(db).index('set').openCursor(IDBKeyRange.only(setId))
+    request.onsuccess = () => {
+      const cursor = request.result
+      if (!cursor) { resolve(); return }
+      const row = cursor.value
+      const tags = row.x || {}
+      const held = {
+        kind: row.k, bars: row.r, genre: row.g, signature: row.t,
+        feel: tags.feel, surface: tags.surface, part: tags.part, era: tags.era,
+      }
+      for (const name of FACETS) {
+        const one = held[name]
+        if (one || one === 0) seen[name].set(one, (seen[name].get(one) || 0) + 1)
+      }
+      const shelf = String(row.f || '').split('/').slice(0, 2).join('/')
+      folders.set(shelf, (folders.get(shelf) || 0) + 1)
+      cursor.continue()
+    }
+    request.onerror = () => resolve()
+  })
+
+  const out = { folders: order('folder', [...folders.entries()]) }
+  for (const name of FACETS) out[plural(name)] = order(name, [...seen[name].entries()])
   return out
 }
 
@@ -919,6 +1067,8 @@ async function shelvesIn(db, setId, already) {
   // top two levels here rather than by jumping the cursor: a library's shelves
   // are tens of names, not the hundreds a whole collection has.
   if (setId) {
+    // Already tallied by the walk when there are no paired indexes.
+    if (!grooves(db).indexNames.contains('setFolder')) return already || []
     const deep = await pairsWithin(db, setId, 'setFolder')
     const shelves = new Map()
     for (const [folder, n] of deep) {

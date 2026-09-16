@@ -35,10 +35,10 @@ SUITES = [
     (["src/core/midiFile.js", "src/core/drumImport.js"], "tests/drumImport.test.js"),
     (["src/core/midiFile.js", "src/core/midiWrite.js"], "tests/midiWrite.test.js"),
     (["src/core/genres.js"], "tests/genres.test.js"),
-    (["src/core/drumTags.js"], "tests/drumTags.test.js"),
+    (["src/core/genres.js", "src/core/drumTags.js"], "tests/drumTags.test.js"),
     # Which rows a search of the catalogue reads, and how far apart. What it
     # does to a real library is measured by scripts/import_check.py.
-    (["src/core/drumStore.js"], "tests/drumSearch.test.js"),
+    (["src/core/genres.js", "src/core/drumStore.js"], "tests/drumSearch.test.js"),
     (["src/core/chordParser.js", "src/core/chordDetect.js"], "tests/chordDetect.test.js"),
     # Ten thousand edits to one chart. Slow on purpose -- it is measuring what a
     # day's work costs, and a day's work is what broke it.

@@ -20,6 +20,7 @@ import {
 import {
   listSets, putSet, deleteSet, putGrooves, countGrooves,
   searchGrooves, grooveFacets, getGrooves, whileUpgrading,
+  buildIndexes, indexesAreCurrent,
 } from './core/drumStore.js'
 import {
   loadDrumBindings, saveDrumBindings, reconcileBindings, bindGroove,
@@ -152,6 +153,9 @@ export const state = reactive({
   // handed; the plugin walks a tree it has not counted, so it measures itself in
   // packs and shelves, which it does know up front.
   drumImport: {
+    // True while the browser is building the catalogue's indexes, which happens
+    // once at the start of an import and never on its own. @see buildIndexes
+    preparing: false,
     running: false, read: 0, total: 0, skipped: 0, name: '', cancel: false,
     readBase: 0, skippedBase: 0,
     packs: 0, packsDone: 0, packsKept: 0, packsMade: 0, pack: '',
@@ -1796,6 +1800,24 @@ async function runImport(progress) {
   progress.name = chosen.name || 'library'
   progress.running = true
 
+  /*
+   * The indexes first, before a single file is read.
+   *
+   * Building them over a catalogue already imported is the better part of a
+   * minute, and there is no progress to be had from inside an upgrade
+   * transaction. That is a fine thing to wait through at the start of an import
+   * -- somebody has just asked for a long job and been told so -- and a very
+   * bad thing to find happening because they opened the plugin, which is where
+   * it was.
+   */
+  if (!(await indexesAreCurrent())) {
+    progress.preparing = true
+    progress.name = 'Preparing the catalogue'
+    await buildIndexes()
+    progress.preparing = false
+    progress.name = chosen.name || 'library'
+  }
+
   // One rung of the tree, which is all the pack plan needs: the folders
   // directly inside the chosen one are the libraries. Everything below each is
   // walked while it is being read, so no single answer is ever large.
@@ -2119,6 +2141,16 @@ export async function importDrumFolder(files, name) {
     name: name || 'library', cancel: false, trouble: '',
     packs: 0, packsDone: 0, packsKept: 0, packsMade: 0, pack: '', shelves: 0, shelvesDone: 0,
   })
+
+  // The indexes first, at the one moment somebody has already agreed to wait.
+  // @see importDrumFolderByReference for why this is never done on its own.
+  if (!(await indexesAreCurrent())) {
+    progress.preparing = true
+    progress.name = 'Preparing the catalogue'
+    await buildIndexes()
+    progress.preparing = false
+    progress.name = name || 'library'
+  }
 
   const setId = `s${Date.now().toString(36)}`
   const relative = (file) => file.webkitRelativePath || file.name
@@ -2487,6 +2519,13 @@ export async function searchDrums(filters = null, window = null) {
  * So both are shown when they differ. Nobody should have to take the
  * program's word for what is in it.
  */
+/*
+ * Passed through so the drum book can offer them without reaching past the
+ * store into the database layer. @see core/drumStore.js buildIndexes -- the one
+ * thing that upgrades, and never on its own.
+ */
+export { buildIndexes, indexesAreCurrent }
+
 export async function countEachDrumSet() {
   const out = {}
   for (const set of state.drumSets) out[set.id] = await countGrooves(set.id)

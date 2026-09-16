@@ -1,3 +1,5 @@
+import { unglue } from './genres.js'
+
 /**
  * What else a drum library's paths say.
  *
@@ -116,7 +118,10 @@ const LOOKUP = Object.fromEntries(
  * something with a hash in it.
  */
 function flatten(path) {
-  return String(path || '')
+  // Camel case before lowercasing, because lowercasing is what destroys it.
+  // `FullKit HiHat 8ths` and `11_8_IndieQuirk` are both one word to a vendor
+  // and three to anybody reading them. @see genres.js unglue
+  return unglue(path)
     .toLowerCase()
     .replace(/(\d)\s*#\s*(\d)/g, '$1/$2')
     .replace(/[_@\-[\]{}()!,;:.\\/]+/g, ' ')
@@ -159,7 +164,11 @@ export function signatureIn(path) {
    */
   const text = String(path || '')
     .toLowerCase()
-    .replace(/(\d)\s*[#-]\s*(\d)/g, '$1/$2')
+    // Underscore too. A vendor whose folders are `11_8_IndieQuirk` and
+    // `7_8_FunkStep` is writing eleven-eight and seven-eight, and a pack called
+    // Odd Meter Drums where the metre is the whole point was reading none of
+    // them. The list of metres is still what keeps `2_13` from becoming one.
+    .replace(/(\d)\s*[#_-]\s*(\d)/g, '$1/$2')
 
   for (const found of text.matchAll(/(?<!\d)(\d{1,2})\s*\/\s*(\d{1,2})(?!\d)/g)) {
     const metre = `${found[1]}/${found[2]}`

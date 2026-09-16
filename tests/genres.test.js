@@ -148,4 +148,31 @@ check('and nothing matches nothing', sameGenre('', 'jazz'), false)
 check('in either position', sameGenre('jazz', ''), false)
 check('or when both are missing', sameGenre('', ''), false)
 
+/* ---------------- words a vendor ran together --------------------------
+ *
+ * A vendor who cannot put a space in a folder name capitalises instead, and
+ * lowercasing is what destroys the evidence -- so the splitting has to happen
+ * first. Every one of these is a real path out of a 774,000-file collection.
+ */
+check('a folder that means indie', unglue('11_8_IndieQuirk'), '11_8_Indie Quirk')
+check('and one that means funk', unglue('7_8_FunkStep'), '7_8_Funk Step')
+check('three words', unglue('DeepHouseGroove'), 'Deep House Groove')
+
+// A run of capitals is an abbreviation, and the break goes before the last one
+// -- `GMBlues` is GM Blues rather than GMB lues.
+check('an abbreviation keeps its capitals', unglue('GMBluesShuffle'), 'GM Blues Shuffle')
+check('and alone it is left alone', unglue('GM'), 'GM')
+check('as is anything already spaced', unglue('Punk Rock'), 'Punk Rock')
+check('and anything lowercase', unglue('hihat'), 'hihat')
+
+// Digits are word breaks too, which is how `8ths` and `4Floor` come apart.
+check('a digit before a capital', unglue('4OnTheFloor'), '4 On The Floor')
+check('and a letter before a digit', unglue('HiHat8ths'), 'Hi Hat 8ths')
+check('rubbish is survivable', unglue(null), '')
+
+// And the point of all of it: the genre comes out.
+check('indie, out of a welded folder name', genreOf('Odd Meter Drums/11_8_IndieQuirk/x.mid'), 'Indie')
+check('deep house, out of a welded file name', genreOf('Long Loops/DeepHouseGroove_128.mid'), 'Deep House')
+check('blues, out of an abbreviation', genreOf('GM MIDI Pack/GM - Blues/GMBluesShuffle.mid'), 'Blues')
+
 console.log(failed ? `genres: ${failed} FAILED` : 'genres: all checks passed')
