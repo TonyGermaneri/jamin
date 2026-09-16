@@ -16,7 +16,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 import sys
 import tempfile
 
-BARE_IMPORT = re.compile(r"""(?m)^\s*import\b[^'"]*['"]([^.'"/][^'"]*)['"]""")
+# A specifier concatenation cannot satisfy: a package, or a JSON file. Both are
+# handled the same way -- esbuild flattens them into the module.
+BARE_IMPORT = re.compile(r"""(?m)^\s*import\b[^'"]*['"]([^.'"/][^'"]*|[^'"]*\.json)['"]""")
 
 
 def bundled(path):
@@ -31,7 +33,7 @@ def bundled(path):
     """
     esbuild = os.path.join(ROOT, "node_modules", ".bin", "esbuild")
     if not os.path.exists(esbuild):
-        raise SystemExit(f"{path} imports a package and esbuild is not installed")
+        raise SystemExit(f"{path} needs bundling and esbuild is not installed")
 
     # Bundled as an IIFE rather than a module, because everything else here is
     # concatenated into one scope and a bundled package brings hundreds of its
@@ -60,7 +62,7 @@ def bundled(path):
 
 def strip(path):
     src = open(path, encoding="utf-8").read()
-    # A bare specifier cannot be satisfied by concatenation, so flatten it.
+    # A package or a JSON file cannot be satisfied by concatenation, so flatten it.
     if BARE_IMPORT.search(src):
         src = bundled(path)
     # Imports, including the multi-line `import {\n  a,\n  b,\n} from "x"` form.

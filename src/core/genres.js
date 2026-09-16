@@ -27,166 +27,55 @@
  * under something absurd. What is here is what drum libraries actually say.
  */
 
+import VOCABULARY from '../data/genres.json'
+
 /**
- * Longest first, because the longest true match wins: `Punk Rock` is punk rock
- * and not rock, `Blues Rock` is not blues, `Drum and Bass` is not bass.
+ * Spellings a drum library uses that the vocabulary does not carry.
  *
- * Each entry is the name as it should be shown, plus any spellings a folder
- * might use for it.
+ * Kept here rather than added to the list, so the list stays exactly as it was
+ * written and every addition is visible as an addition. Each one was found in a
+ * real folder name: `06 Showtunes`, `EZXNASHVILLE`, a top-level `Bossa`, a
+ * top-level `Afro-cuban`.
+ *
+ * A pair points a spelling at the name to show for it. Where the vocabulary has
+ * a longer form of the same thing -- `show tune`, `nashville sound` -- that is
+ * the name used, so a filter does not end up with two entries for one genre.
  */
-const VOCABULARY = [
-  // --- rock and its relatives
-  ['Heavy Metal', ['heavy metal']],
-  ['Death Metal', ['death metal']],
-  ['Black Metal', ['black metal']],
-  ['Thrash Metal', ['thrash metal', 'thrash']],
-  ['Doom Metal', ['doom metal', 'doom']],
-  ['Nu Metal', ['nu metal', 'nu-metal']],
-  ['Metalcore', ['metalcore']],
-  ['Hardcore', ['hardcore', 'hard core']],
-  ['Punk Rock', ['punk rock']],
-  ['Pop Punk', ['pop punk']],
-  ['Post Punk', ['post punk', 'post-punk']],
-  ['Punk', ['punk']],
-  ['Blues Rock', ['blues rock']],
-  ['Classic Rock', ['classic rock']],
-  ['Hard Rock', ['hard rock']],
-  ['Soft Rock', ['soft rock']],
-  ['Prog Rock', ['prog rock', 'progressive rock', 'progressive', 'prog']],
-  ['Psychedelic', ['psychedelic', 'psych rock', 'psychedelia']],
-  ['Garage Rock', ['garage rock']],
-  ['Surf Rock', ['surf rock', 'surf']],
-  ['Indie Rock', ['indie rock']],
-  ['Alternative', ['alternative', 'alt rock', 'alternative rock']],
-  ['Grunge', ['grunge']],
-  ['Emo', ['emo']],
-  ['Math Rock', ['math rock']],
-  ['Post Rock', ['post rock', 'post-rock']],
-  ['Stoner Rock', ['stoner rock', 'stoner']],
-  ['Southern Rock', ['southern rock']],
-  ['Rockabilly', ['rockabilly']],
-  ['Rock and Roll', ['rock and roll', "rock 'n' roll", 'rock n roll', 'rocknroll']],
-  ['Metal', ['metal']],
-  ['Indie', ['indie']],
-  ['Rock', ['rock']],
-
-  // --- jazz and its relatives
-  ['Bebop', ['bebop', 'be bop']],
-  ['Hard Bop', ['hard bop']],
-  ['Cool Jazz', ['cool jazz']],
-  ['Free Jazz', ['free jazz']],
-  ['Jazz Fusion', ['jazz fusion', 'fusion']],
-  ['Smooth Jazz', ['smooth jazz']],
-  ['Gypsy Jazz', ['gypsy jazz']],
-  ['Big Band', ['big band', 'bigband']],
-  ['Swing', ['swing']],
-  ['Dixieland', ['dixieland', 'dixie', 'trad jazz']],
-  ['Ragtime', ['ragtime', 'rag time']],
-  ['Jazz', ['jazz']],
-
-  // --- blues, country, folk
-  ['Delta Blues', ['delta blues']],
-  ['Chicago Blues', ['chicago blues']],
-  ['Shuffle', ['shuffle']],
-  ['Boogie Woogie', ['boogie woogie', 'boogie-woogie', 'boogie']],
-  ['Blues', ['blues']],
-  ['Bluegrass', ['bluegrass', 'blue grass']],
-  ['Country Rock', ['country rock']],
-  ['Honky Tonk', ['honky tonk', 'honky-tonk']],
-  ['Americana', ['americana']],
-  ['Nashville', ['nashville']],
-  ['Country', ['country']],
-  ['Folk', ['folk']],
-  ['Celtic', ['celtic', 'irish']],
-  ['Gospel', ['gospel']],
-  ['Spiritual', ['spiritual']],
-
-  // --- soul, funk, r&b, hip hop
-  ['Neo Soul', ['neo soul', 'neo-soul']],
-  ['Motown', ['motown']],
-  ['Soul', ['soul']],
-  ['Funk', ['funk', 'funky']],
-  ['Disco', ['disco']],
-  ['Rhythm and Blues', ['rhythm and blues', 'r&b', 'rnb', 'r and b']],
-  ['Boom Bap', ['boom bap']],
-  ['Trap', ['trap']],
-  ['Hip Hop', ['hip hop', 'hip-hop', 'hiphop', 'rap']],
-  ['Breakbeat', ['breakbeat', 'break beat', 'breaks']],
-
-  // --- electronic
-  ['Drum and Bass', ['drum and bass', 'drum & bass', 'drum n bass', 'dnb', 'd&b']],
-  ['Jungle', ['jungle']],
-  ['Deep House', ['deep house']],
-  ['Tech House', ['tech house']],
-  ['Progressive House', ['progressive house']],
-  ['House', ['house']],
-  ['Techno', ['techno']],
-  ['Trance', ['trance']],
-  ['Dubstep', ['dubstep']],
-  ['Garage', ['uk garage', '2 step', 'two step']],
-  ['Ambient', ['ambient']],
-  ['Downtempo', ['downtempo', 'down tempo', 'trip hop', 'trip-hop']],
-  ['Industrial', ['industrial']],
-  ['Synthwave', ['synthwave', 'synth wave', 'retrowave']],
-  ['Electro', ['electro']],
-  ['Electronic', ['electronic', 'electronica', 'edm']],
-  ['Dance', ['dance']],
-
-  // --- latin, caribbean, world
-  ['Bossa Nova', ['bossa nova', 'bossa']],
-  ['Samba', ['samba']],
-  ['Salsa', ['salsa']],
-  ['Mambo', ['mambo']],
-  ['Cha Cha', ['cha cha', 'cha-cha', 'chacha']],
-  ['Rumba', ['rumba', 'rhumba']],
-  ['Merengue', ['merengue']],
-  ['Cumbia', ['cumbia']],
-  ['Tango', ['tango']],
-  ['Bolero', ['bolero']],
-  ['Afro-Cuban', ['afro cuban', 'afro-cuban', 'afrocuban']],
-  ['Afrobeat', ['afrobeat', 'afro beat']],
-  ['Latin', ['latin']],
-  ['Reggaeton', ['reggaeton']],
-  ['Dancehall', ['dancehall', 'dance hall']],
-  ['Ska', ['ska']],
-  ['Rocksteady', ['rocksteady', 'rock steady']],
-  ['Dub', ['dub']],
-  ['Reggae', ['reggae']],
-  ['Calypso', ['calypso']],
-  ['Soca', ['soca']],
-  ['Highlife', ['highlife', 'high life']],
-  ['Bhangra', ['bhangra']],
-  ['Klezmer', ['klezmer']],
-  ['Flamenco', ['flamenco']],
-  ['Polka', ['polka']],
-  ['Waltz', ['waltz', 'valse']],
-  ['March', ['march', 'marching']],
-  ['Paso Doble', ['paso doble', 'pasodoble', 'paso']],
-  ['Charleston', ['charleston']],
-  ['Twist', ['twist']],
-  ['World', ['world', 'ethnic', 'tribal']],
-  ['African', ['africa', 'african']],
-  ['Asian', ['asia', 'asian', 'oriental']],
-  ['Middle Eastern', ['middle east', 'middle eastern', 'arabic']],
-  ['Brazilian', ['brazil', 'brazilian']],
-  ['Caribbean', ['caribbean']],
-
-  // --- pop and the rest
-  ['Synth Pop', ['synth pop', 'synthpop']],
-  ['Power Pop', ['power pop']],
-  ['Britpop', ['britpop', 'brit pop']],
-  ['K-Pop', ['k-pop', 'kpop']],
-  ['J-Pop', ['j-pop', 'jpop']],
-  ['Pop', ['pop']],
-  ['Ballad', ['ballad', 'ballads']],
-  ['Showtunes', ['showtune', 'showtunes', 'musical', 'broadway']],
-  ['Classical', ['classical', 'orchestral', 'baroque']],
-  ['Cinematic', ['cinematic', 'soundtrack', 'score', 'trailer']],
-  ['Lounge', ['lounge', 'easy listening']],
-  ['New Age', ['new age']],
-  ['Christmas', ['christmas', 'holiday', 'xmas']],
-  ['Military', ['military', 'drumline', 'drum corps']],
+const ALSO_SPELLED = [
+  ['showtunes', 'show tune'],
+  ['showtune', 'show tune'],
+  ['musical', 'show tune'],
+  ['broadway', 'show tune'],
+  ['nashville', 'nashville sound'],
+  ['bossa', 'bossa nova'],
+  ['afro-cuban', 'afro-cuban'],
+  ['afro cuban', 'afro-cuban'],
+  ['afrocuban', 'afro-cuban'],
+  ['prog', 'progressive rock'],
+  ['rnb', 'r&b'],
+  ['r and b', 'r&b'],
+  ['dnb', 'drum and bass'],
+  ['hiphop', 'hip hop'],
+  ['rock n roll', 'rock and roll'],
+  ["rock 'n' roll", 'rock and roll'],
+  ['cha-cha', 'cha-cha-chá'],
+  ['cha cha', 'cha-cha-chá'],
+  ['middle east', 'middle eastern music'],
+  ['middle eastern', 'middle eastern music'],
 ]
+
+/**
+ * A vendor's own initials, run into the genre with no space.
+ *
+ * `EZXMETAL!`, `EZXNASHVILLE`, `SDXROCK`. Stripped before matching, which is
+ * more precise than looking for short genres inside words -- lowering that
+ * threshold far enough to find `metal` inside `EZXMETAL` would also find
+ * `house` inside `housework`.
+ *
+ * Three letters at least. A two-letter one took the front off `Adult
+ * Contemporary` and turned it into nothing at all.
+ */
+const VENDOR_PREFIX = /^(ezx|sdx|mpx|bfd)(?=[a-z])/
 
 /**
  * Words that look like genres and are not.
@@ -205,6 +94,10 @@ const NOT_A_GENRE = new Set([
   'straight', 'triplet', 'even', 'odd', 'basic', 'simple', 'complex',
   'dry', 'wet', 'room', 'hall', 'studio', 'live', 'acoustic', 'vintage',
   'modern', 'classic', 'new', 'old', 'misc', 'other', 'various', 'assorted',
+  // In the vocabulary as genres, and useless as ones here: a drum library is
+  // full of folders called `MIDI Music` and `Traditional Kit`, and a filter
+  // offering `Music` tells nobody anything.
+  'music', 'traditional', 'instrumental',
   'full', 'half', 'long', 'short', 'slow', 'fast', 'medium',
 ])
 
@@ -222,21 +115,59 @@ function words(segment) {
     .trim()
 }
 
+/**
+ * A name as it should be shown. The vocabulary is lowercase throughout.
+ *
+ * Hyphens are word breaks -- `afro-cuban` is Afro-Cuban -- and the small joining
+ * words stay small unless they start the name, so it is `Drum and Bass` rather
+ * than `Drum And Bass`.
+ */
+const SMALL = new Set(['and', 'or', 'of', 'the', 'in', 'on', 'a', 'n'])
+
+function titled(name) {
+  const caps = (word, first) => {
+    if (word === 'r&b') return 'R&B'
+    if (!first && SMALL.has(word)) return word
+    return word.charAt(0).toUpperCase() + word.slice(1)
+  }
+
+  let at = 0
+  return String(name).replace(/[^\s-]+/g, (word) => caps(word, at++ === 0))
+}
+
+/**
+ * Two characters is not a genre anybody can find by accident on purpose.
+ *
+ * The vocabulary has a handful -- `lu`, and others of that shape -- and a
+ * two-letter word turns up inside folder names constantly. Three is short
+ * enough to keep `dub`, `ska`, `rap`, `emo` and `idm`, which are real and which
+ * whole-word matching protects.
+ */
+const TOO_SHORT = 3
+
 /** Built once: every spelling, pointing at the name to show for it. */
 const SPELLINGS = (() => {
+  const known = new Set(VOCABULARY)
   const out = []
   const seen = new Set()
-  for (const [name, forms] of VOCABULARY) {
-    // The name itself is always a spelling of itself, or the filter could offer
-    // a genre that nothing matches -- `Garage` was exactly that, spelled only
-    // as `uk garage` and `2 step`.
-    for (const form of [name.toLowerCase(), ...forms]) {
-      const key = `${form}|${name}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      out.push({ form, name, length: form.length })
-    }
+
+  const add = (form, name) => {
+    const spelling = String(form).toLowerCase().trim()
+    if (spelling.length < TOO_SHORT || seen.has(spelling)) return
+    if (NOT_A_GENRE.has(spelling)) return
+    seen.add(spelling)
+    out.push({ form: spelling, name: titled(name), length: spelling.length })
   }
+
+  for (const name of VOCABULARY) add(name, name)
+  // A spelling pointed at a name the vocabulary already has is an alias; one
+  // pointed at a name it does not is a genre this library needed and the list
+  // did not carry.
+  for (const [form, name] of ALSO_SPELLED) {
+    add(form, name)
+    if (!known.has(name)) add(name, name)
+  }
+
   // Longest first, so `punk rock` is tried before `punk` and before `rock`.
   return out.sort((a, b) => b.length - a.length)
 })()
@@ -257,9 +188,8 @@ export function genreOf(path) {
     const text = words(segments[i])
     if (!text) continue
     // A segment that is only a word from the not-a-genre list says nothing at
-    // all, and must not be searched for substrings: `Chrome Kit` contains no
-    // genre and `Dry Studio Kit` must not become a genre because of `ska` or
-    // some other accident.
+    // all, and must not be searched for substrings: `Dry Studio Kit` must not
+    // become a genre because of some accident inside it.
     if (NOT_A_GENRE.has(text)) continue
 
     const found = matchIn(text)
@@ -299,7 +229,9 @@ const RUN_ON = 6
  */
 function matchIn(text) {
   if (!text) return ''
-  const padded = ` ${text} `
+  // `EZXMETAL` is metal with a vendor's initials welded on the front.
+  const bare = text.replace(VENDOR_PREFIX, '')
+  const padded = ` ${bare} `
 
   let best = null
   for (const { form, name, length } of SPELLINGS) {
@@ -321,5 +253,5 @@ function matchIn(text) {
 
 /** Every genre this vocabulary knows, for a filter to offer. */
 export function everyGenre() {
-  return VOCABULARY.map(([name]) => name).sort((a, b) => a.localeCompare(b))
+  return [...new Set(SPELLINGS.map((entry) => entry.name))].sort((a, b) => a.localeCompare(b))
 }
