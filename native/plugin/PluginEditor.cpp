@@ -205,6 +205,28 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                            }
                            complete (juce::var (true));
                        })
+                   .withNativeFunction ("jaminMuteVoice",
+                       [this] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // One drum, on or off, landing on a bar line unless
+                           // the settings say sooner. @see nextBoundaryPpq
+                           if (args.size() >= 2)
+                               plugin.setVoiceSounding ((int) args[0], (bool) args[1],
+                                                        plugin.nextBoundaryPpq());
+                           complete (juce::var (true));
+                       })
+                   .withNativeFunction ("jaminDrumNotes",
+                       [this] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // Which note each voice comes out on, as this page's
+                           // kit map says. The audio thread has no kit table and
+                           // no business having one -- it needs to know that
+                           // note 42 is the closed hat and nothing more.
+                           if (! args.isEmpty() && args[0].isArray())
+                               plugin.setVoiceNotes (*args[0].getArray(),
+                                                     args.size() > 1 ? (int) args[1] : 9);
+                           complete (juce::var (true));
+                       })
                    .withNativeFunction ("jaminPublishDrums",
                        [this] (const juce::Array<juce::var>& args, auto complete)
                        {
@@ -659,6 +681,35 @@ void JaminEditor::timerCallback()
 
     if (const auto rolls = plugin.phraseRandom.exchange (0, std::memory_order_relaxed); rolls != 0)
         browser.emitEventIfBrowserIsVisible ("jaminPhraseRandom", juce::var (true));
+
+    // The other three dice, for the same reason: what a random drum pattern or
+    // a random progression *is* lives in a catalogue in this page.
+    if (plugin.drumsRandom.exchange (0, std::memory_order_relaxed) != 0)
+        browser.emitEventIfBrowserIsVisible ("jaminRollDrums", juce::var (true));
+
+    if (plugin.progressionRandom.exchange (0, std::memory_order_relaxed) != 0)
+        browser.emitEventIfBrowserIsVisible ("jaminRollProgression", juce::var (true));
+
+    if (plugin.songRandom.exchange (0, std::memory_order_relaxed) != 0)
+        browser.emitEventIfBrowserIsVisible ("jaminRollSong", juce::var (true));
+
+    // What the drums are doing, so a switch thrown in the DAW shows in the
+    // window. Sent only when it changes: fourteen booleans compared is cheaper
+    // than one event nobody needed.
+    {
+        uint32_t now = 0;
+        for (int at = 0; at < JaminProcessor::numVoices; ++at)
+            if (! plugin.voices[at].soundingAfter.load (std::memory_order_relaxed))
+                now |= (1u << at);
+
+        if (now != lastVoiceMutes)
+        {
+            lastVoiceMutes = now;
+            auto* object = new juce::DynamicObject();
+            object->setProperty ("muted", (int) now);
+            browser.emitEventIfBrowserIsVisible ("jaminDrumMutes", juce::var (object));
+        }
+    }
 
     // Say what the last compile produced, once per change. The page shows it in
     // the host readout: "0 events" with a chart on screen is a different problem

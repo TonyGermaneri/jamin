@@ -5,12 +5,35 @@
  */
 import { computed, ref, watch } from 'vue'
 import InfoTip from './InfoTip.vue'
-import { state, engine, applyTheme, resetSettings, applyPortBindings } from '../store.js'
+import { state, engine, applyTheme, resetSettings, applyPortBindings, forgetErrors, toast } from '../store.js'
 import { THEMES, SHADER_DEFAULTS } from '../core/themes.js'
 import { loadChordDictionary, searchChords } from '../core/chordDictionary.js'
 import { pcName } from '../core/chordParser.js'
 
 const showSecret = ref(false)
+
+/** How long ago, in the units somebody actually thinks in. */
+function whenWas(at) {
+  const ago = Math.max(0, Date.now() - at)
+  if (ago < 60000) return `${Math.round(ago / 1000)}s ago`
+  if (ago < 3600000) return `${Math.round(ago / 60000)}m ago`
+  return new Date(at).toLocaleTimeString()
+}
+
+/** The whole log as text, because the useful thing to do with an error is send
+    it to somebody. */
+async function copyErrors() {
+  const text = state.errors.map((row) =>
+    `${new Date(row.at).toISOString()} ${row.where}\n${row.message}`
+    + (row.count > 1 ? ` (x${row.count})` : '')
+    + (row.stack ? `\n${row.stack}` : '')).join('\n\n')
+  try {
+    await navigator.clipboard.writeText(text)
+    toast(`${state.errors.length} error${state.errors.length === 1 ? '' : 's'} copied`)
+  } catch {
+    toast('The clipboard would not take it')
+  }
+}
 const inputs = computed(() => [
   { title: 'None', value: '' },
   { title: 'Any input', value: '__any__' },
@@ -77,6 +100,10 @@ async function retryMidi() {
         <v-tab value="themes">Themes</v-tab>
         <v-tab value="shaders">Shaders</v-tab>
         <v-tab value="accompany">Accompany</v-tab>
+        <v-tab value="random">Dice</v-tab>
+        <v-tab value="errors">
+          Errors<span v-if="state.errors.length"> ({{ state.errors.length }})</span>
+        </v-tab>
         <v-tab value="help">Notation</v-tab>
       </v-tabs>
 
@@ -141,6 +168,31 @@ async function retryMidi() {
             />
             <div class="text-caption text-medium-emphasis mb-4">
               Write <code>[d:nofill]</code> in a section to stop just that one.
+            </div>
+
+            <!-- Taking one drum out of the whole song, which the piano roll's
+                 keys do. The same musical act as muting a track and quantised
+                 for the same reason. -->
+            <v-select
+              v-model="state.settings.drums.muteQuantize"
+              :items="[
+                { title: 'On the next bar', value: 'bar' },
+                { title: 'On the next beat', value: 'beat' },
+                { title: 'Instantly', value: 'instant' },
+              ]"
+              label="Silencing a drum takes effect"
+              density="compact"
+              hide-details
+              class="mb-2"
+            />
+            <div class="text-caption text-medium-emphasis mb-4">
+              Click a drum's name in the drum book's piano roll to take it out of the song.
+              <InfoTip>
+                It applies to every part that plays, not to one pattern: taking the hi-hat out
+                means out. It lands on a bar line by default, which is where a drummer drops it
+                rather than wherever the mouse was — and each drum is a parameter the DAW can
+                automate, so the hat can come out for a chorus and back afterwards.
+              </InfoTip>
             </div>
 
             <v-select
@@ -566,6 +618,107 @@ async function retryMidi() {
               </v-col>
             </v-row>
           </v-window-item>
+
+          <!-- Dice: what the random buttons draw on --------------------- -->
+          <v-window-item value="random">
+            <div class="text-caption text-medium-emphasis mb-4">
+              What the dice draw on. The right answer depends on the collection — somebody with
+              one drum library wants the die to use it, somebody with fifty wants it to stay in
+              a genre.
+            </div>
+
+            <v-switch
+              v-model="state.settings.random.matchGenre"
+              density="compact" hide-details color="primary"
+              label="Keep the changes in the drums' genre"
+            />
+            <div class="text-caption text-medium-emphasis mb-3">
+              Rolling each part separately gives a bossa nova progression under a metal beat.
+              Nothing tagged in that genre is not a refusal — most progressions carry no tag at
+              all, and a song with the right drums and untagged changes is still a song.
+            </div>
+
+            <v-switch
+              v-model="state.settings.random.matchEra"
+              density="compact" hide-details color="primary"
+              label="Keep every section in one era"
+            />
+            <div class="text-caption text-medium-emphasis mb-3">
+              Whichever decade the first groove belongs to, the rest follow where there are
+              enough of them — which is a thing no amount of choosing at random will do.
+            </div>
+
+            <v-switch
+              v-model="state.settings.random.phrasePerSection"
+              density="compact" hide-details color="primary"
+              label="A different articulation for every section"
+            />
+            <div class="text-caption text-medium-emphasis mb-4">
+              Off gives the whole song one feel, which is what a great many records actually do.
+            </div>
+
+            <v-slider
+              v-model="state.settings.random.mostSections"
+              :min="1" :max="8" :step="1" thumb-label
+              label="Sections at most" density="compact" hide-details class="mb-4"
+            />
+
+            <v-slider
+              v-model="state.settings.random.leastPerGenre"
+              :min="1" :max="40" :step="1" thumb-label
+              label="Grooves a genre needs before the die will pick it"
+              density="compact" hide-details class="mb-2"
+            />
+            <div class="text-caption text-medium-emphasis mb-4">
+              One groove in a genre makes a song where every section is the same bar.
+            </div>
+          </v-window-item>
+
+          <!-- Errors: what went wrong, because there is no console ------- -->
+          <v-window-item value="errors">
+            <div class="text-caption text-medium-emphasis mb-3 d-flex align-center">
+              <span>
+                Everything the page has thrown, rejected or logged — newest first.
+              </span>
+              <InfoTip>
+                Inside a plugin there is no console to open, so a page that throws looks exactly
+                like a page that decided not to do anything. That is how eight ReferenceErrors
+                shipped, each of them a button that did nothing and said nothing.
+                <br /><br />
+                This catches what was thrown and never handled, promises nobody caught, anything
+                logged as an error, and what jamin noticed about itself. The same fault repeated
+                is one line with a count rather than two hundred lines.
+              </InfoTip>
+              <v-spacer />
+              <v-btn v-if="state.errors.length" size="x-small" variant="text"
+                     @click="copyErrors">Copy</v-btn>
+              <v-btn v-if="state.errors.length" size="x-small" variant="text"
+                     @click="forgetErrors()">Clear</v-btn>
+            </div>
+
+            <div v-if="!state.errors.length" class="text-caption text-medium-emphasis pa-4">
+              Nothing has gone wrong since this window opened.
+            </div>
+
+            <v-expansion-panels v-else variant="accordion" class="jamin-error-log">
+              <v-expansion-panel v-for="(row, at) in state.errors" :key="at">
+                <v-expansion-panel-title class="text-caption py-1">
+                  <span class="text-error text-truncate">{{ row.message }}</span>
+                  <v-spacer />
+                  <v-chip v-if="row.count > 1" size="x-small" variant="tonal" class="mr-2">
+                    ×{{ row.count }}
+                  </v-chip>
+                  <span class="text-medium-emphasis">{{ whenWas(row.at) }}</span>
+                </v-expansion-panel-title>
+                <v-expansion-panel-text>
+                  <div class="text-caption text-medium-emphasis mb-1">{{ row.where }}</div>
+                  <pre v-if="row.stack" class="jamin-mono text-caption"
+                       style="white-space: pre-wrap; opacity: .8">{{ row.stack }}</pre>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+            </v-expansion-panels>
+          </v-window-item>
+
 
           <!-- Notation --------------------------------------------------- -->
           <v-window-item value="help">

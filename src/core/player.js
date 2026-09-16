@@ -105,6 +105,8 @@ export class Player {
      * does not follow somebody into their next session.
      */
     this.sends = 'phrases'
+    /** Note numbers somebody has silenced. @see store.setDrumVoiceMuted */
+    this.mutedNotes = new Set()
 
     /** The phrase a heard chord is played through. The catalogue is the
         application's, so the application chooses. */
@@ -436,6 +438,15 @@ export class Player {
     while (this.drumCursor < this.drumTrack.length
            && this.drumTrack[this.drumCursor].at <= position) {
       const hit = this.drumTrack[this.drumCursor++]
+      // A drum somebody has taken out. Not sent at velocity nought: a note-on
+      // at zero is a note-off, and a stream of those is not silence.
+      //
+      // Unquantised here on purpose. In a browser there is no separate audio
+      // thread reading a compiled sequence, so the change is simply the state
+      // from the next hit -- and the next hit of the drum being silenced is
+      // exactly where a bar line would have put it for every pattern that
+      // strikes it on the one. @see store.setDrumVoiceMuted
+      if (this.mutedNotes && this.mutedNotes.has(hit.note)) continue
       if (this.engine.noteOn(outputId, channel, hit.note, hit.velocity)) {
         this.drumSounding.add(hit.note)
       }

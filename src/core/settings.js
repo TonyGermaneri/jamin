@@ -180,6 +180,37 @@ export function defaultSettings() {
       // A fill in the bar before every section change, which is what a drum
       // chart has meant since long before there were corpora to draw on.
       fillOnEveryBoundary: true,
+      /**
+       * When taking a drum out takes effect: 'bar', 'beat' or 'instant'.
+       *
+       * A bar, because that is where a drummer drops the hat -- not wherever
+       * the mouse happened to be. The same reasoning as muting a track, and the
+       * same default. @see instances.quantize
+       */
+      muteQuantize: 'bar',
+    },
+    /**
+     * What the dice draw on.
+     *
+     * Kept rather than hard-coded because the right answer depends on the
+     * collection: somebody with one drum library wants the die to use it,
+     * somebody with fifty wants it to stay in a genre. @see store.rollSong
+     */
+    random: {
+      /** How many grooves a genre needs before the die will pick it. One
+          groove in a genre makes a song where every section is the same bar. */
+      leastPerGenre: 4,
+      /** Keep every section in the era of the first groove drawn, where there
+          are enough of them to do it. */
+      matchEra: true,
+      /** Draw the progression from the same genre as the drums, falling back to
+          any when nothing is tagged -- which most progressions are not. */
+      matchGenre: true,
+      /** Give every section its own articulation. Off makes one song-long
+          feel, which is what a lot of records actually do. */
+      phrasePerSection: true,
+      /** How many sections a rolled song has, at most. */
+      mostSections: 5,
     },
     instances: {
       // Muting a part is a musical act, not a mixer move: it lands on a bar line

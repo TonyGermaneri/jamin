@@ -119,6 +119,28 @@ JaminProcessor::JaminProcessor()
     addParameter (nextPhraseParam = new juce::AudioParameterBool ({ "next", 1 }, "Next articulation", false));
     addParameter (prevPhraseParam = new juce::AudioParameterBool ({ "prev", 1 }, "Previous articulation", false));
     addParameter (randomPhraseParam = new juce::AudioParameterBool ({ "random", 1 }, "Random articulation", false));
+    addParameter (randomDrumsParam = new juce::AudioParameterBool ({ "randomdrums", 1 }, "Random drum pattern", false));
+    addParameter (randomProgressionParam = new juce::AudioParameterBool ({ "randomprog", 1 }, "Random progression", false));
+    addParameter (randomSongParam = new juce::AudioParameterBool ({ "randomsong", 1 }, "Random song", false));
+
+    /*
+        One switch per drum, so a hi-hat can be automated out of a chorus.
+
+        Named in the order the vocabulary is written in, which is the order the
+        piano roll shows -- @see src/core/drumKits.js DRUM_VOICES. The two lists
+        have to agree and there is nothing but this comment to make them, so a
+        voice added there is a parameter added here; a DAW remembers automation
+        by parameter index, so they are only ever appended.
+    */
+    static const char* const voiceNames[numVoices] = {
+        "Kick", "Snare", "Snare rimshot", "Side stick",
+        "High tom", "Mid tom", "Floor tom",
+        "Closed hi-hat", "Open hi-hat", "Pedal hi-hat",
+        "Crash 1", "Crash 2", "Ride", "Ride bell",
+    };
+    for (int at = 0; at < numVoices; ++at)
+        addParameter (voices[at].param = new juce::AudioParameterBool (
+            { "drum" + juce::String (at), 1 }, juce::String (voiceNames[at]) + " plays", true));
 
     seat = jamin::Roster::instance().join (instanceId.toStdString());
 
@@ -150,6 +172,91 @@ void JaminProcessor::updateTrackProperties (const TrackProperties& properties)
 
     const auto name = properties.name.value_or (juce::String());
     jamin::Roster::instance().describe (seat, name.toStdString(), seat->phrase, seat->mode);
+}
+
+/*
+    Taking one drum out, and putting it back.
+
+    Written to mirror jamin::Roster's mute exactly, because it is the same
+    musical act at a different scale: the part stops where a musician would stop
+    it rather than wherever the mouse was, so the change is held until a bar
+    line and the audio thread reads a decision rather than a reason.
+*/
+void JaminProcessor::setVoiceSounding (int voice, bool sounding, double atPpq)
+{
+    if (voice < 0 || voice >= numVoices)
+        return;
+
+    auto& one = voices[voice];
+
+    // Not playing, or asked for now: there is no later to wait for.
+    if (atPpq < 0.0 || ! view.playing.load (std::memory_order_relaxed))
+    {
+        one.soundingBefore.store (sounding, std::memory_order_relaxed);
+        one.soundingAfter.store (sounding, std::memory_order_relaxed);
+        one.changeAtPpq.store (-1.0, std::memory_order_relaxed);
+    }
+    else
+    {
+        // Whatever it is doing now goes on until the moment, and the new answer
+        // starts there.
+        one.soundingBefore.store (one.soundingAfter.load (std::memory_order_relaxed),
+                                  std::memory_order_relaxed);
+        one.soundingAfter.store (sounding, std::memory_order_relaxed);
+        one.changeAtPpq.store (atPpq, std::memory_order_relaxed);
+    }
+
+    // The parameter is what a DAW reads back and what it saves, so a switch
+    // thrown in the window has to move it too.
+    if (one.param != nullptr && one.param->get() != sounding)
+    {
+        one.param->beginChangeGesture();
+        *one.param = sounding;
+        one.param->endChangeGesture();
+    }
+}
+
+void JaminProcessor::setVoiceNotes (const juce::Array<juce::var>& notes, int channel)
+{
+    drumChannel.store (juce::jlimit (0, 15, channel), std::memory_order_relaxed);
+    for (int at = 0; at < numVoices; ++at)
+    {
+        const int note = at < notes.size() ? (int) notes[at] : -1;
+        voices[at].note.store (note >= 0 && note <= 127 ? note : -1, std::memory_order_relaxed);
+    }
+}
+
+bool JaminProcessor::voiceSilenced (int note, int channel, double ppq) const
+{
+    if (channel != drumChannel.load (std::memory_order_relaxed))
+        return false;
+
+    for (const auto& one : voices)
+    {
+        if (one.note.load (std::memory_order_relaxed) != note)
+            continue;
+
+        const auto at = one.changeAtPpq.load (std::memory_order_relaxed);
+        const bool sounding = (at >= 0.0 && ppq < at)
+            ? one.soundingBefore.load (std::memory_order_relaxed)
+            : one.soundingAfter.load (std::memory_order_relaxed);
+        return ! sounding;
+    }
+    return false;
+}
+
+void JaminProcessor::settleVoices (double ppq)
+{
+    for (auto& one : voices)
+    {
+        const auto at = one.changeAtPpq.load (std::memory_order_relaxed);
+        if (at >= 0.0 && ppq >= at)
+        {
+            one.soundingBefore.store (one.soundingAfter.load (std::memory_order_relaxed),
+                                      std::memory_order_relaxed);
+            one.changeAtPpq.store (-1.0, std::memory_order_relaxed);
+        }
+    }
 }
 
 double JaminProcessor::nextBoundaryPpq() const
@@ -441,6 +548,13 @@ void JaminProcessor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBu
             case 0x90:
                 if (event.data2 > 0)
                 {
+                    // A drum somebody has taken out. Dropped rather than sent at
+                    // zero: a note-on at velocity nought is a note-off, and a
+                    // stream of those to a sampler is not silence, it is a
+                    // stream of note-offs for a note that never started.
+                    if (voiceSilenced (event.data1, channel - 1, ppq))
+                        break;
+
                     midi.addEvent (juce::MidiMessage::noteOn (channel, event.data1,
                                                               (juce::uint8) event.data2),
                                    event.sampleOffset);
@@ -580,9 +694,39 @@ void JaminProcessor::timerCallback()
         if (random && ! lastRandom) phraseRandom.fetch_add (1, std::memory_order_relaxed);
         lastRandom = random;
 
+        const bool rollDrums = randomDrumsParam->get();
+        if (rollDrums && ! lastRandomDrums) drumsRandom.fetch_add (1, std::memory_order_relaxed);
+        lastRandomDrums = rollDrums;
+
+        const bool rollProgression = randomProgressionParam->get();
+        if (rollProgression && ! lastRandomProgression) progressionRandom.fetch_add (1, std::memory_order_relaxed);
+        lastRandomProgression = rollProgression;
+
+        const bool rollSong = randomSongParam->get();
+        if (rollSong && ! lastRandomSong) songRandom.fetch_add (1, std::memory_order_relaxed);
+        lastRandomSong = rollSong;
+
+        /*
+            A drum switched from the DAW rather than from the window.
+
+            The parameter is the state and the moment it lands is worked out the
+            same way a mute is, so automating the hat out at bar 33 takes it out
+            at bar 33 rather than between two sixteenths.
+        */
+        for (int at = 0; at < numVoices; ++at)
+        {
+            const bool wanted = voices[at].param->get();
+            if (wanted != voices[at].soundingAfter.load (std::memory_order_relaxed))
+                setVoiceSounding (at, wanted, nextBoundaryPpq());
+        }
+
         // A pending mute whose bar line has gone past is simply the state now.
         if (view.playing.load (std::memory_order_relaxed))
-            jamin::Roster::instance().settle (view.ppqPosition.load (std::memory_order_relaxed));
+        {
+            const auto now = view.ppqPosition.load (std::memory_order_relaxed);
+            jamin::Roster::instance().settle (now);
+            settleVoices (now);
+        }
     }
 
     juce::String error;

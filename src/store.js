@@ -13,7 +13,7 @@ import { MidiEngine } from './core/midi.js'
 import { hosted, hostData, callHost, callHostSlowly, onHost, HostClock } from './core/host.js'
 import { nodeAvailable, Session, httpTransport, hostTransport, localTransport } from './core/net.js'
 import { loadDrums, loadedDrums, drumReport, buildDrumTrack, matchingFill, fitsBars } from './core/drums.js'
-import { kitById, cleanKitMap, classifyKit, mapDrumNotes } from './core/drumKits.js'
+import { kitById, cleanKitMap, classifyKit, mapDrumNotes, DRUM_VOICES } from './core/drumKits.js'
 import {
   readGrooveFile, describeSet, packGroove, unpackGroove, spread, planPacks, slashes, reservoir, walkLibrary,
 } from './core/drumImport.js'
@@ -124,6 +124,17 @@ export const state = reactive({
   // What the database says each library holds, as against what its row claims.
   // @see countEachDrumSet
   drumCounts: {},
+  /**
+   * Drums somebody has taken out, by voice id.
+   *
+   * Global to the song rather than per part: taking the hi-hat out means out,
+   * not out of the chorus. It is a performance rather than a preference, which
+   * is why it is here and not in settings -- it must not follow anybody into
+   * their next session.
+   */
+  drumMutes: {},
+  /** Every error the page has seen, newest first. @see noteError */
+  errors: [],
   // True while the browser is rebuilding the catalogue's indexes, which it does
   // once after an update and silently. @see core/drumStore.js whileUpgrading
   drumUpgrading: false,
@@ -366,6 +377,10 @@ engine.onPortsChanged = (inputs, outputs) => {
  * ------------------------------------------------------------------ */
 
 export async function initApp() {
+  // First, so that anything the rest of this throws is caught rather than lost.
+  // Inside a plugin there is no console to open. @see noteError
+  watchForErrors()
+
   state.text = readStoredText()
   state.songPhrase = readStoredSongPhrase()
   state.accentPhrase = readStored(ACCENT_KEY)
@@ -482,6 +497,22 @@ async function adoptHost() {
    * arriving -- possibly long after it was sent, because a request made while
    * this window was shut waits in the roster until the window opens.
    */
+  // The other three dice, thrown from the DAW. What a random drum pattern or a
+  // random progression *is* lives in a catalogue in this page, so the parameter
+  // can only ever ask.
+  onHost('jaminRollDrums', () => { rollDrumsOnly() })
+  onHost('jaminRollProgression', () => { rollProgressionOnly() })
+  onHost('jaminRollSong', () => { rollSong() })
+
+  // A switch thrown in the DAW, so the window agrees with the automation.
+  onHost('jaminDrumMutes', (message) => {
+    const mask = Number(message && message.muted) || 0
+    const next = {}
+    VOICE_ORDER.forEach((voice, at) => { if (mask & (1 << at)) next[voice] = true })
+    state.drumMutes = next
+    player.mutedNotes = mutedNoteSet()
+  })
+
   onHost('jaminSetDrums', (message) => {
     const bindings = message && message.drums
     if (bindings && typeof bindings === 'object') {
@@ -879,6 +910,147 @@ function adoptRosterJson(json) {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * Everything that went wrong
+ *
+ * Inside a plugin there is no console to open. A page that throws looks exactly
+ * like a page that decided not to do anything -- which is how eight
+ * ReferenceErrors shipped, each of them a button that did nothing and said
+ * nothing, and how the die was broken twice without leaving a trace anybody
+ * could point at.
+ *
+ * So everything is kept: what the page threw, what a promise rejected with,
+ * what was logged as an error, and what jamin noticed itself. Newest first,
+ * bounded, and shown in Settings.
+ * ------------------------------------------------------------------ */
+
+const MOST_ERRORS = 200
+
+/** One thing that went wrong, with enough about it to chase. */
+export function noteError(what, where = '', detail = '') {
+  const message = String((what && what.message) || what || 'something went wrong')
+  const stack = String((what && what.stack) || detail || '')
+  const now = Date.now()
+
+  // The same fault in a loop is one line with a count, not two hundred lines
+  // that push everything else out.
+  const first = state.errors[0]
+  if (first && first.message === message && first.where === where) {
+    first.count += 1
+    first.at = now
+    return
+  }
+
+  state.errors = [{ at: now, message, where, stack: stack.slice(0, 2000), count: 1 },
+                  ...state.errors].slice(0, MOST_ERRORS)
+}
+
+export function forgetErrors() {
+  state.errors = []
+}
+
+/**
+ * Catch what nobody thought to catch.
+ *
+ * `window.onerror` gets what was thrown and never handled, and
+ * `unhandledrejection` gets the promises -- which is where most of an async
+ * program's faults end up. console.error is wrapped rather than replaced, so
+ * everything that already reports through it is caught without changing it.
+ */
+function watchForErrors() {
+  if (typeof window === 'undefined') return
+
+  window.addEventListener('error', (event) => {
+    noteError(event.error || event.message,
+              event.filename ? `${event.filename}:${event.lineno}` : 'page')
+  })
+
+  window.addEventListener('unhandledrejection', (event) => {
+    noteError(event.reason, 'a promise nobody caught')
+  })
+
+  const wasError = console.error.bind(console)
+  console.error = (...args) => {
+    try {
+      noteError(args.map((one) => (one && one.message) || String(one)).join(' '), 'console')
+    } catch {
+      /* the error log is not a thing to throw from */
+    }
+    wasError(...args)
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Taking a drum out
+ *
+ * The same musical act as muting a track, and not the DAW's mute: a mixer takes
+ * the hi-hat out after it has been played, this decides whether it happens at
+ * all. And it lands on a bar line, so the hat drops where a drummer would drop
+ * it rather than wherever the mouse was.
+ *
+ * Inside a plugin the decision belongs to the processor -- that is what reads
+ * the compiled sequence and what a DAW automates. In a browser it belongs to
+ * the player. Both are told, and whichever is making the noise acts on it.
+ * ------------------------------------------------------------------ */
+
+/** The order the vocabulary is written in, which the plugin's parameters
+    follow exactly. @see native/plugin/PluginProcessor.cpp voiceNames */
+const VOICE_ORDER = DRUM_VOICES.map((voice) => voice.id)
+
+export function drumVoiceMuted(voice) {
+  return Boolean(state.drumMutes[voice])
+}
+
+/** Silence one drum, or bring it back. */
+export function setDrumVoiceMuted(voice, muted) {
+  const at = VOICE_ORDER.indexOf(voice)
+  if (at < 0) return
+
+  state.drumMutes = { ...state.drumMutes, [voice]: Boolean(muted) }
+  player.mutedNotes = mutedNoteSet()
+  if (hosted()) callHost('jaminMuteVoice', at, !muted).catch(() => {})
+
+  const name = (DRUM_VOICES.find((one) => one.id === voice) || {}).name || voice
+  const when = state.settings.drums.muteQuantize || 'bar'
+  const soon = when === 'instant' ? '' : ` on the next ${when}`
+  toast(muted ? `${name} out${soon}` : `${name} back${soon}`)
+}
+
+/** Everything sounding again. */
+export function unmuteEveryDrumVoice() {
+  state.drumMutes = {}
+  player.mutedNotes = new Set()
+  if (!hosted()) return
+  for (let at = 0; at < VOICE_ORDER.length; at++) {
+    callHost('jaminMuteVoice', at, true).catch(() => {})
+  }
+}
+
+/** Which note numbers are silenced, for the browser's own player to skip. */
+function mutedNoteSet() {
+  const map = kitMapFor()
+  const out = new Set()
+  for (const [voice, muted] of Object.entries(state.drumMutes)) {
+    if (muted && Number.isFinite(map[voice])) out.add(map[voice])
+  }
+  return out
+}
+
+/**
+ * What each voice plays, told to the plugin so a note can be named.
+ *
+ * The audio thread has no kit table and no business having one: it needs to
+ * know that note 42 is the closed hat and nothing more. Sent whenever the kit
+ * changes, which is what makes a muted drum stay muted when somebody switches
+ * instrument under it.
+ */
+function publishDrumNotes() {
+  if (!hosted()) return
+  const map = kitMapFor()
+  const notes = VOICE_ORDER.map((voice) => (Number.isFinite(map[voice]) ? map[voice] : -1))
+  callHost('jaminDrumNotes', notes, state.settings.midi.drumChannel ?? 9).catch(() => {})
+}
+
 /**
  * Tell the host what this instance is playing, so its tab says something true.
  *
@@ -975,6 +1147,63 @@ const FORMS = [
 
 const pick = (list) => (list && list.length ? list[Math.floor(Math.random() * list.length)] : null)
 
+/**
+ * New drums for the song it already has, and nothing else.
+ *
+ * The die on the toolbar rewrites everything -- changes, sections,
+ * articulations, drums. This is the one somebody reaches for over and over
+ * while the chart stays put, which is why it is its own thing and its own
+ * parameter: a drummer trying another feel has not asked for different chords.
+ */
+export async function rollDrumsOnly() {
+  const genre = pick(genresToDrawOn())
+  const placed = await rollDrums(genre)
+  toast(placed
+    ? `${genre || 'anything'} — ${placed} drum part${placed === 1 ? '' : 's'}`
+    : 'Nothing to draw on')
+  return placed
+}
+
+/**
+ * Another set of changes under the same form.
+ *
+ * The sections and their lengths are kept: a chorus stays eight bars and stays
+ * a chorus, and only what is played over it changes. Rewriting the form as well
+ * is what the whole-song die is for.
+ */
+export function rollProgressionOnly() {
+  const genre = pick(genresToDrawOn())
+  const suited = allProgressions().filter(
+    (row) => (row.tags || []).some((tag) => sameGenre(tag, genre))
+  )
+  const progression = pick(suited.length ? suited : allProgressions())
+  if (!progression) {
+    toast('No progressions to draw on')
+    return false
+  }
+
+  const bars = barsOfProgression(progression.text)
+  if (!bars.length) {
+    toast('That progression has no bars in it')
+    return false
+  }
+
+  const before = state.text
+  const sections = (state.score.sections || []).map((one) => one.name).filter(Boolean)
+  const form = sections.length ? sections : ['Verse', 'Chorus']
+
+  const lines = []
+  for (const section of form) {
+    lines.push(`[${section}]`)
+    lines.push(`| ${bars.join(' | ')} |`)
+  }
+
+  setText(lines.join('\n'))
+  toast(`${progression.name || 'new changes'} over ${form.length} section${form.length === 1 ? '' : 's'}`,
+        { label: 'Undo', run: () => setText(before) })
+  return true
+}
+
 export async function rollSong() {
   const before = state.text
 
@@ -986,9 +1215,10 @@ export async function rollSong() {
    * the drums actually have -- that is the catalogue with the most of it -- and
    * the progression and the grooves are then chosen to suit.
    */
-  const genre = pick(genresToDrawOn())
+  const wanted = state.settings.random || {}
+  const genre = pick(genresToDrawOn(wanted.leastPerGenre))
 
-  const suited = allProgressions().filter(
+  const suited = wanted.matchGenre === false ? [] : allProgressions().filter(
     (row) => (row.tags || []).some((tag) => sameGenre(tag, genre))
   )
   // Nothing in the same genre is not a reason to refuse: most progressions
@@ -1007,7 +1237,11 @@ export async function rollSong() {
   }
 
   const phrases = catalogue().filter((phrase) => phrase && phrase.notes && phrase.notes.length)
-  const form = pick(FORMS)
+  // Trimmed to taste rather than always five: a song is as long as somebody
+  // wants it, and the forms are written longest-first so a slice is still a
+  // shape rather than an arbitrary cut.
+  const most = Math.max(1, Number(wanted.mostSections) || 5)
+  const form = pick(FORMS).slice(0, most)
   const lines = []
   const used = []
 
@@ -1018,7 +1252,11 @@ export async function rollSong() {
     const take = short ? Math.min(2, bars.length) : bars.length
     const mine = bars.slice(0, take)
 
-    const phrase = pick(phrases)
+    // One articulation per section, or one for the whole song, which is what a
+    // lot of records actually do.
+    const phrase = wanted.phrasePerSection === false
+      ? (used.length ? null : pick(phrases))
+      : pick(phrases)
     if (phrase) used.push(phrase.name)
 
     // The articulation goes on the section's first chord: a dot to say the
@@ -1049,6 +1287,7 @@ export async function rollSong() {
  * groove in it makes a song where every section is the same bar.
  */
 function genresToDrawOn(least = 4) {
+  least = Math.max(1, Number(least) || 4)
   const counts = new Map()
   for (const groove of state.drums) {
     if (!groove.genre) continue
@@ -1117,7 +1356,8 @@ async function rollDrums(genre) {
   // Whichever era the first groove belongs to, the rest follow where they can.
   const first = pick(beats)
   const era = first && first.tags ? first.tags.era : ''
-  const sameEra = era ? beats.filter((groove) => (groove.tags || {}).era === era) : []
+  const keepEra = (state.settings.random || {}).matchEra !== false
+  const sameEra = era && keepEra ? beats.filter((groove) => (groove.tags || {}).era === era) : []
   const pool = sameEra.length >= rows.length ? sameEra : beats
 
   const fills = await groovesForGenre(genre, 'fill')
@@ -1417,6 +1657,10 @@ export function forgetDrumBinding(name) {
 
 /** The player is told again, and the plugin recompiled. */
 function refreshDrums() {
+  // What each voice plays, so the plugin can tell a note which drum it is and
+  // a silenced drum stays silenced across a change of kit. @see publishDrumNotes
+  publishDrumNotes()
+  player.mutedNotes = mutedNoteSet()
   player.getGroove = (span) => grooveForSpan(span, 'groove')
   player.getFill = (span) => grooveForSpan(span, 'fill')
   player.getKitMap = () => kitMapFor()

@@ -48,6 +48,9 @@ import {
   aimedElsewhere,
   instanceLabel,
   countEachDrumSet,
+  setDrumVoiceMuted,
+  drumVoiceMuted,
+  unmuteEveryDrumVoice,
 } from '../store.js'
 // The in-memory text search, which is not the store's searchDrums: that one
 // asks the database. Both are needed and they are not the same thing.
@@ -924,6 +927,21 @@ function voiceShare(id) {
  * and waiting. @see store.rollSong for the same problem solved with an undo;
  * this one cannot be undone, so it asks first.
  */
+/**
+ * A key is a switch, and shift makes it an audition.
+ *
+ * Hearing the drum was what the key did before and is the lesser of the two
+ * jobs: taking one out is a thing somebody does while the song plays, over and
+ * over, and hearing one is a thing they do once when the kit looks wrong.
+ */
+function onKeyClick(event, voice) {
+  if (event.shiftKey) { tapDrum(noteFor(voice)); return }
+  setDrumVoiceMuted(voice, !drumVoiceMuted(voice))
+}
+
+/** How many drums are out, for the button that brings them all back. */
+const silenced = computed(() => Object.values(state.drumMutes).filter(Boolean).length)
+
 const eraseArmed = ref(false)
 let eraseTimer = null
 
@@ -1342,12 +1360,25 @@ function resetMap() {
                     <div class="jamin-roll-keys">
                       <div v-for="row in preview.rows" :key="row.id" class="jamin-roll-row"
                            :class="{ 'is-silent': !row.plays }">
+                        <!-- The key is the switch. Clicking it takes that drum
+                             out of the whole song and clicking again brings it
+                             back, landing on a bar line -- which is where a
+                             drummer drops the hat rather than wherever the
+                             mouse was. Shift-click to hear it instead. -->
                         <button
                           type="button" class="jamin-roll-name"
-                          :class="{ 'is-struck': playingVoices.has(row.id) }"
-                          :title="`Hear the ${row.name.toLowerCase()} — ${gmName(noteFor(row.id))}`"
-                          @click="tapDrum(noteFor(row.id))"
-                        >{{ row.name }}</button>
+                          :class="{ 'is-struck': playingVoices.has(row.id),
+                                    'is-silenced': drumVoiceMuted(row.id) }"
+                          :title="drumVoiceMuted(row.id)
+                            ? `${row.name} is out — click to bring it back (shift-click to hear it)`
+                            : `Click to take the ${row.name.toLowerCase()} out of the song`
+                              + ` (shift-click to hear it — ${gmName(noteFor(row.id))})`"
+                          @click="onKeyClick($event, row.id)"
+                        >
+                          <v-icon v-if="drumVoiceMuted(row.id)" size="11" class="mr-1">
+                            mdi-volume-off
+                          </v-icon>{{ row.name }}
+                        </button>
                         <span class="jamin-roll-cells">
                           <i
                             v-for="(velocity, step) in row.cells" :key="step"
@@ -1370,9 +1401,16 @@ function resetMap() {
                         </span>
                       </div>
                     </div>
-                    <div class="jamin-roll-foot text-caption text-medium-emphasis">
-                      {{ preview.bars }} bar{{ preview.bars === 1 ? '' : 's' }} ·
-                      sixteenths · click a name to hear it
+                    <div class="jamin-roll-foot text-caption text-medium-emphasis d-flex align-center">
+                      <span>
+                        {{ preview.bars }} bar{{ preview.bars === 1 ? '' : 's' }} · sixteenths ·
+                        click a drum to take it out
+                      </span>
+                      <v-spacer />
+                      <v-btn v-if="silenced" size="x-small" variant="text"
+                             @click="unmuteEveryDrumVoice()">
+                        {{ silenced }} out — bring back
+                      </v-btn>
                     </div>
                   </div>
 

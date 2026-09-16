@@ -597,6 +597,15 @@ body,
   background: rgba(127, 127, 127, 0.18);
 }
 
+/* Taken out of the song. Struck still wins over it -- a drum that is silenced
+   is not struck, so the two never fight, and if they did the truth would be
+   that something is playing. */
+.jamin-roll-name.is-silenced {
+  opacity: 0.45;
+  text-decoration: line-through;
+  color: rgb(var(--v-theme-error));
+}
+
 /* Lit while that drum is being struck, same as the Kit tab's dot. */
 .jamin-roll-name.is-struck {
   opacity: 1;

@@ -271,6 +271,67 @@ int main(int argc, const char **argv) {
         }
 
         printf("  survived %d open/close cycles\n", passes);
+
+        /*
+            And what a DAW can actually reach.
+
+            A parameter is the only thing a host can bind to a knob, and a
+            parameter that is not published is a feature nobody outside this
+            window can use. Listed rather than asserted by name: the list is
+            what it is, and printing it is how somebody sees that the drum
+            switches arrived without opening a DAW to look.
+
+            Required to be non-empty, because an empty parameter list is not a
+            plausible state for this plugin and would mean the automation had
+            silently gone.
+        */
+        {
+            AudioComponent found = AudioComponentFindNext(NULL, &want);
+            AudioUnit unit = NULL;
+            if (found != NULL && AudioComponentInstanceNew(found, &unit) == noErr && unit != NULL)
+            {
+                UInt32 size = 0;
+                Boolean writable = false;
+                if (AudioUnitGetPropertyInfo(unit, kAudioUnitProperty_ParameterList,
+                                             kAudioUnitScope_Global, 0, &size, &writable) == noErr
+                    && size > 0)
+                {
+                    const int count = (int) (size / sizeof(AudioUnitParameterID));
+                    AudioUnitParameterID* ids = (AudioUnitParameterID*) malloc(size);
+                    if (AudioUnitGetProperty(unit, kAudioUnitProperty_ParameterList,
+                                             kAudioUnitScope_Global, 0, ids, &size) == noErr)
+                    {
+                        printf("  %d host parameters:", count);
+                        for (int at = 0; at < count; at++)
+                        {
+                            AudioUnitParameterInfo info;
+                            UInt32 infoSize = sizeof(info);
+                            if (AudioUnitGetProperty(unit, kAudioUnitProperty_ParameterInfo,
+                                                     kAudioUnitScope_Global, ids[at],
+                                                     &info, &infoSize) != noErr)
+                                continue;
+                            if (info.cfNameString != NULL)
+                            {
+                                char name[128] = { 0 };
+                                CFStringGetCString(info.cfNameString, name, sizeof(name),
+                                                   kCFStringEncodingUTF8);
+                                printf("%s %s", at ? "," : "", name);
+                            }
+                        }
+                        printf("\n");
+                    }
+                    free(ids);
+                    if (count <= 0)
+                    {
+                        printf("FAIL the plugin publishes no parameters -- nothing to automate\n");
+                        AudioComponentInstanceDispose(unit);
+                        return 1;
+                    }
+                }
+                AudioComponentInstanceDispose(unit);
+            }
+        }
+
         return 0;
     }
 }

@@ -118,11 +118,62 @@ public:
     juce::AudioParameterBool* nextPhraseParam { nullptr };
     juce::AudioParameterBool* prevPhraseParam { nullptr };
     juce::AudioParameterBool* randomPhraseParam { nullptr };
+    juce::AudioParameterBool* randomDrumsParam { nullptr };
+    juce::AudioParameterBool* randomProgressionParam { nullptr };
+    juce::AudioParameterBool* randomSongParam { nullptr };
 
     /** Raised when a step parameter is nudged, for the editor to act on -- the
         catalogue is a browser thing and the parameter is not. */
     std::atomic<int> phraseStep { 0 };
     std::atomic<int> phraseRandom { 0 };
+    std::atomic<int> drumsRandom { 0 };
+    std::atomic<int> progressionRandom { 0 };
+    std::atomic<int> songRandom { 0 };
+
+    // ------------------------------------------------------ silencing a drum
+
+    /**
+        One drum, on or off, for the whole song.
+
+        The same musical act as the roster's mute and for the same reason it is
+        not the DAW's: a mixer takes the hi-hat out after it has been played,
+        where this decides whether it happens at all -- and it lands on a bar
+        line, so the hat drops out where a drummer would drop it rather than
+        wherever the mouse was.
+
+        Read by the audio thread, so it is atomics and nothing else. `before`
+        and `after` with a moment between them is the same shape as
+        jamin::Roster::Slot, which is the pattern this follows exactly.
+    */
+    struct Voice
+    {
+        std::atomic<bool> soundingBefore { true };
+        std::atomic<bool> soundingAfter { true };
+        std::atomic<double> changeAtPpq { -1.0 };
+        /// Which note this voice comes out on, as the page's kit map says.
+        /// -1 until a compile says otherwise, which matches nothing.
+        std::atomic<int> note { -1 };
+        juce::AudioParameterBool* param { nullptr };
+    };
+
+    static constexpr int numVoices = 14;
+    Voice voices[numVoices];
+
+    /// The channel the drums are on, zero-based, from the last compile.
+    std::atomic<int> drumChannel { 9 };
+
+    /** Silence or restore one drum. `atPpq` is where it lands; negative is now. */
+    void setVoiceSounding (int voice, bool sounding, double atPpq);
+
+    /** What the page's kit map says each voice plays, so a note can be told
+        which drum it is. */
+    void setVoiceNotes (const juce::Array<juce::var>& notes, int channel);
+
+    /** Whether this note is one somebody has taken out, at this moment. */
+    bool voiceSilenced (int note, int channel, double ppq) const;
+
+    /** A pending change whose bar line has gone past is simply the state now. */
+    void settleVoices (double ppq);
 
     // ------------------------------------------------------------------ the bridge
 
@@ -273,6 +324,7 @@ private:
     std::atomic<bool> soloWanted { false };
     bool lastMuteParam { false }, lastSoloParam { false };
     bool lastNext { false }, lastPrev { false }, lastRandom { false };
+    bool lastRandomDrums { false }, lastRandomProgression { false }, lastRandomSong { false };
 
     JUCE_DECLARE_WEAK_REFERENCEABLE (JaminProcessor)
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (JaminProcessor)
