@@ -149,6 +149,7 @@ const builtinShowing = computed(() => library.value === EVERYTHING || library.va
 const EMPTY_FACETS = {
   folders: [], kinds: [], bars: [], signatures: [],
   genres: [], feels: [], surfaces: [], parts: [], eras: [],
+  holds: 0, stride: 1, exact: true,
 }
 const facets = ref(EMPTY_FACETS)
 
@@ -169,12 +170,20 @@ const shelf = computed({
   set: (value) => { state.drumFilters.folder = value || '' },
 })
 
-/** A dropdown out of a [value, count] tally, in the shape the others use. */
+/**
+ * A dropdown out of a [value, count] tally, in the shape the others use.
+ *
+ * The count is marked as an estimate when the library was too big to count and
+ * was sampled instead. `Progressive (429)` over forty thousand patterns is a
+ * worse answer than `Progressive (~41,000)`: both are approximate and only one
+ * of them admits it. @see core/drumStore.js grooveFacets
+ */
 function fromFacet(pairs, label, title = (name) => String(name)) {
+  const about = facets.value.exact === false ? '~' : ''
   return [
     { title: label, value: 'any' },
     ...pairs.map(([name, count]) => ({
-      title: `${title(name)} (${count.toLocaleString()})`,
+      title: `${title(name)} (${about}${count.toLocaleString()})`,
       value: String(name),
     })),
   ]
@@ -368,10 +377,11 @@ function clearFilters() {
   onlyFitting.value = false
 }
 
-/** A search of an imported library looks at a fixed number of rows and stops,
-    so what came back can be a slice rather than the answer. Saying so beats
-    letting a capped search look like the whole of it. */
-const capped = computed(() => imported.value && state.drumSearch.partial)
+/** A search of an imported library hands back a page of a much longer answer,
+    and past a certain size it samples rather than counts. Saying "showing 400
+    of about 41,000" beats letting either number stand in for the other. */
+const capped = computed(() =>
+  imported.value && (!state.drumSearch.exact || state.drumSearch.total > matches.value.length))
 
 const pageCount = computed(() => Math.max(1, Math.ceil(matches.value.length / PER_PAGE)))
 const list = computed(() => matches.value.slice((page.value - 1) * PER_PAGE, page.value * PER_PAGE))
@@ -880,9 +890,16 @@ function resetMap() {
                       <kbd>↑↓</kbd> groove · <kbd>←→</kbd> page ·
                       <kbd>1–0</kbd> cycle part · <kbd>space</kbd> all
                     </span>
-                    <template v-if="imported">
-                      {{ matches.length.toLocaleString() }} found<span v-if="capped">
-                        of the first {{ state.drumSearch.scanned.toLocaleString() }} looked at</span>
+                    <template v-if="state.drumUpgrading">
+                      <v-progress-circular indeterminate size="12" width="2" class="mr-1" />
+                      Rebuilding the catalogue's index, once
+                    </template>
+                    <template v-else-if="imported">
+                      <span v-if="capped">
+                        showing {{ matches.length.toLocaleString() }} of about
+                        {{ state.drumSearch.total.toLocaleString() }}
+                      </span>
+                      <span v-else>{{ matches.length.toLocaleString() }} found</span>
                     </template>
                     <template v-else>
                       {{ matches.length.toLocaleString() }} of {{ drums.length.toLocaleString() }}

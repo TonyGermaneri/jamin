@@ -40,10 +40,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # esbuild rather than imported directly, because these modules import JSON and
 # a package, neither of which plain Node ESM will take without ceremony.
 DRIVER = r"""
+import 'fake-indexeddb/auto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { readGrooveFile, packGroove, unpackGroove, spread } from 'SRC/core/drumImport.js'
 import { classifyKit } from 'SRC/core/drumKits.js'
+import { putGrooves, searchGrooves, grooveFacets } from 'SRC/core/drumStore.js'
 
 const ROOT = process.argv[2]
 const PER_PACK = Number(process.argv[3] || 60)
@@ -57,6 +59,7 @@ const genres = new Map()
 const kits = new Map()
 const tags = { feel: new Map(), surface: new Map(), part: new Map(), era: new Map() }
 const named = []
+const stored = []
 let read = 0
 let withGenre = 0
 let skipped = 0
@@ -92,7 +95,9 @@ for (const pack of listed) {
 
     for (const note of groove.notes) histogram[note.note] = (histogram[note.note] || 0) + 1
 
-    const back = unpackGroove(packGroove(groove, 'probe', read))
+    const packed = packGroove(groove, 'probe', read)
+    stored.push(packed)
+    const back = unpackGroove(packed)
     if (back.name === groove.name && back.bars === groove.bars) roundTripped++
     if (back.notes.length === groove.notes.length) withNotes++
     if (back.genre) {
@@ -113,8 +118,72 @@ for (const pack of listed) {
   if (called.kit) named.push({ pack, kit: called.kit, coverage: called.coverage })
 }
 
+/*
+ * And then the half that broke this time: the catalogue, filtered.
+ *
+ * The rows go into a database in the order they were imported, which is the
+ * order of the tree, which is the thing that made the filters lie. A genre
+ * living in the last pack read is invisible to a search that walks the rows in
+ * order and gives up part way -- and the facets, which sample evenly, offer it
+ * anyway with a count beside it.
+ *
+ * So the check is exactly that: whatever the facets say exists, the search must
+ * be able to find, on a budget smaller than the catalogue. `budget` is deliberately
+ * a fraction of the rows, because that is the only condition under which the
+ * fault appears and a real library is always past it.
+ */
+await putGrooves(stored)
+
+const facets = await grooveFacets('probe', Math.max(8, Math.floor(stored.length / 8)))
+const budget = Math.max(16, Math.floor(stored.length / 4))
+
+/*
+ * Where in the library a value first appears.
+ *
+ * This is what makes the check sharp rather than lucky. A value scattered
+ * through the collection turns up in the front of it too, so a search that only
+ * ever reads the front still finds it and the check passes with the fault in --
+ * which is how three earlier tests passed over three earlier faults. The values
+ * worth asserting on are the ones that first appear *past* the budget, because
+ * those are the ones a prefix cannot reach and a sample can.
+ */
+const firstAt = (has) => {
+  for (let at = 0; at < stored.length; at++) if (has(stored[at])) return at
+  return -1
+}
+
+const probe = async (label, values, has, filter) => {
+  const out = []
+  for (const name of values) {
+    const at = firstAt((row) => has(row, name))
+    const hit = await searchGrooves({ set: 'probe', ...filter(name) }, 50, budget)
+    out.push({
+      [label]: name,
+      firstAt: at,
+      late: at >= budget,
+      found: hit.rows.length,
+      total: hit.total,
+      truly: stored.filter((row) => has(row, name)).length,
+    })
+  }
+  return out
+}
+
+const searches = await probe('genre', (facets.genres || []).map(([name]) => name).slice(0, 12),
+                             (row, name) => row.g === name, (name) => ({ genre: name }))
+for (const hit of searches) {
+  hit.claimed = (facets.genres.find(([name]) => name === hit.genre) || [])[1] || 0
+}
+
+// The same question asked of a filter no index can answer, which is the case
+// that has to fall back on sampling the library rather than reading its front.
+const surfaced = await probe('surface', (facets.surfaces || []).map(([name]) => name),
+                             (row, name) => (row.x || {}).surface === name,
+                             (name) => ({ surface: name }))
+
 const counted = (map) => Object.fromEntries([...map.entries()].sort((a, b) => b[1] - a[1]))
 process.stdout.write(JSON.stringify({
+  stored: stored.length, searches, surfaced,
   packs: listed.filter(Boolean).length,
   read, skipped, roundTripped, withNotes, withGenre, named,
   genres: counted(genres),
@@ -129,7 +198,11 @@ def run(folder, per_pack):
     if not os.path.exists(esbuild):
         raise SystemExit("esbuild is not installed; run npm install")
 
-    with tempfile.TemporaryDirectory() as work:
+    # Inside the project, because the driver imports from node_modules -- the
+    # real store, and a stand-in for the browser's database -- and node resolves
+    # those by walking up from the file. A system temp directory is nowhere near
+    # them.
+    with tempfile.TemporaryDirectory(dir=os.path.join(ROOT, "node_modules")) as work:
         entry = os.path.join(work, "driver.mjs")
         with open(entry, "w", encoding="utf-8") as handle:
             handle.write(DRIVER.replace("SRC", os.path.join(ROOT, "src")))
@@ -165,11 +238,19 @@ def main():
     packs = found["packs"]
 
     print(f"  {read} files read, {found['skipped']} skipped, from {packs} packs")
+    print(f"  stored    {found['stored']} rows, then filtered on a quarter-sized budget")
     print(f"  kits      {summary(found['kits'], 8)}")
     print(f"  genres    {len(found['genres'])} distinct -- {summary(found['genres'], 8)}")
     for kind, counts in found["tags"].items():
         if counts:
             print(f"  {kind:9} {summary(counts, 6)}")
+    for hit in found["searches"][:6]:
+        print(f"  filter    {hit['genre']}: offered {hit['claimed']}, found {hit['found']}, "
+              f"really {hit['truly']}, first at {hit['firstAt']}"
+              f"{' (past the budget)' if hit['late'] else ''}")
+    for hit in found["surfaced"][:4]:
+        print(f"  unindexed {hit['surface']}: showed {hit['found']}, "
+              f"reckoned {hit['total']}, really {hit['truly']}")
 
     failures = []
 
@@ -216,6 +297,58 @@ def main():
     # The paths say more than the genre, and half of them say what the right
     # hand is on.
     check("folders yield tags", any(found["tags"][k] for k in found["tags"]), "none found")
+
+    # ---- and the half that lives in the database ---------------------------
+    #
+    # A filter that offers a value must be able to find it. This is the fault
+    # that shipped: the facets sampled the library evenly and so offered
+    # `Progressive (429)`, while the search read the rows in the order they were
+    # written and gave up after a fixed number -- the first pack or two of three
+    # quarters of a million -- so the list showed one pattern.
+    #
+    # Both halves are checked, because either alone passes with the bug in.
+    empty = [s for s in found["searches"] if s["truly"] > 0 and s["found"] == 0]
+    check("every genre the filters offer can be found", not empty,
+          "; ".join(f"{s['genre']} offers {s['claimed']} and finds none of {s['truly']}"
+                    for s in empty[:4]))
+
+    # And specifically the ones that live past where the search stops reading.
+    # A value scattered evenly turns up in the front of the library too, so
+    # asserting on all of them passes with a prefix search in place; asserting
+    # on the late ones is what fails. If a sample has none, the check says so
+    # rather than passing quietly.
+    late = [s for s in found["searches"] if s["late"] and s["truly"] > 0]
+    check("including one that lives past the budget", late,
+          "no genre in this sample starts late enough to prove it -- raise --per-pack")
+    check("and those are found", all(s["found"] > 0 for s in late),
+          "; ".join(f"{s['genre']} first appears at {s['firstAt']} and is not found"
+                    for s in late if not s["found"]))
+
+    # And the count beside it is the right size. Sampled counts used to be
+    # reported raw -- a true count of what was looked at, presented as a count
+    # of what is there.
+    off = [s for s in found["searches"]
+           if s["truly"] >= 8 and not (s["truly"] / 4 <= s["claimed"] <= s["truly"] * 4)]
+    check("and the count beside it is the right size", not off,
+          "; ".join(f"{s['genre']} offers {s['claimed']} of {s['truly']}" for s in off[:4]))
+
+    # The same, for a filter no index can answer, which must fall back on
+    # sampling the library rather than reading the front of it.
+    #
+    # An unindexed filter has nothing but the stride to save it, so it is the
+    # one that proves the sampling rather than the index.
+    #
+    # Judged on the *total* rather than on the rows, because a budget smaller
+    # than the library is meant to hand back a sample -- a quarter of the rows
+    # gives a quarter of the matches and that is the design, not a fault. What
+    # must survive is the number beside them: reading the front of the library
+    # estimates from a biased corner and gets it wrong in whichever direction
+    # that corner leans, which is what "Progressive (429)" showing one pattern
+    # is made of.
+    wrong = [s for s in found["surfaced"]
+             if s["truly"] >= 8 and not (s["truly"] / 3 <= s["total"] <= s["truly"] * 3)]
+    check("an unindexed filter still counts what is there", not wrong,
+          "; ".join(f"{s['surface']} reports {s['total']} of {s['truly']}" for s in wrong[:4]))
 
     for failure in failures:
         print(f"FAIL {failure}")

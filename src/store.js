@@ -19,7 +19,7 @@ import {
 } from './core/drumImport.js'
 import {
   listSets, putSet, deleteSet, putGrooves, countGrooves,
-  searchGrooves, grooveFacets, getGrooves,
+  searchGrooves, grooveFacets, getGrooves, whileUpgrading,
 } from './core/drumStore.js'
 import {
   loadDrumBindings, saveDrumBindings, reconcileBindings, bindGroove,
@@ -116,7 +116,13 @@ export const state = reactive({
   // million patterns. @see core/drumStore.js
   drumSets: [],
   drumHits: [],
-  drumSearch: { scanned: 0, partial: false },
+  // What the last search of the catalogue did, so the list can say what it is
+  // showing rather than implying it is everything. `total` is how many matched
+  // and `exact` whether that was counted or estimated from an even sample.
+  drumSearch: { scanned: 0, holds: 0, stride: 1, total: 0, exact: true, partial: false },
+  // True while the browser is rebuilding the catalogue's indexes, which it does
+  // once after an update and silently. @see core/drumStore.js whileUpgrading
+  drumUpgrading: false,
   drumFilters: {
     // `source` is what the interface chose: 'builtin', '' for every imported
     // library at once, or one library's id. `set` is what the database query
@@ -1319,6 +1325,14 @@ function buildDrumSpansForRequest() {
  * @see README.md "On bundling other people's collections"
  * ------------------------------------------------------------------ */
 
+/*
+ * The one thing the database can say about the wait it cannot measure.
+ *
+ * Registered once, here, because this module is where the catalogue is opened
+ * from and the flag is read from the drum book. @see core/drumStore.js
+ */
+whileUpgrading((busy) => { state.drumUpgrading = busy })
+
 export async function refreshDrumSets() {
   state.drumSets = await listSets()
   return state.drumSets
@@ -1938,7 +1952,10 @@ export async function searchDrums(filters = null) {
   }
   const found = await searchGrooves(state.drumFilters)
   state.drumHits = found.rows.map(unpackGroove)
-  state.drumSearch = { scanned: found.scanned, partial: found.partial }
+  state.drumSearch = {
+    scanned: found.scanned, holds: found.holds, stride: found.stride,
+    total: found.total, exact: found.exact, partial: found.partial,
+  }
   return state.drumHits
 }
 

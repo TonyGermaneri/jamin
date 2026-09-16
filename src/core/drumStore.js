@@ -17,11 +17,31 @@
  */
 
 const DB_NAME = 'jamin.drums'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const SETS = 'sets'
 const GROOVES = 'grooves'
 
 let handle = null
+
+/**
+ * Somebody to tell while the browser is rebuilding the indexes.
+ *
+ * Adding an index to a store that already holds three quarters of a million
+ * rows means reading all of them, and the browser does it inside the upgrade
+ * transaction with nothing to say about how far along it is. It happens once,
+ * on the first open after an update, and from the outside it is indistinguishable
+ * from the program having hung -- which is the complaint that removing a large
+ * library used to earn, for the same reason.
+ *
+ * There is no progress to report, so this reports the only thing there is: that
+ * it is happening.
+ */
+let onUpgrade = () => {}
+
+/** Called with true when an upgrade starts and false when it finishes. */
+export function whileUpgrading(listener) {
+  onUpgrade = typeof listener === 'function' ? listener : () => {}
+}
 
 function open() {
   if (handle) return handle
@@ -35,23 +55,36 @@ function open() {
     const request = indexedDB.open(DB_NAME, DB_VERSION)
 
     request.onupgradeneeded = () => {
+      onUpgrade(true)
       const db = request.result
       if (!db.objectStoreNames.contains(SETS)) {
         db.createObjectStore(SETS, { keyPath: 'id' })
       }
-      if (!db.objectStoreNames.contains(GROOVES)) {
-        const store = db.createObjectStore(GROOVES, { keyPath: 'id' })
-        // By set, so deleting a library does not walk every row; by kind and
-        // length, which are the two filters that actually narrow a catalogue of
-        // several hundred thousand.
-        store.createIndex('set', 's')
-        store.createIndex('kind', 'k')
-        store.createIndex('bars', 'r')
+
+      /*
+       * Indexes are added rather than created once, because a library already
+       * imported must gain them without being imported again. Version 2 adds
+       * the genre, which the browser fills in by reading every row it already
+       * holds -- a wait of a few seconds on a large catalogue, once.
+       *
+       * An index is not an optimisation here. Without one the search walks the
+       * rows in the order they were written and gives up after a fixed number,
+       * so a genre living deep in the collection cannot be found at all.
+       */
+      const store = db.objectStoreNames.contains(GROOVES)
+        ? request.transaction.objectStore(GROOVES)
+        : db.createObjectStore(GROOVES, { keyPath: 'id' })
+
+      // By set, so deleting a library does not walk every row; by genre, kind
+      // and length, which are the filters that actually narrow a catalogue of
+      // several hundred thousand.
+      for (const [name, field] of [['set', 's'], ['kind', 'k'], ['bars', 'r'], ['genre', 'g']]) {
+        if (!store.indexNames.contains(name)) store.createIndex(name, field)
       }
     }
 
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => resolve(null)
+    request.onsuccess = () => { onUpgrade(false); resolve(request.result) }
+    request.onerror = () => { onUpgrade(false); resolve(null) }
   })
 
   return handle
@@ -197,61 +230,161 @@ export async function countGrooves(setId = null) {
 }
 
 /**
+ * Which index can be walked for these filters, in the order they are worth
+ * trying -- and what value to walk it at.
+ *
+ * Pure, so the choice can be tested without a database. The counting that
+ * decides between them is not: @see searchGrooves.
+ */
+export function indexable(filters = {}) {
+  const { set = '', genre = '', kind = '', bars = 0 } = filters
+  return [
+    { name: 'set', value: set },
+    { name: 'genre', value: genre },
+    { name: 'kind', value: kind },
+    { name: 'bars', value: bars },
+  ].filter((candidate) => Boolean(candidate.value))
+}
+
+/**
+ * How far apart to step so a budget of `budget` rows covers `holds` of them.
+ *
+ * This is the whole of the bug that made the filters lie. The facets sample the
+ * library evenly and so report a genre that lives anywhere in it; the search
+ * used to read the rows in the order they were written and stop after forty
+ * thousand, which in a collection of three quarters of a million is the first
+ * pack or two. So the filter would offer `Progressive` with a count beside it
+ * and the list would show one pattern, because the only rows the search ever
+ * looked at were somebody else's shelf.
+ *
+ * Reading a sample of the whole thing answers the question that was asked.
+ * Reading all of a corner of it answers a different one.
+ */
+export function strideFor(holds, budget) {
+  if (!(holds > 0) || !(budget > 0) || holds <= budget) return 1
+  return Math.floor(holds / budget)
+}
+
+/**
  * Everything matching, up to a limit.
  *
  * A cursor rather than getAll: the catalogue can be several hundred thousand
  * patterns and the filters usually cut it to a handful, so the rows are tested
  * as they arrive and the walk stops as soon as enough have been found.
  *
+ * Three things decide what gets walked:
+ *
+ *   * the narrowest **index** any filter can use, chosen by asking each one how
+ *     many rows it holds rather than by a fixed order -- one library out of
+ *     fifty is usually the biggest cut, but one genre out of a single enormous
+ *     library is a bigger one, and which wins is a fact about the collection
+ *   * a **stride**, so a budget that cannot cover the whole scope is spent
+ *     evenly across it instead of on its first rows @see strideFor
+ *   * `limit`, which is how many are worth handing to a list somebody scrolls
+ *
  * `scanLimit` is the promise this makes to the interface: it will look at that
  * many rows and no more, so a search that matches nothing costs a known amount
  * of time rather than the whole database.
+ *
+ * Returns the rows, and enough about the walk to say honestly what they are:
+ * `total` is how many matched, exactly when the walk finished and estimated
+ * from the density when it did not, with `exact` saying which.
  */
 export async function searchGrooves(filters = {}, limit = 400, scanLimit = 40000) {
   const db = await open()
-  if (!db) return { rows: [], scanned: 0, partial: false }
+  if (!db) return { rows: [], scanned: 0, holds: 0, stride: 1, total: 0, exact: true, partial: false }
 
   const {
     set = '', kind = '', bars = 0, signature = '', text = '', folder = '',
     genre = '', feel = '', surface = '', part = '', era = '',
   } = filters
   const needle = String(text || '').trim().toLowerCase()
+  const test = { kind, bars, signature, needle, folder, genre, feel, surface, part, era }
 
   const store = db.transaction(GROOVES, 'readonly').objectStore(GROOVES)
-  // The narrowest index the filters allow. A set is the biggest cut by far --
-  // one library out of several -- so it wins when it is given.
-  // No set given means every library at once, which is what somebody looking
-  // for a groove rather than for a library wants. It costs a walk of the whole
-  // catalogue instead of one index range, which is what `scanLimit` is for.
-  const source = set ? store.index('set').openCursor(IDBKeyRange.only(set))
-    : kind ? store.index('kind').openCursor(IDBKeyRange.only(kind))
+
+  /*
+   * The narrowest index, found by counting.
+   *
+   * `count()` on an index range is answered from the index itself without
+   * reading a single row, so asking all of them costs less than walking the
+   * wrong one. A library that has not been reindexed yet -- imported under
+   * version 1, opened before the upgrade finished -- simply has no such index,
+   * and the count throws rather than lying, so it is skipped.
+   */
+  let chosen = null
+  for (const { name, value } of indexable(filters)) {
+    if (!store.indexNames.contains(name)) continue
+    try {
+      const holds = await ask(store.index(name).count(IDBKeyRange.only(value)))
+      if (!chosen || holds < chosen.holds) chosen = { name, value, holds }
+    } catch {
+      /* an index this database does not have is one not to walk */
+    }
+  }
+
+  const holds = chosen ? chosen.holds : await ask(store.count()).catch(() => 0)
+  const stride = strideFor(holds, scanLimit)
+  const source = chosen
+    ? store.index(chosen.name).openCursor(IDBKeyRange.only(chosen.value))
     : store.openCursor()
 
   const rows = []
   let scanned = 0
+  let matched = 0
+  let exhausted = false
 
   await new Promise((resolve) => {
     source.onsuccess = () => {
       const cursor = source.result
-      if (!cursor || rows.length >= limit || scanned >= scanLimit) {
+      if (!cursor) {
+        exhausted = true
+        resolve()
+        return
+      }
+      if (rows.length >= limit || scanned >= scanLimit) {
         resolve()
         return
       }
 
       scanned++
-      const row = cursor.value
-      if (matches(row, { kind, bars, signature, needle, folder, genre, feel, surface, part, era })) {
-        rows.push(row)
+      if (matchesGroove(cursor.value, test)) {
+        matched++
+        rows.push(cursor.value)
       }
-      cursor.continue()
+      if (stride > 1) cursor.advance(stride)
+      else cursor.continue()
     }
     source.onerror = () => resolve()
   })
 
-  return { rows, scanned, partial: scanned >= scanLimit }
+  /*
+   * How many there are, as opposed to how many are being shown.
+   *
+   * Exact when the walk reached the end of its scope: every row was seen and
+   * counted. Otherwise the rows seen were spread evenly over the scope, so the
+   * share that matched is the share of the whole that matches -- an estimate,
+   * and labelled as one, but the right order of magnitude rather than a number
+   * that says one when there are forty thousand.
+   */
+  const exact = exhausted && stride === 1
+  const total = exact || !scanned
+    ? matched
+    : Math.round((matched / scanned) * holds)
+
+  return {
+    rows,
+    scanned,
+    holds,
+    stride,
+    total,
+    exact,
+    // Kept for what reads it: the list was capped and is not the whole answer.
+    partial: !exact,
+  }
 }
 
-function matches(row, { kind, bars, signature, needle, folder, genre, feel, surface, part, era }) {
+export function matchesGroove(row, { kind, bars, signature, needle, folder, genre, feel, surface, part, era }) {
   if (kind && row.k !== kind) return false
   if (bars && row.r !== bars) return false
   if (signature && row.t !== signature) return false
@@ -331,7 +464,7 @@ export async function grooveFacets(setId = null, sample = 8000) {
   // library of four hundred thousand are its first few shelves -- and its
   // filters would offer those shelves and no others. @see spread, which is the
   // same mistake caught once before.
-  const stride = holds > sample ? Math.floor(holds / sample) : 1
+  const stride = strideFor(holds, sample)
   const source = setId ? store.index('set').openCursor(range) : store.openCursor()
 
   const folders = new Map()
@@ -373,18 +506,38 @@ export async function grooveFacets(setId = null, sample = 8000) {
     source.onerror = () => resolve()
   })
 
-  const listed = (map) => [...map.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+  /*
+   * Scaled back up to the library.
+   *
+   * Every stride'th row was read, so a value seen n times in the sample stands
+   * for about n * stride rows in the library. Reporting the raw n instead is
+   * how a filter came to offer `Progressive (429)` over a shelf holding some
+   * forty thousand of them: a true count of what was looked at, presented as a
+   * count of what is there, and wrong by whatever the stride happened to be.
+   *
+   * These are estimates and `exact` says so, so nothing has to pretend a
+   * sample is a census.
+   */
+  const scale = (n) => (stride > 1 ? n * stride : n)
+  const listed = (map) => [...map.entries()]
+    .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+    .map(([name, n]) => [name, scale(n)])
+
   return {
     folders: listed(folders).slice(0, 60),
     kinds: listed(kinds),
-    bars: [...bars.entries()].sort((a, b) => a[0] - b[0]),
+    bars: [...bars.entries()].sort((a, b) => a[0] - b[0]).map(([n, count]) => [n, scale(count)]),
     signatures: listed(signatures),
     genres: listed(genres).slice(0, 60),
     feels: listed(feels),
     surfaces: listed(surfaces),
     parts: listed(parts),
-    eras: [...eras.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    eras: [...eras.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+      .map(([name, count]) => [name, scale(count)]),
     sampled: seen,
+    holds,
+    stride,
+    exact: stride === 1,
   }
 }
 
