@@ -181,6 +181,7 @@ export const state = reactive({
     phrases: false,
     progressions: false,
     settingsTab: 'midi',
+    toastAction: null,
     phrasesTab: 'catalogue',
     lickTexture: 'any',
     drums: false,
@@ -899,6 +900,7 @@ function barsOfProgression(text) {
  * @see resolvePhraseSections
  */
 export function rollSong() {
+  const before = state.text
   const progression = pick(allProgressions())
   if (!progression) {
     toast('No progressions to draw on')
@@ -938,8 +940,10 @@ export function rollSong() {
   setText(lines.join('\n'))
   const placed = rollDrums()
 
-  toast(`${form.length} sections, ${used.length} articulation${used.length === 1 ? '' : 's'}`
-    + (placed ? `, ${placed} drum part${placed === 1 ? '' : 's'}` : ''))
+  // What it replaced, offered back rather than asked about first.
+  const summary = `${form.length} sections, ${used.length} articulation${used.length === 1 ? '' : 's'}`
+    + (placed ? `, ${placed} drum part${placed === 1 ? '' : 's'}` : '')
+  toast(summary, before.trim() ? { label: 'Undo', run: () => setText(before) } : null)
   return true
 }
 
@@ -3027,10 +3031,32 @@ export function panic() {
 }
 
 let toastTimer = null
-export function toast(message) {
+/**
+ * Say something, and optionally offer to undo it.
+ *
+ * The action is how anything destructive asks permission here, because a plugin
+ * cannot ask the ordinary way: JUCE's web view implements no delegate for
+ * JavaScript dialogs, so `window.confirm` returns false immediately and
+ * whatever it was guarding never happens. It fails silently and looks exactly
+ * like a dead button -- which is what the die was for a build.
+ *
+ * So nothing asks first. It does the thing and leaves a way back, which is
+ * better anyway: one click instead of two, and no dialog to read.
+ */
+export function toast(message, action = null) {
   state.ui.toast = message
+  state.ui.toastAction = action
   clearTimeout(toastTimer)
   toastTimer = setTimeout(() => {
     state.ui.toast = null
-  }, 2200)
+    state.ui.toastAction = null
+  }, action ? 9000 : 2200)
+}
+
+/** Take the offer up, and say nothing more about it. */
+export function runToastAction() {
+  const action = state.ui.toastAction
+  state.ui.toast = null
+  state.ui.toastAction = null
+  if (action && typeof action.run === 'function') action.run()
 }

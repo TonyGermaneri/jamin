@@ -17,8 +17,8 @@ import {
   toast,
   openDrumBook,
   rollSong,
+  runToastAction,
 } from './store.js'
-import { SAMPLE_CHART } from './core/settings.js'
 
 const idle = ref(false)
 let idleTimer = null
@@ -110,22 +110,6 @@ function openMidi() {
   if (!state.host.active && (state.midi.state === 'denied' || state.midi.state === 'idle')) engine.enable()
 }
 
-/**
- * A whole song, at once.
- *
- * It replaces the chart, which is not a small thing to do by accident, so a
- * chart with anything in it is asked about first. An empty one is not: there is
- * nothing to lose and being asked would be pointless ceremony.
- */
-function rollWholeSong() {
-  const written = state.text.trim()
-  if (written && written !== SAMPLE_CHART.trim()) {
-    // eslint-disable-next-line no-alert
-    if (!window.confirm('Roll a new song? This replaces what is in the notepad.')) return
-  }
-  rollSong()
-}
-
 /** Mr. Accompany Me on or off: hearing what is played and answering it. */
 function toggleListen() {
   const accompany = state.settings.accompany
@@ -150,7 +134,7 @@ function toggleListen() {
           variant="text"
           color="secondary"
           title="Roll a whole song — changes, sections, articulations and drums"
-          @click="rollWholeSong"
+          @click="rollSong"
         />
         <v-btn
           v-if="noClockBound"
@@ -254,6 +238,15 @@ function toggleListen() {
 
       <v-snackbar :model-value="!!state.ui.toast" location="bottom" :timeout="-1" color="surface">
         {{ state.ui.toast }}
+        <!-- How anything destructive asks permission here. A plugin's web view
+             has no delegate for JavaScript dialogs, so window.confirm returns
+             false the instant it is called and whatever it guards never runs --
+             silently, and indistinguishably from a dead button. -->
+        <template v-if="state.ui.toastAction" #actions>
+          <v-btn variant="text" color="secondary" @click="runToastAction">
+            {{ state.ui.toastAction.label }}
+          </v-btn>
+        </template>
       </v-snackbar>
 
       <SettingsDialog />
