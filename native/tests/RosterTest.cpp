@@ -103,6 +103,36 @@ void rosterTests()
     roster.describe (three, "Kit", "", "phrases");
     check ("switching a track's mode bumps the revision", roster.revision() > beforeSwitch, true);
 
+    /* ---------------- what each track's drums are bound to ----------------
+     *
+     * Per track, which it had not been. Every instance kept its bindings in one
+     * browser-wide drawer, so two tracks could not hold different drum parts --
+     * and a window showing somebody else's track had no way to find out what
+     * that track played.
+     */
+    roster.publishDrums (three, "{\"Verse\":{\"groove\":\"g1841\"}}");
+    check ("a track's bindings are published",
+           roster.json().find ("\"drums\":{\"Verse\":{\"groove\":\"g1841\"}}") != std::string::npos, true);
+    check ("and its neighbour's are its own",
+           roster.json().find ("\"drums\":{}") != std::string::npos, true);
+
+    /*
+     * And one page's rubbish is not everybody's problem.
+     *
+     * The bindings go into the roster's JSON as an object rather than a string,
+     * so a truncated payload would make the whole thing unparseable and empty
+     * every window's tabs at once. Anything that is not plainly an object is
+     * stored as one that is.
+     */
+    roster.publishDrums (three, "{\"Verse\":{\"groove\"");
+    check ("a truncated payload does not break the roster",
+           roster.json().find ("\"drums\":{\"Verse\":{\"groove\"") == std::string::npos, true);
+    roster.publishDrums (three, "not json at all");
+    check ("nor does rubbish", roster.json().find ("not json") == std::string::npos, true);
+    roster.publishDrums (three, "[1,2,3]");
+    check ("nor does an array where an object belongs",
+           roster.json().find ("[1,2,3]") == std::string::npos, true);
+
     /* ---------------- asking an instance to play something ---------------- */
     // A page cannot reach into another page, so changing another track's
     // articulation is a request the owning instance picks up and acts on --
@@ -116,6 +146,40 @@ void rosterTests()
     check ("the request arrives", roster.takePhraseRequest (two, wanted, seenByTwo));
     check ("and says what to play", wanted, std::string ("F# pad 3"));
     check ("and is not delivered twice",
+           ! roster.takePhraseRequest (two, wanted, seenByTwo));
+
+    /* ---------------- and asking one to bind its drums ----------------
+     *
+     * The same shape and for the same reason: only the instance that owns the
+     * track holds the grooves and can compile them. Whole bindings rather than
+     * one change, so two requests arriving close together cannot be applied in
+     * the wrong order.
+     */
+    uint64_t drumsSeenByTwo = 0;
+    std::string wantedDrums;
+    check ("no drum request yet",
+           ! roster.takeDrumsRequest (two, wantedDrums, drumsSeenByTwo));
+
+    roster.requestDrums ("inst-2", "{\"Chorus\":{\"fill\":\"g99\"}}");
+    check ("the drum request arrives", roster.takeDrumsRequest (two, wantedDrums, drumsSeenByTwo));
+    check ("and carries the whole binding",
+           wantedDrums, std::string ("{\"Chorus\":{\"fill\":\"g99\"}}"));
+    check ("and is not delivered twice",
+           ! roster.takeDrumsRequest (two, wantedDrums, drumsSeenByTwo));
+
+    // A request made while that track's window is shut waits in the slot rather
+    // than being lost -- the window opening is the only moment anything could
+    // have acted on it anyway.
+    roster.requestDrums ("inst-2", "{\"Verse\":{\"groove\":\"g7\"}}");
+    uint64_t freshWindow = 0;
+    check ("a window opening later still gets it",
+           roster.takeDrumsRequest (two, wantedDrums, freshWindow));
+    check ("and gets the latest one",
+           wantedDrums, std::string ("{\"Verse\":{\"groove\":\"g7\"}}"));
+
+    // The two channels are independent: asking for drums does not look like
+    // asking for a phrase.
+    check ("a drum request is not a phrase request",
            ! roster.takePhraseRequest (two, wanted, seenByTwo));
 
     // The same phrase asked for again is a second request, not a repeat to be

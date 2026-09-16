@@ -44,6 +44,8 @@ import {
   sectionBars,
   partsItFits,
   clearEverySlot,
+  aimedElsewhere,
+  instanceLabel,
 } from '../store.js'
 // The in-memory text search, which is not the store's searchDrums: that one
 // asks the database. Both are needed and they are not the same thing.
@@ -719,6 +721,18 @@ const waiting = computed(() => rows.value.filter((row) => !row.stale && !row.gro
  * buttons clear: a part whose marker has been deleted from the chart is still
  * bound and still plays if the label comes back.
  */
+/*
+ * Whose drums these are.
+ *
+ * The book can be pointed at a track this window does not own, and then it is
+ * showing that track's bindings and every change is a request rather than a
+ * change. Said out loud, because "bound" and "asked track 3 to bind" are
+ * different promises: the second one waits until that track's window opens,
+ * since only the page that owns a track holds the grooves to compile.
+ */
+const elsewhere = computed(() => aimedElsewhere())
+const whose = computed(() => instanceLabel(state.ui.targetInstance))
+
 const boundGrooves = computed(() => rows.value.filter((row) => row.groove).length)
 const boundFills = computed(() => rows.value.filter((row) => row.fill).length)
 
@@ -797,6 +811,17 @@ function resetMap() {
   <v-card-title class="d-flex align-center">
         <v-icon size="18" class="mr-2">mdi-circle-multiple-outline</v-icon>
         <span class="text-body-1">Drum book</span>
+        <!-- Whose drums. Every change below is a request when it is not this
+             window's own track, and a request is a different promise from a
+             change. -->
+        <v-chip v-if="elsewhere" size="small" class="ml-3" color="primary" variant="tonal">
+          {{ whose }}
+          <v-tooltip activator="parent" location="bottom">
+            Showing {{ whose }}’s drums. Changes are sent to that track — only the window
+            that owns it holds the grooves to compile, so one made while its window is shut
+            arrives when it opens.
+          </v-tooltip>
+        </v-chip>
         <v-spacer />
         <span v-if="waiting" class="text-caption text-warning mr-3">
           {{ waiting }} part{{ waiting === 1 ? '' : 's' }} with no groove

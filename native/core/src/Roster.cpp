@@ -140,6 +140,72 @@ bool Roster::takePhraseRequest (const Handle& slot, std::string& phrase, uint64_
     return true;
 }
 
+/*
+    What goes into json() has to leave json() readable.
+
+    The bindings arrive from a page and are put into the roster's own JSON as an
+    object rather than as a string, so that the window reading it does not have
+    to parse the same thing twice. That makes one page's rubbish everybody's
+    problem: a truncated or non-object payload would make the whole roster
+    unparseable, and every window's tabs would empty at once.
+
+    So anything that is not plainly an object is stored as one that is. This is a
+    structural guard rather than a parse -- the bridge has a real JSON parser and
+    uses it (@see PluginEditor jaminPublishDrums) -- and it exists so that the
+    invariant belongs to the class that promises it.
+*/
+static bool looksLikeObject (const std::string& text)
+{
+    auto at = text.find_first_not_of (" \t\r\n");
+    if (at == std::string::npos || text[at] != '{')
+        return false;
+
+    auto end = text.find_last_not_of (" \t\r\n");
+    return end != std::string::npos && text[end] == '}';
+}
+
+void Roster::publishDrums (const Handle& slot, const std::string& json)
+{
+    if (slot == nullptr)
+        return;
+
+    const auto safe = looksLikeObject (json) ? json : std::string ("{}");
+
+    const std::lock_guard<std::mutex> guard (lock);
+    if (slot->drums == safe)
+        return;                            // nothing a person would see changed
+
+    slot->drums = safe;
+    version.fetch_add (1, std::memory_order_release);
+}
+
+void Roster::requestDrums (const std::string& id, const std::string& json)
+{
+    const std::lock_guard<std::mutex> guard (lock);
+    for (const auto& slot : slots)
+        if (slot->id == id)
+        {
+            slot->wantDrums = json;
+            slot->wantDrumsRevision += 1;
+            version.fetch_add (1, std::memory_order_release);
+            return;
+        }
+}
+
+bool Roster::takeDrumsRequest (const Handle& slot, std::string& json, uint64_t& seen) const
+{
+    if (slot == nullptr)
+        return false;
+
+    const std::lock_guard<std::mutex> guard (lock);
+    if (slot->wantDrumsRevision == seen)
+        return false;
+
+    seen = slot->wantDrumsRevision;
+    json = slot->wantDrums;
+    return true;
+}
+
 bool Roster::anySoloed() const
 {
     const std::lock_guard<std::mutex> guard (lock);
@@ -212,7 +278,7 @@ std::vector<Roster::Entry> Roster::entries() const
     std::vector<Entry> out;
     out.reserve (slots.size());
     for (const auto& slot : slots)
-        out.push_back ({ slot->id, slot->name, slot->phrase, slot->mode,
+        out.push_back ({ slot->id, slot->name, slot->phrase, slot->mode, slot->drums,
                          slot->wantMuted, slot->wantSoloed,
                          slot->audibleAfter.load (std::memory_order_relaxed),
                          slot->order });
@@ -236,7 +302,11 @@ std::string Roster::json() const
              + "\",\"name\":\"" + escape (entry.name)
              + "\",\"phrase\":\"" + escape (entry.phrase)
              + "\",\"mode\":\"" + escape (entry.mode)
-             + "\",\"muted\":" + (entry.muted ? "true" : "false")
+             // Already JSON, so it goes in as an object rather than as a string
+             // somebody has to parse twice. @see looksLikeObject for why that is
+             // safe to do with something a page wrote.
+             + "\",\"drums\":" + (entry.drums.empty() ? "{}" : entry.drums)
+             + ",\"muted\":" + (entry.muted ? "true" : "false")
              + ",\"soloed\":" + (entry.soloed ? "true" : "false")
              + ",\"audible\":" + (entry.audible ? "true" : "false")
              + ",\"order\":" + std::to_string (entry.order) + "}";

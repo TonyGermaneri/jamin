@@ -381,6 +381,9 @@ export async function initApp() {
   // Build the lick catalogue once the chart is up. It is a few tens of
   // milliseconds off the critical path, so it is ready before anyone opens the
   // tab, and nothing waits on it if they never do.
+  // In a browser tab this is the home. Inside a plugin it is only a starting
+  // guess, overwritten a moment later by what the DAW saved with this track --
+  // which is where per-track data belongs. @see adoptSavedState
   state.drumBindings = loadDrumBindings()
   state.drumFilters.set = readStored(DRUM_LIBRARY_KEY) || ''
 
@@ -391,6 +394,7 @@ export async function initApp() {
   // strings rather than about a database. A chart that binds nothing imported
   // costs nothing here, which for somebody who has never imported anything is
   // every chart. @see packGroove, openDrumBook
+  publishDrumBindings()
   if (boundToImported(state.drumBindings)) {
     refreshDrumSets().then(() => rememberBoundGrooves().then(refreshDrums))
   }
@@ -464,6 +468,22 @@ async function adoptHost() {
   // Somebody joined, left, was muted, soloed or renamed.
   onHost('jaminRoster', (roster) => adoptRoster(roster))
 
+  /*
+   * Another window has bound this track's drums.
+   *
+   * It could not do it itself: the grooves live in this page's database and
+   * only this page can compile them. So it asked, and this is the answer
+   * arriving -- possibly long after it was sent, because a request made while
+   * this window was shut waits in the roster until the window opens.
+   */
+  onHost('jaminSetDrums', (message) => {
+    const bindings = message && message.drums
+    if (bindings && typeof bindings === 'object') {
+      adoptDrumBindings(bindings)
+      toast('Another window set this track’s drums')
+    }
+  })
+
   /**
    * What is being played into this track.
    *
@@ -512,6 +532,24 @@ async function adoptHost() {
   pushToHost()
 }
 
+/**
+ * What this instance was last set to, from the copy the DAW saved with the song.
+ *
+ * The saved state is the compile request itself, which means everything this
+ * track needs to make its own noise is already in there and travels with the
+ * project, per track. Two of those were being thrown away on the way back in.
+ *
+ * **The drum bindings.** They used to be read from one browser-wide key that
+ * every instance in the host shared, so two tracks could not hold different
+ * drum parts at all -- binding a groove on the kit rebound it on the piano, and
+ * whichever instance had loaded last won. Per track is what they always were
+ * musically; this is where per-track data belongs.
+ *
+ * **What the track plays.** A drum track reopened as an articulation track is a
+ * silent track, and the processor had gone on playing the drums from its
+ * compiled sequence the whole time -- so the page and the sound disagreed until
+ * somebody touched the switch.
+ */
 function adoptSavedState(saved) {
   if (!saved) return
   try {
@@ -519,6 +557,13 @@ function adoptSavedState(saved) {
     if (typeof request.text === 'string' && request.text.length) state.text = request.text
     if ('songPhrase' in request) state.songPhrase = request.songPhrase || null
     if (request.settings) state.settings = mergeSettings(state.settings, request.settings)
+    if (request.drumBindings && typeof request.drumBindings === 'object') {
+      adoptDrumBindings(request.drumBindings, { save: false })
+    }
+    if (request.sends === 'drums' || request.sends === 'phrases') {
+      state.ui.sends = request.sends
+      player.sends = request.sends
+    }
     reparse()
   } catch {
     // A state written by an older version is not worth refusing to start over.
@@ -1071,7 +1116,7 @@ async function rollDrums(genre) {
 
   const fills = await groovesForGenre(genre, 'fill')
 
-  let next = state.drumBindings
+  let next = drumBindingsFor()
   let placed = 0
 
   for (const row of rows) {
@@ -1087,10 +1132,7 @@ async function rollDrums(genre) {
     }
   }
 
-  state.drumBindings = next
-  saveDrumBindings(next)
-  rememberBoundGrooves().then(refreshDrums)
-  refreshDrums()
+  setDrumBindings(next)
   return placed
 }
 
@@ -1223,7 +1265,11 @@ export function grooveById(id) {
  */
 export async function rememberBoundGrooves() {
   const wanted = new Set()
-  for (const row of Object.values(state.drumBindings || {})) {
+  // Both this track's and whichever one the book is showing: a remote track's
+  // bindings are ids, and an id with no groove behind it is a row that says
+  // "a groove that is gone" about one that is perfectly well there.
+  const looking = [state.drumBindings, drumBindingsFor()]
+  for (const row of looking.flatMap((one) => Object.values(one || {}))) {
     for (const id of [row.groove, row.fill]) {
       if (!id || state.drums.some((groove) => groove.id === id)) continue
       if (!state.drumBound[id]) wanted.add(id)
@@ -1237,9 +1283,16 @@ export async function rememberBoundGrooves() {
   state.drumBound = next
 }
 
-/** The rows the drum book shows: every section, plus anything left over. */
+/**
+ * The rows the drum book shows: every section, plus anything left over.
+ *
+ * Of whichever track the book is pointed at. Pointed at another one it is that
+ * track's bindings, published through the roster -- the book shows what that
+ * track plays rather than what this window happens to hold.
+ * @see drumBindingsFor
+ */
 export function drumRows() {
-  return reconcileBindings(state.drumBindings, state.score.sections || [])
+  return reconcileBindings(drumBindingsFor(), state.score.sections || [])
 }
 
 /** What plays over a stretch of chart, and what leads out of it. */
@@ -1258,23 +1311,102 @@ function grooveForSpan(span, what) {
 }
 
 export function setGrooveFor(name, grooveId, what = 'groove') {
-  state.drumBindings = bindGroove(state.drumBindings, name, grooveId, what)
-  saveDrumBindings(state.drumBindings)
   // An imported groove is bound by id and lives in the database, so it has to
-  // be fetched before anything can play it.
+  // be fetched before anything can play it -- which adoptDrumBindings does.
+  return setDrumBindings(bindGroove(drumBindingsFor(), name, grooveId, what))
+}
+
+/* ------------------------------------------------------------------ *
+ * Which grooves play where, per track
+ *
+ * These used to live in one browser-wide key. Every instance in the host read
+ * and wrote `jamin.drums.v1`, so a session with a kit on one track and a piano
+ * on another could not give them different drum parts -- binding a groove
+ * anywhere bound it everywhere, and which copy survived a reload was whichever
+ * instance had loaded last.
+ *
+ * They belong to the track. Inside a plugin that means the instance's own saved
+ * state, which the DAW keeps with the project per track and hands back on open
+ * (@see adoptSavedState); localStorage stays the home in a browser tab, where
+ * there is one jamin and no such thing as another track.
+ *
+ * And because a window can now show a track it is not, a binding made there has
+ * to reach the instance that owns it. It cannot be applied from here: the
+ * grooves live in that page's database and only that page can compile them. So
+ * it is a request the owner picks up, which is the same shape as asking a track
+ * to play a phrase and is a request for the same reason.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Take a whole set of bindings, from wherever they came from.
+ *
+ * One door, so that publishing to the other windows and pushing a recompile
+ * cannot be forgotten at one of the several call sites that change a binding.
+ */
+function adoptDrumBindings(bindings, { save = true } = {}) {
+  state.drumBindings = bindings || {}
+  // Only in a browser tab. Inside a plugin the home is the instance's saved
+  // state, and writing here as well would put every instance back to sharing
+  // one key -- the thing this exists to stop.
+  if (save && !hosted()) saveDrumBindings(state.drumBindings)
   rememberBoundGrooves().then(refreshDrums)
   refreshDrums()
+  publishDrumBindings()
+}
+
+/** Tell the other windows what this track's drums are, so they can show it. */
+function publishDrumBindings() {
+  if (!hosted()) return
+  callHost('jaminPublishDrums', JSON.stringify(state.drumBindings || {})).catch(() => {})
+}
+
+/**
+ * Change a track's bindings -- this one directly, another one by asking.
+ *
+ * Returns true when the change was made here and false when it was sent. The
+ * caller uses it to decide what to say: "bound" and "asked track 3 to bind" are
+ * different promises and only one of them has already happened.
+ */
+function setDrumBindings(bindings, id = null) {
+  const target = id || state.ui.targetInstance || state.roster.me
+  if (!target || target === state.roster.me || !hosted()) {
+    adoptDrumBindings(bindings)
+    return true
+  }
+
+  callHost('jaminRequestDrums', target, JSON.stringify(bindings || {})).catch(() => {})
+  return false
+}
+
+/**
+ * The bindings a window is looking at, which may not be its own.
+ *
+ * Another track's come from the roster, which is where that instance publishes
+ * them. An instance whose window has never been opened has published nothing
+ * and reads as empty, which is honest: nothing here can know what a page that
+ * has not run would have loaded.
+ */
+export function drumBindingsFor(id = null) {
+  const target = id || state.ui.targetInstance || state.roster.me
+  if (!target || target === state.roster.me) return state.drumBindings
+  const instance = state.roster.instances.find((one) => one.id === target)
+  return (instance && instance.drums) || {}
+}
+
+/** True when the book is pointed at a track this window does not own. */
+export function aimedElsewhere() {
+  const target = state.ui.targetInstance
+  return Boolean(hosted() && target && target !== state.roster.me)
 }
 
 export function forgetDrumBinding(name) {
-  const next = forgetBinding(state.drumBindings, name, state.score.sections || [])
-  if (next === state.drumBindings) {
+  const now = drumBindingsFor()
+  const next = forgetBinding(now, name, state.score.sections || [])
+  if (next === now) {
     toast('That part is still in the chart')
     return
   }
-  state.drumBindings = next
-  saveDrumBindings(state.drumBindings)
-  refreshDrums()
+  setDrumBindings(next)
 }
 
 /** The player is told again, and the plugin recompiled. */
@@ -2136,7 +2268,7 @@ export function partsItFits(groove) {
  */
 export function slotFor(name, groove) {
   if (!name || !groove) return ''
-  return slotOf(state.drumBindings, name, groove.id)
+  return slotOf(drumBindingsFor(), name, groove.id)
 }
 
 /** Still true/false, for anything that only wants to know whether it plays. */
@@ -2157,12 +2289,8 @@ export function boundTo(name, groove) {
 export function cycleGrooveOn(name, groove) {
   if (!name || !groove) return ''
 
-  const { bindings, slot } = cycleBinding(state.drumBindings, name, groove.id, groove.kind)
-
-  state.drumBindings = bindings
-  saveDrumBindings(bindings)
-  rememberBoundGrooves().then(refreshDrums)
-  refreshDrums()
+  const { bindings, slot } = cycleBinding(drumBindingsFor(), name, groove.id, groove.kind)
+  setDrumBindings(bindings)
   return slot
 }
 
@@ -2191,24 +2319,19 @@ export function clearEverySlot(what = 'groove') {
     return 0
   }
 
-  const before = state.drumBindings
+  const before = drumBindingsFor()
   let next = before
   for (const row of rows) next = bindGroove(next, row.name, null, slot)
 
-  state.drumBindings = next
-  saveDrumBindings(next)
-  refreshDrums()
+  const here = setDrumBindings(next)
 
   // Undone from the toast rather than guarded by a confirmation. A plugin web
   // view has no dialog to confirm with -- window.confirm answers false the
   // instant it is asked -- and an undo is the better answer anyway.
-  toast(`${rows.length} ${slot}${rows.length === 1 ? '' : 's'} cleared`, {
+  toast(`${rows.length} ${slot}${rows.length === 1 ? '' : 's'} cleared${here ? '' : ` on ${instanceLabel(state.ui.targetInstance)}`}`, {
     label: 'Undo',
     run: () => {
-      state.drumBindings = before
-      saveDrumBindings(before)
-      rememberBoundGrooves().then(refreshDrums)
-      refreshDrums()
+      setDrumBindings(before)
     },
   })
   return rows.length
@@ -2226,14 +2349,13 @@ export function assignEverywhere(groove) {
   if (!groove) return 0
   const what = groove.kind === 'fill' ? 'fill' : 'groove'
 
-  let next = state.drumBindings
+  let next = drumBindingsFor()
   const rows = drumRows().filter((row) => !row.stale)
   for (const row of rows) next = bindGroove(next, row.name, groove.id, what)
 
-  state.drumBindings = next
-  saveDrumBindings(next)
-  refreshDrums()
-  toast(`${groove.name} → ${rows.length} part${rows.length === 1 ? '' : 's'}`)
+  const here = setDrumBindings(next)
+  toast(`${groove.name} → ${rows.length} part${rows.length === 1 ? '' : 's'}`
+        + (here ? '' : ` on ${instanceLabel(state.ui.targetInstance)}`))
   return rows.length
 }
 
@@ -2257,7 +2379,7 @@ export function autoFillFrom(groove) {
   const rows = drumRows().filter((row) => !row.stale)
   if (!rows.length) return 0
 
-  let next = state.drumBindings
+  let next = drumBindingsFor()
   let placed = 0
 
   for (const row of rows) {
@@ -2274,9 +2396,7 @@ export function autoFillFrom(groove) {
     }
   }
 
-  state.drumBindings = next
-  saveDrumBindings(next)
-  refreshDrums()
+  setDrumBindings(next)
   toast(placed ? `Filled in ${placed} slot${placed === 1 ? '' : 's'}` : 'Everything was already chosen')
   return placed
 }

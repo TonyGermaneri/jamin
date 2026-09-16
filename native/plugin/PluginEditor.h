@@ -33,6 +33,7 @@ private:
     uint64_t lastSongGeneration { 0 };
     uint64_t lastRoster { 0 };
     uint64_t lastPhraseRequest { 0 };
+    uint64_t lastDrumsRequest { 0 };
 
     /** Held while a folder chooser is open: it is asynchronous and the dialog
         outlives the call that opened it. */

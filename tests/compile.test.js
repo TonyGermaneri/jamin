@@ -169,4 +169,60 @@ const marked = compileSong({ text: '[p] | C | F |', settings }).events
 ok('[p] compiles the pedal in with the switch off',
    marked.some(([, status]) => (status & 0xf0) === 0xb0))
 
+/* ---------------- two tracks, two drum parts ----------------------------
+ *
+ * This is what per-track bindings are *for*, and it is the half that has to be
+ * true for any of the rest to matter. Every instance used to read its bindings
+ * from one browser-wide key, so a session with a kit on one track and a piano
+ * on another could not give them different drum parts at all -- binding a groove
+ * anywhere bound it everywhere.
+ *
+ * The compile is where that becomes audible. Each instance compiles its own
+ * request, so two requests differing only in their bindings have to come out
+ * differently; if the compile ignored them, per-track storage would be
+ * bookkeeping that changed nothing anybody could hear.
+ */
+const kick = {
+  id: 'g-kick', name: 'kick', kind: 'beat', bars: 1, beatsPerBar: 4,
+  lengthPulses: 96, timeSignature: '4-4', bpm: 120,
+  notes: [{ at: 0, note: 36, velocity: 100, length: 6 }],
+}
+const snare = {
+  id: 'g-snare', name: 'snare', kind: 'beat', bars: 1, beatsPerBar: 4,
+  lengthPulses: 96, timeSignature: '4-4', bpm: 120,
+  notes: [{ at: 0, note: 38, velocity: 100, length: 6 }],
+}
+
+const drumming = defaultSettings()
+drumming.midi.drumOutputId = 'test'
+drumming.drums.fillOnEveryBoundary = false
+
+const forTrack = (bindings) => compileSong({
+  text: '[Verse]\n| C | F |',
+  settings: drumming,
+  sends: 'drums',
+  grooves: { 'g-kick': kick, 'g-snare': snare },
+  drumBindings: bindings,
+})
+
+const struck = (s) => [...new Set(noteOns(s).map((e) => e[2]))].sort((a, b) => a - b)
+
+const kitTrack = forTrack({ Verse: { groove: 'g-kick' } })
+const otherTrack = forTrack({ Verse: { groove: 'g-snare' } })
+
+ok('a track bound to a groove plays it', noteOns(kitTrack).length > 0)
+check('and plays that one', struck(kitTrack), [36])
+check('while a track bound to another plays that one', struck(otherTrack), [38])
+// The whole point, in one line: the same chart and the same catalogue, and the
+// two tracks are not playing the same thing.
+ok('two tracks do not have to play the same drums',
+   JSON.stringify(struck(kitTrack)) !== JSON.stringify(struck(otherTrack)))
+check('and a track bound to nothing plays nothing', noteOns(forTrack({})).length, 0)
+
+// A binding that names a groove nobody has is silence rather than a wrong one.
+// A remote track's bindings can name a pattern out of a library this window
+// never imported, and guessing at a substitute would be worse.
+check('a binding with no groove behind it is silent',
+      noteOns(forTrack({ Verse: { groove: 'g-nothing' } })).length, 0)
+
 console.log(failed === 0 ? 'compile: all checks passed' : `compile: ${failed} FAILED`)

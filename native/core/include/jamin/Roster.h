@@ -76,12 +76,28 @@ public:
         bool wantSoloed { false };
         int order { 0 };         ///< registration order, so the tabs do not jump
 
+        /// What this track's drums are bound to, as the page writes it.
+        ///
+        /// Published so another window can *show* it. Which groove plays in
+        /// which section is a fact about this track -- one instance on a kit and
+        /// one on a piano is the ordinary arrangement -- and it used to live in
+        /// one browser-wide drawer that every instance scribbled in, so two
+        /// tracks could not hold different drum parts at all.
+        std::string drums { "{}" };
+
         /// What somebody else's window has asked this instance to play, and a
         /// counter so the same request twice is two requests. Only the instance
         /// that owns the slot acts on it -- a page cannot reach into another
         /// page, and this is the message between them.
         std::string wantPhrase;
         uint64_t wantPhraseRevision { 0 };
+
+        /// The same, for the drums. Whole bindings rather than one change: the
+        /// page that owns the track is the only one that can compile them, and
+        /// handing it the finished answer means there is no order to get wrong
+        /// when two requests arrive close together.
+        std::string wantDrums;
+        uint64_t wantDrumsRevision { 0 };
     };
 
     using Handle = std::shared_ptr<Slot>;
@@ -93,7 +109,7 @@ public:
     /** What to show a person. Ordered by registration, oldest first. */
     struct Entry
     {
-        std::string id, name, phrase, mode;
+        std::string id, name, phrase, mode, drums;
         bool muted { false }, soloed { false }, audible { true };
         int order { 0 };
     };
@@ -105,6 +121,10 @@ public:
     /** Which instance is playing what. Called by the instance itself. */
     void describe (const Handle& slot, const std::string& name, const std::string& phrase,
                    const std::string& mode);
+
+    /** What this track's drums are bound to, so other windows can show it.
+        Called by the instance itself, whose page is the one that knows. */
+    void publishDrums (const Handle& slot, const std::string& json);
 
     /**
         Mute or solo an instance -- any instance, from any instance's window.
@@ -124,6 +144,18 @@ public:
     /** What this instance has been asked to play since it last looked, or empty.
         Called by the owner. */
     bool takePhraseRequest (const Handle& slot, std::string& phrase, uint64_t& seen) const;
+
+    /** Ask an instance to bind its drums differently. A request for the same
+        reason the phrase one is: only that instance's page holds the grooves
+        and can compile them.
+
+        A request made while that track's window is shut is not lost -- it waits
+        in the slot and is picked up when the window opens, which is the only
+        moment anything could have acted on it anyway. */
+    void requestDrums (const std::string& id, const std::string& json);
+
+    /** What this instance has been asked to bind since it last looked. */
+    bool takeDrumsRequest (const Handle& slot, std::string& json, uint64_t& seen) const;
 
     /** Solo is a question about everybody, so it has to be asked of everybody. */
     bool anySoloed() const;

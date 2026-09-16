@@ -205,6 +205,41 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                            }
                            complete (juce::var (true));
                        })
+                   .withNativeFunction ("jaminPublishDrums",
+                       [this] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // What this track's drums are bound to, so another
+                           // window can show it. Parsed before it is published:
+                           // it goes into the roster's JSON as an object rather
+                           // than a string, so rubbish here would empty every
+                           // window's tabs at once. @see Roster::publishDrums
+                           if (plugin.seat != nullptr && ! args.isEmpty())
+                           {
+                               const auto text = args[0].toString();
+                               const auto parsed = juce::JSON::parse (text);
+                               jamin::Roster::instance().publishDrums (
+                                   plugin.seat,
+                                   parsed.isObject() ? text.toStdString() : std::string ("{}"));
+                           }
+                           complete (juce::var (true));
+                       })
+                   .withNativeFunction ("jaminRequestDrums",
+                       [this] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // Ask another instance to bind its drums. A request
+                           // rather than a setting, for the same reason a phrase
+                           // is one: the grooves live in that instance's page
+                           // and only it can compile them.
+                           if (args.size() > 1)
+                           {
+                               const auto text = args[1].toString();
+                               const auto parsed = juce::JSON::parse (text);
+                               if (parsed.isObject())
+                                   jamin::Roster::instance().requestDrums (
+                                       args[0].toString().toStdString(), text.toStdString());
+                           }
+                           complete (juce::var (true));
+                       })
                    .withNativeFunction ("jaminSetInstance",
                        [this] (const juce::Array<juce::var>& args, auto complete)
                        {
@@ -594,6 +629,22 @@ void JaminEditor::timerCallback()
             auto* object = new juce::DynamicObject();
             object->setProperty ("phrase", juce::String (wanted));
             browser.emitEventIfBrowserIsVisible ("jaminSetPhrase", juce::var (object));
+        }
+    }
+
+    // And another window has asked this instance to bind its drums differently.
+    // Same reason again: the grooves are in this page's database.
+    //
+    // A request made while this window was shut waited in the slot, so opening
+    // the window is when it arrives -- which is the first moment anything could
+    // have acted on it.
+    {
+        std::string wantedDrums;
+        if (jamin::Roster::instance().takeDrumsRequest (plugin.seat, wantedDrums, lastDrumsRequest))
+        {
+            auto* object = new juce::DynamicObject();
+            object->setProperty ("drums", juce::JSON::parse (juce::String (wantedDrums)));
+            browser.emitEventIfBrowserIsVisible ("jaminSetDrums", juce::var (object));
         }
     }
 

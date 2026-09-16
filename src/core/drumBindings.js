@@ -15,6 +15,16 @@
  * delete, it would simply come back.
  */
 
+/**
+ * Where a browser tab keeps them.
+ *
+ * One key, because a browser tab is one jamin and there is no such thing as
+ * another track in it. Inside a plugin this is a starting guess and nothing
+ * more: several instances share one browser origin, so they shared this key --
+ * binding a groove on the kit rebound it on the piano, and whichever instance
+ * loaded last won. There, the bindings belong to the instance's own saved state
+ * and travel with the project, per track. @see store.adoptSavedState
+ */
 export const DRUM_BINDINGS_KEY = 'jamin.drums.v1'
 
 /** The section a chart with no sections has. Leading space so it cannot collide
