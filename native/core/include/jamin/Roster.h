@@ -63,6 +63,15 @@ public:
         std::string id;
         std::string name;        ///< the DAW's track name, when the host says
         std::string phrase;      ///< the articulation this instance is playing
+
+        /// What this instance plays: "drums" or "phrases".
+        ///
+        /// A fact about the track rather than about the person, which is why it
+        /// is here and not in anybody's settings. It is what lets one window
+        /// show the right catalogue for a track it is not: clicking a drum
+        /// track's tab has to offer grooves, and the window doing the offering
+        /// has no other way to know that is what the track is.
+        std::string mode { "phrases" };
         bool wantMuted { false };
         bool wantSoloed { false };
         int order { 0 };         ///< registration order, so the tabs do not jump
@@ -84,7 +93,7 @@ public:
     /** What to show a person. Ordered by registration, oldest first. */
     struct Entry
     {
-        std::string id, name, phrase;
+        std::string id, name, phrase, mode;
         bool muted { false }, soloed { false }, audible { true };
         int order { 0 };
     };
@@ -94,7 +103,8 @@ public:
     std::string json() const;
 
     /** Which instance is playing what. Called by the instance itself. */
-    void describe (const Handle& slot, const std::string& name, const std::string& phrase);
+    void describe (const Handle& slot, const std::string& name, const std::string& phrase,
+                   const std::string& mode);
 
     /**
         Mute or solo an instance -- any instance, from any instance's window.

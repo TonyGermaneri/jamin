@@ -189,13 +189,20 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                    .withNativeFunction ("jaminDescribe",
                        [this] (const juce::Array<juce::var>& args, auto complete)
                        {
-                           // What this instance is playing, so the other windows
-                           // can label its tab with something truthful. The name
-                           // is the DAW's and is not overwritten here.
+                           // What this instance is playing, and what kind of
+                           // part it is, so the other windows can label its tab
+                           // with something truthful and open the right
+                           // catalogue for it. The name is the DAW's and is not
+                           // overwritten here.
                            if (plugin.seat != nullptr && ! args.isEmpty())
+                           {
+                               const auto mode = args.size() > 1 ? args[1].toString().toStdString()
+                                                                 : plugin.seat->mode;
                                jamin::Roster::instance().describe (plugin.seat,
                                                                    plugin.seat->name,
-                                                                   args[0].toString().toStdString());
+                                                                   args[0].toString().toStdString(),
+                                                                   mode);
+                           }
                            complete (juce::var (true));
                        })
                    .withNativeFunction ("jaminSetInstance",

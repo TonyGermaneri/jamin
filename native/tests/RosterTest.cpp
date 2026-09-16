@@ -73,12 +73,35 @@ void rosterTests()
            three->changeAtPpq.load(), 16.0);
 
     /* ---------------- what the page reads ---------------- */
-    roster.describe (two, "Rhodes", "C comp 19");
+    roster.describe (two, "Rhodes", "C comp 19", "phrases");
     const auto json = roster.json();
     check ("the name is in the json", json.find ("\"name\":\"Rhodes\"") != std::string::npos, true);
     check ("so is the articulation", json.find ("\"phrase\":\"C comp 19\"") != std::string::npos, true);
     check ("a quote in a track name does not break it",
-           (roster.describe (one, "Bob\"s \\ Piano", ""), roster.json().find ("Bob\\\"s \\\\ Piano") != std::string::npos), true);
+           (roster.describe (one, "Bob\"s \\ Piano", "", "phrases"),
+            roster.json().find ("Bob\\\"s \\\\ Piano") != std::string::npos), true);
+
+    /* ---------------- and what kind of part each one is ----------------
+     *
+     * A window showing a track it is not has no other way to know whether that
+     * track wants grooves or phrases, and the two catalogues are not
+     * interchangeable. So the track says, and the roster carries it.
+     */
+    check ("an instance is on phrases until it says otherwise",
+           roster.json().find ("\"mode\":\"phrases\"") != std::string::npos, true);
+
+    roster.describe (three, "Kit", "", "drums");
+    check ("a drum track says so",
+           roster.json().find ("\"mode\":\"drums\"") != std::string::npos, true);
+    // And it is per instance, not a setting the whole session shares.
+    check ("while its neighbour is still on phrases",
+           roster.json().find ("\"mode\":\"phrases\"") != std::string::npos, true);
+
+    // Changing only the mode is still a change somebody would see, so the tabs
+    // have to be told. It used to compare the name and the phrase alone.
+    const auto beforeSwitch = roster.revision();
+    roster.describe (three, "Kit", "", "phrases");
+    check ("switching a track's mode bumps the revision", roster.revision() > beforeSwitch, true);
 
     /* ---------------- asking an instance to play something ---------------- */
     // A page cannot reach into another page, so changing another track's

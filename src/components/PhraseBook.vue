@@ -36,7 +36,6 @@ import { keyPitchClass, phraseCategory, phraseKey, summarize } from '../core/phr
 import { describeLick } from '../core/licks.js'
 import InfoTip from './InfoTip.vue'
 import { vDragMidi } from '../core/dragOut.js'
-import InstanceTabs from './InstanceTabs.vue'
 
 const search = ref('')
 const name = ref('')
@@ -47,11 +46,9 @@ const vocabFile = ref(null)
 const midiFile = ref(null)
 const midiBars = ref(1)
 
-/** Which instance the book is pointed at; this one until told otherwise. */
-const aimedAt = computed({
-  get: () => state.ui.targetInstance || state.roster.me,
-  set: (id) => { state.ui.targetInstance = id },
-})
+/** Which instance the book is pointed at; this one until told otherwise. The
+    tabs that choose it belong to the shell around this. @see ArticulationBook */
+const aimedAt = computed(() => state.ui.targetInstance || state.roster.me)
 
 /** True when the tab open is somebody else's track. */
 const elsewhere = computed(() => state.host.active && aimedAt.value && aimedAt.value !== state.roster.me)
@@ -308,7 +305,7 @@ function pick(entry) {
   if (state.ui.assignTo >= 0) {
     bindPhrase(entry.id || entry.name, state.ui.assignTo)
     state.ui.assignTo = -1
-    state.ui.phrases = false
+    state.ui.book = null
     return
   }
 
@@ -337,7 +334,7 @@ const SPEEDS = [
 ]
 
 watch(
-  () => [state.ui.phrases, state.ui.phrasesTab],
+  () => [state.ui.book === 'phrases', state.ui.phrasesTab],
   ([open, tab]) => {
     if (open && (tab === 'catalogue' || tab === 'sources')) rebuildLicks()
   },
@@ -405,9 +402,7 @@ const assigningTo = computed(() => {
 </script>
 
 <template>
-  <v-dialog v-model="state.ui.phrases" max-width="880" scrollable class="jamin-book">
-    <v-card>
-      <v-card-title class="d-flex align-center">
+  <v-card-title class="d-flex align-center">
         <v-icon size="18" class="mr-2">mdi-book-music-outline</v-icon>
         <span class="text-body-1">Phrase book</span>
         <v-chip v-if="assigningTo" size="small" class="ml-3" color="primary" variant="tonal"
@@ -426,12 +421,7 @@ const assigningTo = computed(() => {
             A random phrase from the {{ matches.length.toLocaleString() }} the filters are showing
           </v-tooltip>
         </v-btn>
-        <v-btn icon="mdi-close" size="small" variant="text" @click="state.ui.phrases = false" />
       </v-card-title>
-
-      <!-- Every jamin in this DAW. Pick one and everything below is aimed at
-           that track. @see components/InstanceTabs.vue -->
-      <InstanceTabs v-if="state.host.active" v-model="aimedAt" />
 
       <v-tabs v-model="state.ui.phrasesTab">
         <v-tab value="catalogue">Catalogue ({{ total }})</v-tab>
@@ -933,6 +923,4 @@ const assigningTo = computed(() => {
           </v-window-item>
         </v-window>
       </v-card-text>
-    </v-card>
-  </v-dialog>
 </template>

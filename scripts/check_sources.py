@@ -89,7 +89,60 @@ def main():
                     print("     The transport must come from `live` or `state.status`;")
                     print("     inside the plugin there is no MIDI engine to ask.")
 
+    failures += unimported()
+
     print("sources: all checks passed" if failures == 0 else f"sources: {failures} FAILED")
     return 1 if failures else 0
+
+
+# Something called out of the store that nobody imported.
+#
+# Vite compiles this green. The module is bundled, the name is simply not bound
+# in the file that uses it, and the page throws a ReferenceError at the moment
+# somebody clicks the thing -- which in a plugin is a button that does nothing
+# and says nothing. Six of these have shipped: toast, resourceOk, mapDrumNotes,
+# realizeChord, scoreOptions, SAMPLE_CHART, and openBook was the seventh, caught
+# by running this by hand on the day it was written.
+#
+# Only calls, and only names the store exports. Matching bare identifiers finds
+# 153 local variables that happen to share a name; matching `name(` against the
+# store's own export list finds this and nothing else.
+EXPORTED = re.compile(r"^export (?:async )?(?:function|const|let) (\w+)", re.M)
+
+
+def unimported():
+    with open(os.path.join(ROOT, "src", "store.js"), encoding="utf-8") as handle:
+        exported = set(EXPORTED.findall(handle.read()))
+    if not exported:
+        return 0
+
+    failures = 0
+    for path in sorted(walk()):
+        relative = os.path.relpath(path, ROOT)
+        if relative == os.path.join("src", "store.js"):
+            continue
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        if "store.js" not in text:
+            continue
+
+        bound = set()
+        for block in re.findall(r"import\s*\{([^}]*)\}\s*from", text):
+            for one in block.split(","):
+                name = one.strip().split(" as ")[-1].strip()
+                if name:
+                    bound.add(name)
+
+        for name in sorted(exported):
+            if name in bound:
+                continue
+            # A call, not a mention: `state.foo(` and `this.foo(` are somebody
+            # else's foo.
+            if re.search(r"(?<![.\w$])" + re.escape(name) + r"\s*\(", text):
+                failures += 1
+                print(f"FAIL {relative}: calls {name}() and does not import it")
+                print("     Vite bundles this without complaint and the page throws")
+                print("     a ReferenceError when somebody clicks it.")
+    return failures
 
 sys.exit(main())

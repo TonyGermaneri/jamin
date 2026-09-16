@@ -2,9 +2,8 @@
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import ChordCanvas from './components/ChordCanvas.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
-import PhraseBook from './components/PhraseBook.vue'
+import ArticulationBook from './components/ArticulationBook.vue'
 import ProgressionBook from './components/ProgressionBook.vue'
-import DrumBook from './components/DrumBook.vue'
 import {
   state,
   initApp,
@@ -15,7 +14,7 @@ import {
   accentPhrase,
   engine,
   toast,
-  openDrumBook,
+  openBook,
   rollSong,
   runToastAction,
   setSends,
@@ -215,10 +214,11 @@ function toggleListen() {
           :title="state.settings.display.autoScroll ? 'Following the song' : 'Follow the song'"
           @click="state.settings.display.autoScroll = !state.settings.display.autoScroll"
         />
-        <v-btn icon="mdi-book-music-outline" size="small" variant="text" title="Phrase book" @click="state.ui.phrases = true" />
+        <v-btn icon="mdi-book-music-outline" size="small" variant="text" title="Phrase book"
+               @click="openBook('phrases')" />
         <v-btn icon="mdi-bookshelf" size="small" variant="text" title="Progression library" @click="state.ui.progressions = true" />
         <v-btn icon="mdi-circle-multiple-outline" size="small" variant="text" title="Drum book"
-               @click="openDrumBook" />
+               @click="openBook('drums')" />
         <v-btn icon="mdi-cog-outline" size="small" variant="text" title="Settings" @click="state.ui.settings = true" />
         <v-btn icon="mdi-volume-off" size="small" variant="text" title="All notes off" @click="panic" />
         <v-tooltip :text="midiHint" location="bottom">
@@ -270,9 +270,10 @@ function toggleListen() {
       </v-snackbar>
 
       <SettingsDialog />
-      <PhraseBook />
+      <!-- One book for both kinds of part, because which catalogue a track
+           needs is a fact about the track. @see components/ArticulationBook.vue -->
+      <ArticulationBook />
       <ProgressionBook />
-    <DrumBook />
     </div>
   </v-app>
 </template>

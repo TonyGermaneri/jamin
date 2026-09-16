@@ -197,7 +197,17 @@ export const state = reactive({
   },
   ui: {
     settings: false,
-    phrases: false,
+    /**
+     * Which catalogue the one book dialog is showing: 'phrases', 'drums', or
+     * null for closed.
+     *
+     * One dialog rather than two, because the choice of catalogue belongs to
+     * the *track* and not to the window. A session with a piano on track 1 and
+     * a kit on track 3 needs one window that can offer grooves for the kit and
+     * phrases for the piano; two separate dialogs could only ever offer what
+     * the window they were opened from happened to be playing.
+     */
+    book: null,
     progressions: false,
     settingsTab: 'midi',
     toastAction: null,
@@ -211,7 +221,6 @@ export const state = reactive({
     sends: 'phrases',
     phrasesTab: 'catalogue',
     lickTexture: 'any',
-    drums: false,
     drumsTab: 'grooves',
     drumAccentArmed: false,
     /// Which instance the phrase book is pointed at. Null is this one.
@@ -819,9 +828,16 @@ function adoptRosterJson(json) {
   }
 }
 
-/** Tell the host what this instance is playing, so its tab says something true. */
+/**
+ * Tell the host what this instance is playing, so its tab says something true.
+ *
+ * And what *kind* of part it is, which is the other half of the same fact. A
+ * window showing somebody else's track has no other way to know whether that
+ * track wants grooves or phrases, and the two catalogues are not
+ * interchangeable -- so the track says, and the roster carries it.
+ */
 function describeInstance() {
-  if (hosted()) callHost('jaminDescribe', state.songPhrase || '').catch(() => {})
+  if (hosted()) callHost('jaminDescribe', state.songPhrase || '', state.ui.sends).catch(() => {})
 }
 
 /* ------------------------------------------------------------------ *
@@ -1909,11 +1925,43 @@ export function setSends(what) {
   player.sends = next
   player.stopAll()
   refreshDrums()
+  // So the other windows' tabs know what this track is and can open the right
+  // catalogue for it.
+  describeInstance()
   toast(next === 'drums' ? 'Playing the drums here' : 'Playing the articulations here')
 }
 
+/**
+ * What kind of part a track plays, from the roster.
+ *
+ * Ours is known directly; anybody else's is whatever they last published. An
+ * instance whose window has never been opened has published nothing, and
+ * 'phrases' is the right guess for that -- it is the default and it is what
+ * most tracks are.
+ */
+export function modeOf(id) {
+  if (!id || id === state.roster.me) return state.ui.sends
+  const instance = state.roster.instances.find((one) => one.id === id)
+  return (instance && instance.mode) === 'drums' ? 'drums' : 'phrases'
+}
+
+/**
+ * Open the book on whatever the aimed-at track plays.
+ *
+ * Which is the whole point of there being one book: clicking a drum track's tab
+ * has to show grooves even from a window that is playing a piano.
+ */
+export function openBook(which = null) {
+  const mode = which || modeOf(state.ui.targetInstance)
+  if (mode === 'drums') {
+    openDrumBook()
+    return
+  }
+  state.ui.book = 'phrases'
+}
+
 export async function openDrumBook() {
-  state.ui.drums = true
+  state.ui.book = 'drums'
   await refreshDrumSets()
   if (!state.drumSets.length) return
   // A library that has since been removed is not one to search for; everything

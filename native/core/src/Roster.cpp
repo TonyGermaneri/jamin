@@ -69,17 +69,19 @@ void Roster::leave (const Handle& slot)
     recompute (-1.0);
 }
 
-void Roster::describe (const Handle& slot, const std::string& name, const std::string& phrase)
+void Roster::describe (const Handle& slot, const std::string& name, const std::string& phrase,
+                       const std::string& mode)
 {
     if (slot == nullptr)
         return;
 
     const std::lock_guard<std::mutex> guard (lock);
-    if (slot->name == name && slot->phrase == phrase)
+    if (slot->name == name && slot->phrase == phrase && slot->mode == mode)
         return;                            // nothing a person would see changed
 
     slot->name = name;
     slot->phrase = phrase;
+    slot->mode = mode;
     version.fetch_add (1, std::memory_order_release);
 }
 
@@ -210,7 +212,7 @@ std::vector<Roster::Entry> Roster::entries() const
     std::vector<Entry> out;
     out.reserve (slots.size());
     for (const auto& slot : slots)
-        out.push_back ({ slot->id, slot->name, slot->phrase,
+        out.push_back ({ slot->id, slot->name, slot->phrase, slot->mode,
                          slot->wantMuted, slot->wantSoloed,
                          slot->audibleAfter.load (std::memory_order_relaxed),
                          slot->order });
@@ -233,6 +235,7 @@ std::string Roster::json() const
         out += "{\"id\":\"" + escape (entry.id)
              + "\",\"name\":\"" + escape (entry.name)
              + "\",\"phrase\":\"" + escape (entry.phrase)
+             + "\",\"mode\":\"" + escape (entry.mode)
              + "\",\"muted\":" + (entry.muted ? "true" : "false")
              + ",\"soloed\":" + (entry.soloed ? "true" : "false")
              + ",\"audible\":" + (entry.audible ? "true" : "false")

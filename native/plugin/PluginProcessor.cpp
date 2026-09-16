@@ -149,7 +149,7 @@ void JaminProcessor::updateTrackProperties (const TrackProperties& properties)
         return;
 
     const auto name = properties.name.value_or (juce::String());
-    jamin::Roster::instance().describe (seat, name.toStdString(), seat->phrase);
+    jamin::Roster::instance().describe (seat, name.toStdString(), seat->phrase, seat->mode);
 }
 
 double JaminProcessor::nextBoundaryPpq() const

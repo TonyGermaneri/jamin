@@ -305,10 +305,17 @@ body,
 
   .jamin-book .jamin-book-scroll {
     flex: 0 1 auto;
-    /* Sized so the pagination underneath it stays within the first screenful
-       at the smallest editor the plugin allows (720x480) -- the filters above
-       it take their share first, and the list is what gives way. */
-    max-height: 32dvh;
+    /*
+     * Sized so the pagination underneath it stays within the first screenful at
+     * the smallest editor the plugin allows (720x480) -- the filters above it
+     * take their share first, and the list is what gives way.
+     *
+     * Less the strip of chrome above the book, which did not exist when this
+     * was first measured: the track tabs, the catalogue switch and the way out
+     * share one line now, and that line has to come out of somewhere.
+     * @see components/ArticulationBook.vue
+     */
+    max-height: calc(32dvh - 44px);
     min-height: 0;
   }
 }
@@ -703,4 +710,22 @@ body,
 .jamin-roll-foot {
   padding-left: 90px;
   padding-top: 2px;
+}
+
+
+/*
+ * The book's one strip of chrome: which track, which catalogue, and the way out.
+ *
+ * On one line because the editor is whatever shape the DAW leaves room for, and
+ * the smallest jamin allows is 480px tall. Two rows here put the drum book's
+ * pagination at 493px in a 480px window. @see components/ArticulationBook.vue
+ */
+.jamin-book-chrome {
+  padding-inline: 8px;
+  min-height: 0;
+  flex: 0 0 auto;
+}
+
+.jamin-book-chrome .jamin-instance-tabs {
+  min-width: 0;
 }

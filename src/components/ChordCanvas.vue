@@ -12,7 +12,7 @@
  * movement -- because our lines are each a different size.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { state, live, setText, describeAt, bindPhrase, unbindPhrase } from '../store.js'
+import { state, live, setText, describeAt, bindPhrase, unbindPhrase, openBook } from '../store.js'
 import { stripPhraseMarks } from '../core/phrases.js'
 import { layoutChart, createMeasurer, caretRect, indexAtPoint, verticalMove, rectForToken } from '../canvas/layout.js'
 import { drawChart } from '../canvas/textRenderer.js'
@@ -97,7 +97,7 @@ watch(
 
 // Hand focus back to the chart when a dialog closes, so typing just works.
 watch(
-  () => state.ui.settings || state.ui.phrases || state.ui.progressions,
+  () => state.ui.settings || state.ui.book || state.ui.progressions,
   (open) => {
     if (!open && input.value) input.value.focus()
   }
@@ -272,7 +272,7 @@ function onContextMenu(event) {
 function assignPhrase() {
   state.ui.assignTo = menu.value.token
   state.ui.phrasesTab = 'catalogue'
-  state.ui.phrases = true
+  openBook('phrases')
   menu.value.open = false
 }
 

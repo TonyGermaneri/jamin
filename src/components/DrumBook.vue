@@ -84,7 +84,7 @@ const listEl = ref(null)
  * opens there is no list yet to give focus to -- and a focus call into nothing
  * fails silently, which is what a keyboard that has stopped working looks like.
  */
-watch(() => state.ui.drums, (open) => {
+watch(() => state.ui.book === 'drums', (open) => {
   if (!open) return
   let tries = 0
   const take = () => {
@@ -794,12 +794,7 @@ function resetMap() {
 </script>
 
 <template>
-  <!-- The whole width: a row of grooves carries a pill per part, and parts are
-       what a song has several of. @see styles/app.css .jamin-drums -->
-  <v-dialog v-model="state.ui.drums" width="98vw" max-width="none" scrollable
-            class="jamin-book jamin-drums">
-    <v-card>
-      <v-card-title class="d-flex align-center">
+  <v-card-title class="d-flex align-center">
         <v-icon size="18" class="mr-2">mdi-circle-multiple-outline</v-icon>
         <span class="text-body-1">Drum book</span>
         <v-spacer />
@@ -813,7 +808,6 @@ function resetMap() {
             One of the {{ matches.length.toLocaleString() }} the filters are showing
           </v-tooltip>
         </v-btn>
-        <v-btn icon="mdi-close" size="small" variant="text" @click="state.ui.drums = false" />
       </v-card-title>
 
       <v-tabs v-model="state.ui.drumsTab">
@@ -1585,6 +1579,4 @@ function resetMap() {
           </v-window-item>
         </v-window>
       </v-card-text>
-    </v-card>
-  </v-dialog>
 </template>
