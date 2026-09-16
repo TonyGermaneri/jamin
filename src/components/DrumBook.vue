@@ -102,7 +102,9 @@ const library = computed({
   get: () => state.drumFilters.source,
   set: (value) => {
     state.drumFilters.source = value
-    state.drumFilters.set = value === BUILT_IN ? '' : value
+    // Neither 'everything' nor 'built in' names a library, and the query wants
+    // a library or nothing -- nothing meaning every one of them.
+    state.drumFilters.set = value === BUILT_IN || value === EVERYTHING ? '' : value
     state.drumFilters.folder = ''
   },
 })
@@ -115,16 +117,14 @@ const library = computed({
  * wants -- and was missing, so a collection of fifty packs could only ever be
  * searched one pack at a time.
  */
-const ALL_IMPORTED = ''
+const EVERYTHING = 'all'
 const BUILT_IN = 'builtin'
 
 const libraries = computed(() => {
-  const imported = state.drumSets.reduce((sum, set) => sum + (set.count || 0), 0)
+  const inLibraries = state.drumSets.reduce((sum, set) => sum + (set.count || 0), 0)
   return [
+    { title: `Everything (${(state.drums.length + inLibraries).toLocaleString()})`, value: EVERYTHING },
     { title: `Built in (${state.drums.length.toLocaleString()})`, value: BUILT_IN },
-    ...(state.drumSets.length
-      ? [{ title: `Everything imported (${imported.toLocaleString()})`, value: ALL_IMPORTED }]
-      : []),
     ...state.drumSets.map((set) => ({
       title: `${set.name} (${(set.count || 0).toLocaleString()})`,
       value: set.id,
@@ -132,8 +132,11 @@ const libraries = computed(() => {
   ]
 })
 
-/** True when the list is coming out of the database rather than memory. */
+/** Whether the catalogue is being searched at all. */
 const imported = computed(() => library.value !== BUILT_IN)
+
+/** Whether the corpus that ships with jamin is part of what is showing. */
+const builtinShowing = computed(() => library.value === EVERYTHING || library.value === BUILT_IN)
 
 /**
  * The shelves inside the chosen library, as filters.
@@ -305,15 +308,26 @@ const matches = computed(() => {
   // Already narrowed by the database, which did the kind, length, signature and
   // text itself over rows this page never held. What is left is the two filters
   // that depend on things only the page knows: the chart, and the stars.
-  if (imported.value) {
-    return state.drumHits.filter((groove) => {
+  /*
+   * Two sources, and `Everything` is both of them.
+   *
+   * They cannot be one list underneath -- the shipped corpus is in memory and
+   * an imported catalogue is three quarters of a million rows in a database --
+   * but that is jamin's problem and not anybody else's. Everything means
+   * everything: the corpus first, because it is the one that is always there,
+   * then whatever the catalogue found.
+   */
+  const fromCatalogue = imported.value
+    ? state.drumHits.filter((groove) => {
       if (onlyFavourites.value && (!starred || !favourite(groove))) return false
       if (onlyFitting.value && !partsItFits(groove).length) return false
       return true
     })
-  }
+    : []
 
-  return searchGrooveList(drums.value, search.value).filter((groove) => {
+  if (!builtinShowing.value) return fromCatalogue
+
+  const fromCorpus = searchGrooveList(drums.value, search.value).filter((groove) => {
     if (kind.value !== 'any' && groove.kind !== kind.value) return false
     if (genre.value !== 'any' && groove.genre !== genre.value) return false
     if (bars.value !== 'any' && String(groove.bars) !== bars.value) return false
@@ -322,6 +336,8 @@ const matches = computed(() => {
     if (onlyFitting.value && !partsItFits(groove).length) return false
     return true
   })
+
+  return [...fromCorpus, ...fromCatalogue]
 })
 
 const activeFilters = computed(() =>

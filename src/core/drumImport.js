@@ -14,6 +14,8 @@
  */
 
 import { parseMidiFile } from './midiFile.js'
+import { genreOf } from './genres.js'
+import { tagsFor } from './drumTags.js'
 
 const PPQN = 24
 const DRUM_CHANNEL = 9
@@ -69,7 +71,7 @@ export function nameOf(path) {
  * put a bass line through a drum kit. Only the drum channel is kept -- and if
  * nothing is on it, the file is skipped rather than guessed at.
  */
-export function readGrooveFile(bytes, path) {
+export function readGrooveFile(bytes, path, labelPath = path) {
   let file
   try {
     file = parseMidiFile(bytes)
@@ -106,11 +108,24 @@ export function readGrooveFile(bytes, path) {
   // seven eighths of a bar long.
   const bars = Math.max(1, Math.ceil((last + 1) / barPulses))
 
+  /*
+   * What the folders say, read from the *whole* path.
+   *
+   * `path` is relative to the library, because that is what the library is
+   * rooted at and so what finds the file again later. `labelPath` is the whole
+   * thing including the library's own name -- which is very often the only
+   * word that says anything. A pack called `Africa` stores its files as
+   * `01 Djembe.mid`, and reading a genre out of that gets nothing at all.
+   */
+  const tags = tagsFor(labelPath)
+
   return {
     name: nameOf(path),
     path,
     folder: folderOf(path),
-    kind: guessKind(path, bars),
+    genre: genreOf(labelPath),
+    tags,
+    kind: tags.part === 'Fill' ? 'fill' : guessKind(labelPath, bars),
     bars,
     lengthPulses: bars * barPulses,
     timeSignature: `${signature.numerator}-${signature.denominator}`,
@@ -407,6 +422,11 @@ export function packGroove(groove, setId, index, { byReference = false } = {}) {
     // count and the list line says so out loud. Free here: the file has just
     // been read.
     h: groove.notes.length,
+    // What the folders said. One-letter keys like the rest: there are three
+    // quarters of a million of these rows and every character is paid for once
+    // per row.
+    g: groove.genre || '',
+    x: groove.tags || {},
     m: meta,
   }
   if (!byReference) {

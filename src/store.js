@@ -120,7 +120,7 @@ export const state = reactive({
     // `source` is what the interface chose: 'builtin', '' for every imported
     // library at once, or one library's id. `set` is what the database query
     // wants, which is the id or nothing.
-    source: 'builtin',
+    source: 'all',
     set: '', kind: '', bars: 0, signature: '', text: '', folder: '',
     genre: '', feel: '', surface: '', part: '', era: '',
   },
@@ -1429,7 +1429,10 @@ async function importOnePack(pack, progress, reader = hostReader) {
 
       let groove = null
       try {
-        groove = readGrooveFile(base64Bytes(encoded), path)
+        // The library's own name goes to the labeller and not into the stored
+        // path: `Africa/01 Djembe.mid` is a djembe in Africa, and `Africa` is
+        // the only word in it that says so.
+        groove = readGrooveFile(base64Bytes(encoded), path, `${pack.name}/${path}`)
       } catch {
         groove = null
       }

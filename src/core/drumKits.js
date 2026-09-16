@@ -337,19 +337,47 @@ export function classifyKit(histogram) {
     return weight((note) => Boolean(understood[note]))
   }
 
+  /**
+   * A verdict a kit cannot actually play is not a verdict.
+   *
+   * This is what was wrong for a long time and it was not subtle: measured
+   * across the collection, `Africa`, `Asia` and `Europe` put **100% of their
+   * notes outside anything General MIDI can read** -- they are hand-percussion
+   * packs living between 60 and 81, where this vocabulary of fourteen kit
+   * voices has no room at all -- and every one of them came back "General
+   * MIDI" with a coverage of nothing. Named, filed, and silent on playback.
+   *
+   * So a name is only given when the kit can make sense of most of what is
+   * there. Below that it is honest to say so: an unclassified library falls
+   * back to whatever the Kit tab says and the interface reports the reason,
+   * which is a great deal better than a label that plays nothing.
+   */
+  const ENOUGH = 0.6
+
+  const verdict = (kit, confidence, reason) => {
+    const covered = playable(kit)
+    if (covered >= ENOUGH) return { kit, confidence, coverage: covered, reason }
+    return {
+      kit: '',
+      confidence: 0,
+      coverage: covered,
+      reason: `${Math.round((1 - covered) * 100)}% of these notes are outside `
+        + `${kitById(kit).name}, so it is not that`,
+    }
+  }
+
   if (vdrums >= 0.02) {
-    return { kit: 'vdrums', confidence: Math.min(1, vdrums * 10), coverage: playable('vdrums'),
-             reason: 'hi-hat edge notes and toms where a Roland kit puts them' }
+    return verdict('vdrums', Math.min(1, vdrums * 10),
+                   'hi-hat edge notes and toms where a Roland kit puts them')
   }
 
   if (core >= 0.30) {
-    return { kit: 'gm', confidence: Math.min(1, core / 0.5), coverage: playable('gm'),
-             reason: 'kick, snare and hats are where General MIDI puts them' }
+    return verdict('gm', Math.min(1, core / 0.5),
+                   'kick, snare and hats are where General MIDI puts them')
   }
 
   if (percussion >= 0.40) {
-    return { kit: 'gm', confidence: Math.min(1, percussion), coverage: playable('gm'),
-             reason: 'hand percussion, in the General MIDI range' }
+    return verdict('gm', Math.min(1, percussion), 'hand percussion, in the General MIDI range')
   }
 
   return { kit: '', confidence: 0, coverage: playable('gm'),

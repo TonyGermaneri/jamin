@@ -612,6 +612,31 @@ and carry no third-party claim.
 
 ## Tests
 
+### The import, against a real library
+
+    python3 scripts/import_check.py /path/to/a/drum/library
+
+Not part of `npm test`, because it needs a library and nobody's is the same. It
+is what you run after touching anything on the import path, and it exists
+because that path broke four times in a row with every unit test passing:
+a whole tree asked for in one bridge call and failing as silence; bytes handed
+over in an encoding the page could not decode, so every file was read
+successfully and thrown away; the genre read from a path with the library's own
+name already stripped off it; and a kit verdict of "General MIDI" given to packs
+where General MIDI can read none of the notes.
+
+None of those is visible in a unit test with a hand-written fixture, and all
+four are obvious the moment the real path meets a real library.
+
+Its assertions are about invariants rather than counts, which took two attempts.
+"Three or more distinct genres" passed while every single-level pack came back
+blank, because the inner folders still said `GM - Blues`. "Two or more different
+kit verdicts" passed while whole percussion packs were labelled General MIDI
+with nothing General MIDI could play. What catches those is the *share* of rows
+carrying a genre, and the *coverage* of each verdict.
+
+
+
 The pure-logic suites run through macOS JavaScriptCore (`scripts/jsrun.py`)
 rather than Node. They started that way because there was no Node on the
 machine this was written on, and they have stayed that way for a better reason:

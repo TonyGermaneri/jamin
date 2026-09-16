@@ -43,10 +43,27 @@ const edgesButGmToms = { 36: 300, 38: 280, 42: 500, 22: 120, 26: 40, 50: 80, 47:
 check('hat edges alone are not a Roland kit', classifyKit(edgesButGmToms).kit, 'gm')
 
 /* ---------------- hand percussion --------------------------------------- */
-// No kit at all: congas, bongos, agogo. Still General MIDI, and the coverage
-// says plainly that a fourteen-voice drum vocabulary has nowhere to put it.
+/*
+ * No kit at all: congas, bongos, agogo, living between 60 and 81.
+ *
+ * This used to come back "General MIDI" and this test used to assert it, with
+ * a note that the coverage said plainly a fourteen-voice vocabulary had nowhere
+ * to put it. That was documenting the fault rather than catching it. Measured
+ * on the real collection, whole packs -- `Africa`, `Asia`, `Europe` -- had
+ * *every single note* outside anything General MIDI can read, and every one of
+ * them was filed as General MIDI and silent on playback.
+ *
+ * A verdict a kit cannot play is not a verdict. It says so instead.
+ */
 const congas = { 61: 300, 62: 200, 63: 180, 64: 150, 67: 90, 68: 60 }
-check('hand percussion is General MIDI', classifyKit(congas).kit, 'gm')
+check('hand percussion is not any kit here', classifyKit(congas).kit, '')
+check('and the coverage says why', classifyKit(congas).coverage < 0.6, true)
+check('and so does the reason', /outside/.test(classifyKit(congas).reason), true)
+
+// A kit that mostly can be read is still named. Most drum MIDI really is
+// General MIDI, and saying so is not the same fault in reverse.
+const mostlyGm = { 36: 400, 38: 380, 42: 600, 46: 90, 50: 40, 47: 30, 43: 25, 61: 20 }
+check('a pack General MIDI can read is General MIDI', classifyKit(mostlyGm).kit, 'gm')
 check('with nowhere for it to go', classifyKit(congas).coverage, 0)
 
 /* ---------------- and things it will not name --------------------------- */
