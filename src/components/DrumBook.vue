@@ -13,7 +13,7 @@
  * which is a thing nobody wants to think about until the day the snare is a
  * cowbell.
  */
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import {
   state,
   toast,
@@ -165,7 +165,7 @@ const builtinShowing = computed(() => library.value === EVERYTHING || library.va
 const EMPTY_FACETS = {
   folders: [], kinds: [], bars: [], signatures: [],
   genres: [], feels: [], surfaces: [], parts: [], eras: [],
-  holds: 0, stride: 1, exact: true,
+  holds: 0, exact: true,
 }
 const facets = ref(EMPTY_FACETS)
 
@@ -189,17 +189,17 @@ const shelf = computed({
 /**
  * A dropdown out of a [value, count] tally, in the shape the others use.
  *
- * The count is marked as an estimate when the library was too big to count and
- * was sampled instead. `Progressive (429)` over forty thousand patterns is a
- * worse answer than `Progressive (~41,000)`: both are approximate and only one
- * of them admits it. @see core/drumStore.js grooveFacets
+ * The count is the count. It used to be a tally of a sample multiplied by a
+ * stride, which put `1 bar (494)` over a catalogue of eight hundred thousand --
+ * and those numbers added up to exactly the two thousand rows the sampler had
+ * looked at. Every one of these fields is indexed now and an index counts its
+ * own entries without reading a row. @see core/drumStore.js grooveFacets
  */
 function fromFacet(pairs, label, title = (name) => String(name)) {
-  const about = facets.value.exact === false ? '~' : ''
   return [
     { title: label, value: 'any' },
     ...pairs.map(([name, count]) => ({
-      title: `${title(name)} (${about}${count.toLocaleString()})`,
+      title: `${title(name)} (${count.toLocaleString()})`,
       value: String(name),
     })),
   ]
@@ -260,26 +260,66 @@ const shelves = computed(() => [
  * them is one query rather than each control running its own. The built-in
  * corpus never comes here -- it is in memory and filtering it is a walk.
  */
+const filterValues = () => {
+  const some = (value) => (value === 'any' ? '' : value)
+  return {
+    text: search.value,
+    kind: some(kind.value),
+    bars: bars.value === 'any' ? 0 : Number(bars.value),
+    signature: some(signature.value),
+    genre: some(genre.value),
+    feel: some(feel.value),
+    surface: some(surface.value),
+    part: some(partTag.value),
+    era: some(era.value),
+  }
+}
+
+/*
+ * One query per filter change or page turn, for one page of rows.
+ *
+ * The list used to hold the first four hundred matches and page through those
+ * in the browser, so a filter matching forty thousand patterns offered
+ * thirty-three pages and there was no way to reach the thirty-fourth. The
+ * database pages now, and says exactly how many there are.
+ *
+ * The built-in corpus is in memory and comes first, so when both are showing
+ * the database is asked for whatever is left of the page after the corpus has
+ * filled what it can.
+ */
+function ask() {
+  if (!imported.value) return
+  const before = builtinShowing.value ? fromCorpus.value.length : 0
+  const at = (page.value - 1) * PER_PAGE
+  const fromHere = Math.max(0, Math.min(PER_PAGE, before - at))
+  searchDrums(filterValues(), {
+    offset: Math.max(0, at - before),
+    limit: PER_PAGE - fromHere,
+  })
+}
+
+/*
+ * Not during setup.
+ *
+ * `ask()` reads how much of the first page the built-in corpus fills, and that
+ * is a computed declared further down -- a `const` used before its declaration
+ * is a ReferenceError rather than an undefined, so an immediate watcher here
+ * threw "Cannot access 'Y' before initialization" and the book rendered
+ * nothing. Moving the declarations up only moved the problem, because they in
+ * turn read things declared below them.
+ *
+ * Setup is not the right moment anyway. The first query belongs to the book
+ * being opened, which is what onMounted and the open watcher are for.
+ */
 watch(
   () => [library.value, shelf.value, search.value, kind.value, bars.value, signature.value,
-         genre.value, feel.value, surface.value, partTag.value, era.value],
-  () => {
-    if (!imported.value) return
-    const some = (value) => (value === 'any' ? '' : value)
-    searchDrums({
-      text: search.value,
-      kind: some(kind.value),
-      bars: bars.value === 'any' ? 0 : Number(bars.value),
-      signature: some(signature.value),
-      genre: some(genre.value),
-      feel: some(feel.value),
-      surface: some(surface.value),
-      part: some(partTag.value),
-      era: some(era.value),
-    })
-  },
-  { immediate: true }
+         genre.value, feel.value, surface.value, partTag.value, era.value,
+         onlyFavourites.value, onlyFitting.value],
+  () => { page.value = 1; ask() }
 )
+
+watch(page, ask)
+onMounted(ask)
 
 const drums = computed(() => state.drums)
 const settings = computed(() => state.settings.drums)
@@ -328,31 +368,18 @@ const signatures = computed(() => imported.value
   ? fromFacet(facets.value.signatures, 'Any time signature')
   : facet((groove) => groove.timeSignature, 'Any time signature'))
 
-const matches = computed(() => {
+/**
+ * The built-in corpus, filtered here because it is here.
+ *
+ * Eleven hundred patterns in memory: filtering them is a walk and counting them
+ * is exact, so they are counted rather than estimated and they come first on
+ * the page. The stars and the fitting switch live here too -- both are facts
+ * about this chart and this browser, which no index in the database knows.
+ */
+const fromCorpus = computed(() => {
+  if (!builtinShowing.value) return []
   const starred = state.favourites.length
-  // Already narrowed by the database, which did the kind, length, signature and
-  // text itself over rows this page never held. What is left is the two filters
-  // that depend on things only the page knows: the chart, and the stars.
-  /*
-   * Two sources, and `Everything` is both of them.
-   *
-   * They cannot be one list underneath -- the shipped corpus is in memory and
-   * an imported catalogue is three quarters of a million rows in a database --
-   * but that is jamin's problem and not anybody else's. Everything means
-   * everything: the corpus first, because it is the one that is always there,
-   * then whatever the catalogue found.
-   */
-  const fromCatalogue = imported.value
-    ? state.drumHits.filter((groove) => {
-      if (onlyFavourites.value && (!starred || !favourite(groove))) return false
-      if (onlyFitting.value && !partsItFits(groove).length) return false
-      return true
-    })
-    : []
-
-  if (!builtinShowing.value) return fromCatalogue
-
-  const fromCorpus = searchGrooveList(drums.value, search.value).filter((groove) => {
+  return searchGrooveList(drums.value, search.value).filter((groove) => {
     if (kind.value !== 'any' && groove.kind !== kind.value) return false
     if (genre.value !== 'any' && groove.genre !== genre.value) return false
     if (bars.value !== 'any' && String(groove.bars) !== bars.value) return false
@@ -361,8 +388,42 @@ const matches = computed(() => {
     if (onlyFitting.value && !partsItFits(groove).length) return false
     return true
   })
+})
 
-  return [...fromCorpus, ...fromCatalogue]
+/**
+ * The rows from the catalogue, which are one page of a much longer answer.
+ *
+ * The stars and the fitting switch are applied after the fact here, which makes
+ * them the one pair of filters whose count can be off -- so they are counted
+ * against this page rather than against the catalogue. @see found
+ */
+const fromCatalogue = computed(() => {
+  if (!imported.value) return []
+  const starred = state.favourites.length
+  return state.drumHits.filter((groove) => {
+    if (onlyFavourites.value && (!starred || !favourite(groove))) return false
+    if (onlyFitting.value && !partsItFits(groove).length) return false
+    return true
+  })
+})
+
+/**
+ * How many patterns the filters are showing. Exactly.
+ *
+ * The corpus is counted and the catalogue is counted -- `total` comes back from
+ * an index, which answers it without reading a row. This used to be the length
+ * of whatever array happened to be on screen, over a sample scaled by a stride,
+ * and it reported two thousand for a catalogue of eight hundred thousand.
+ * Nothing here samples anything.
+ */
+const found = computed(() =>
+  fromCorpus.value.length + (imported.value ? state.drumSearch.total : 0))
+
+/** The page, which is the corpus first and then whatever the database sent. */
+const list = computed(() => {
+  const at = (page.value - 1) * PER_PAGE
+  const mine = fromCorpus.value.slice(at, at + PER_PAGE)
+  return [...mine, ...fromCatalogue.value.slice(0, PER_PAGE - mine.length)]
 })
 
 const activeFilters = computed(() =>
@@ -393,23 +454,39 @@ function clearFilters() {
   onlyFitting.value = false
 }
 
-/** A search of an imported library hands back a page of a much longer answer,
-    and past a certain size it samples rather than counts. Saying "showing 400
-    of about 41,000" beats letting either number stand in for the other. */
-const capped = computed(() =>
-  imported.value && (!state.drumSearch.exact || state.drumSearch.total > matches.value.length))
+/**
+ * When the count is not the whole truth, which is one case and it says so.
+ *
+ * A free-text search with no facet set has no index to narrow it, so it walks
+ * the catalogue and stops at a fixed number of rows. Everything else is counted
+ * by an index and is exact.
+ */
+const capped = computed(() => imported.value && !state.drumSearch.exact)
 
-const pageCount = computed(() => Math.max(1, Math.ceil(matches.value.length / PER_PAGE)))
-const list = computed(() => matches.value.slice((page.value - 1) * PER_PAGE, page.value * PER_PAGE))
-watch(matches, () => { page.value = 1 })
+const pageCount = computed(() => Math.max(1, Math.ceil(found.value / PER_PAGE)))
 
-/** One at random from what the filters are showing, which is what makes a die
-    worth having: 2,399 grooves is a shrug, the 60 two-bar funk beats is a
-    suggestion. */
-function roll() {
-  const pool = matches.value
-  if (!pool.length) return
-  choose(pool[Math.floor(Math.random() * pool.length)])
+/**
+ * One at random from what the filters are showing.
+ *
+ * A random *page*, then a row on it, because the answer is not in the browser:
+ * picking uniformly out of forty thousand means fetching the one row at that
+ * offset, which is what the database is for. 2,399 grooves is a shrug; the 60
+ * two-bar funk beats is a suggestion.
+ */
+async function roll() {
+  if (!found.value) return
+  const at = Math.floor(Math.random() * found.value)
+  const wanted = Math.floor(at / PER_PAGE) + 1
+  if (wanted !== page.value) {
+    page.value = wanted
+    await nextTick()
+    await searchDrums(null, {
+      offset: Math.max(0, (wanted - 1) * PER_PAGE - fromCorpus.value.length),
+      limit: PER_PAGE,
+    })
+  }
+  const pool = list.value
+  if (pool.length) choose(pool[at % PER_PAGE] || pool[pool.length - 1])
 }
 
 /** Picking a groove, which in auto-select mode also places it. */
@@ -650,16 +727,34 @@ function pillLabel(row, index) {
  * saying the same thing deliberately.
  */
 
-/** Move through the whole filtered list rather than the page, and follow it. */
+/**
+ * Move through the list, turning the page at either end.
+ *
+ * The page is what is in the browser now -- the rest of the answer is in the
+ * database and is fetched a page at a time -- so walking off the end of one
+ * turns to the next and lands on its first row. Which is what arrowing through
+ * a long list does anyway; it is only that the boundary is now real.
+ */
 function step(by) {
-  const pool = matches.value
+  const pool = list.value
   if (!pool.length) return
 
   const at = pool.findIndex((groove) => selected.value && groove.id === selected.value.id)
-  const next = Math.min(pool.length - 1, Math.max(0, at < 0 ? 0 : at + by))
+  const next = (at < 0 ? 0 : at) + by
 
+  if (next < 0) {
+    if (page.value <= 1) { selected.value = pool[0]; return }
+    page.value -= 1
+    nextTick(() => { const rows = list.value; selected.value = rows[rows.length - 1] || null })
+    return
+  }
+  if (next >= pool.length) {
+    if (page.value >= pageCount.value) { selected.value = pool[pool.length - 1]; return }
+    page.value += 1
+    nextTick(() => { selected.value = list.value[0] || null })
+    return
+  }
   selected.value = pool[next]
-  page.value = Math.floor(next / PER_PAGE) + 1
 }
 
 function turnPage(by) {
@@ -826,11 +921,11 @@ function resetMap() {
         <span v-if="waiting" class="text-caption text-warning mr-3">
           {{ waiting }} part{{ waiting === 1 ? '' : 's' }} with no groove
         </span>
-        <v-btn icon size="small" variant="text" class="mr-1" :disabled="!matches.length"
+        <v-btn icon size="small" variant="text" class="mr-1" :disabled="!found"
                aria-label="A random groove from this list" @click="roll">
           <v-icon size="19">mdi-dice-5-outline</v-icon>
           <v-tooltip activator="parent" location="bottom">
-            One of the {{ matches.length.toLocaleString() }} the filters are showing
+            One of the {{ found.toLocaleString() }} the filters are showing
           </v-tooltip>
         </v-btn>
       </v-card-title>
@@ -906,8 +1001,8 @@ function resetMap() {
                         @keydown.space.prevent="assignEverywhere(selected)"
                         @keydown.page-down.prevent="step(PER_PAGE)"
                         @keydown.page-up.prevent="step(-PER_PAGE)"
-                        @keydown.home.prevent="step(-matches.length)"
-                        @keydown.end.prevent="step(matches.length)"
+                        @keydown.home.prevent="page = 1"
+                        @keydown.end.prevent="page = pageCount"
                         @wheel="onWheel">
                   <!-- Drag a groove straight onto a track. Not an HTML5 drag:
                        the web view starts its own on dragstart and JUCE then
@@ -995,14 +1090,16 @@ function resetMap() {
                       Rebuilding the catalogue's index, once
                     </template>
                     <template v-else-if="imported">
-                      <span v-if="capped">
-                        showing {{ matches.length.toLocaleString() }} of about
-                        {{ state.drumSearch.total.toLocaleString() }}
+                      <!-- Counted by an index, which answers it without reading
+                           a row. The one exception says so: a free-text search
+                           with no facet set has nothing to narrow it. -->
+                      {{ found.toLocaleString() }}<span v-if="capped">+</span> found
+                      <span v-if="pageCount > 1">
+                        · page {{ page.toLocaleString() }} of {{ pageCount.toLocaleString() }}
                       </span>
-                      <span v-else>{{ matches.length.toLocaleString() }} found</span>
                     </template>
                     <template v-else>
-                      {{ matches.length.toLocaleString() }} of {{ drums.length.toLocaleString() }}
+                      {{ found.toLocaleString() }} of {{ drums.length.toLocaleString() }}
                     </template>
                   </span>
                 </div>
@@ -1025,7 +1122,7 @@ function resetMap() {
                       </span>
                       <span v-else>Filters</span>
                       <v-spacer />
-                      <span class="text-medium-emphasis mr-2">{{ matches.length.toLocaleString() }}</span>
+                      <span class="text-medium-emphasis mr-2">{{ found.toLocaleString() }}</span>
                     </v-expansion-panel-title>
                     <v-expansion-panel-text>
                       <v-row dense>

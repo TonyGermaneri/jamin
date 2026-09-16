@@ -16,8 +16,29 @@
  * a single global setting cannot be right for both.
  */
 
+/**
+ * Every field a filter can ask about, and the index that answers it.
+ *
+ * The name is what the interface calls the facet; the value is where the field
+ * lives in a packed row. @see drumImport.packGroove for why the keys are one
+ * letter: there are three quarters of a million of these rows and every
+ * character is paid for once per row.
+ */
+const INDEXED = {
+  set: 's',
+  kind: 'k',
+  bars: 'r',
+  genre: 'g',
+  signature: 't',
+  folder: 'f',
+  feel: 'x.feel',
+  surface: 'x.surface',
+  part: 'x.part',
+  era: 'x.era',
+}
+
 const DB_NAME = 'jamin.drums'
-const DB_VERSION = 2
+const DB_VERSION = 3
 const SETS = 'sets'
 const GROOVES = 'grooves'
 
@@ -62,23 +83,31 @@ function open() {
       }
 
       /*
-       * Indexes are added rather than created once, because a library already
-       * imported must gain them without being imported again. Version 2 adds
-       * the genre, which the browser fills in by reading every row it already
-       * holds -- a wait of a few seconds on a large catalogue, once.
+       * One index per thing anybody filters by.
        *
-       * An index is not an optimisation here. Without one the search walks the
-       * rows in the order they were written and gives up after a fixed number,
-       * so a genre living deep in the collection cannot be found at all.
+       * Indexes are added rather than created once, because a library already
+       * imported must gain them without being imported again. The browser fills
+       * a new one in by reading every row it already holds -- a wait on a large
+       * catalogue, once.
+       *
+       * These are not an optimisation. A count over an index range is answered
+       * from the index itself without reading a single row, which is the only
+       * way a filter can say how many patterns it will show *before* showing
+       * them. Without one the choice is between reading three quarters of a
+       * million rows on every keystroke and guessing from a sample -- and the
+       * guess is what made the filters lie: "1 bar (494), 2 bars (1,428)" over
+       * a catalogue of eight hundred thousand, because those were counts of the
+       * two thousand rows the sampler happened to look at, scaled by a stride
+       * that was 1 because the row count it divided by was the wrong one.
+       *
+       * Nested keys are allowed, so what the folders said is indexable where it
+       * already lives rather than being copied into a column.
        */
       const store = db.objectStoreNames.contains(GROOVES)
         ? request.transaction.objectStore(GROOVES)
         : db.createObjectStore(GROOVES, { keyPath: 'id' })
 
-      // By set, so deleting a library does not walk every row; by genre, kind
-      // and length, which are the filters that actually narrow a catalogue of
-      // several hundred thousand.
-      for (const [name, field] of [['set', 's'], ['kind', 'k'], ['bars', 'r'], ['genre', 'g']]) {
+      for (const [name, field] of Object.entries(INDEXED)) {
         if (!store.indexNames.contains(name)) store.createIndex(name, field)
       }
     }
@@ -229,178 +258,49 @@ export async function countGrooves(setId = null) {
   }
 }
 
+/* ------------------------------------------------------------- searching */
+
 /**
- * Which index can be walked for these filters, in the order they are worth
- * trying -- and what value to walk it at.
+ * The filters, as a list of [index, value] pairs an index can actually answer.
  *
- * Pure, so the choice can be tested without a database. The counting that
- * decides between them is not: @see searchGrooves.
+ * Pure, so which indexes a set of filters can use is decidable without a
+ * database. Everything here is an equality on one indexed field; the text
+ * search is not, and is applied as a predicate.
  */
 export function indexable(filters = {}) {
-  const { set = '', genre = '', kind = '', bars = 0 } = filters
-  return [
-    { name: 'set', value: set },
-    { name: 'genre', value: genre },
-    { name: 'kind', value: kind },
-    { name: 'bars', value: bars },
-  ].filter((candidate) => Boolean(candidate.value))
+  const out = []
+  for (const name of Object.keys(INDEXED)) {
+    const value = filters[name]
+    if (value || value === 0) {
+      if (typeof value === 'number' ? Number.isFinite(value) && value !== 0 : String(value).length) {
+        out.push({ name, value })
+      }
+    }
+  }
+  return out
 }
 
-/**
- * How far apart to step so a budget of `budget` rows covers `holds` of them.
- *
- * This is the whole of the bug that made the filters lie. The facets sample the
- * library evenly and so report a genre that lives anywhere in it; the search
- * used to read the rows in the order they were written and stop after forty
- * thousand, which in a collection of three quarters of a million is the first
- * pack or two. So the filter would offer `Progressive` with a count beside it
- * and the list would show one pattern, because the only rows the search ever
- * looked at were somebody else's shelf.
- *
- * Reading a sample of the whole thing answers the question that was asked.
- * Reading all of a corner of it answers a different one.
- */
-export function strideFor(holds, budget) {
-  if (!(holds > 0) || !(budget > 0) || holds <= budget) return 1
-  return Math.floor(holds / budget)
-}
-
-/**
- * Everything matching, up to a limit.
- *
- * A cursor rather than getAll: the catalogue can be several hundred thousand
- * patterns and the filters usually cut it to a handful, so the rows are tested
- * as they arrive and the walk stops as soon as enough have been found.
- *
- * Three things decide what gets walked:
- *
- *   * the narrowest **index** any filter can use, chosen by asking each one how
- *     many rows it holds rather than by a fixed order -- one library out of
- *     fifty is usually the biggest cut, but one genre out of a single enormous
- *     library is a bigger one, and which wins is a fact about the collection
- *   * a **stride**, so a budget that cannot cover the whole scope is spent
- *     evenly across it instead of on its first rows @see strideFor
- *   * `limit`, which is how many are worth handing to a list somebody scrolls
- *
- * `scanLimit` is the promise this makes to the interface: it will look at that
- * many rows and no more, so a search that matches nothing costs a known amount
- * of time rather than the whole database.
- *
- * Returns the rows, and enough about the walk to say honestly what they are:
- * `total` is how many matched, exactly when the walk finished and estimated
- * from the density when it did not, with `exact` saying which.
- */
-export async function searchGrooves(filters = {}, limit = 400, scanLimit = 40000) {
-  const db = await open()
-  if (!db) return { rows: [], scanned: 0, holds: 0, stride: 1, total: 0, exact: true, partial: false }
-
-  const {
-    set = '', kind = '', bars = 0, signature = '', text = '', folder = '',
-    genre = '', feel = '', surface = '', part = '', era = '',
-  } = filters
-  const needle = String(text || '').trim().toLowerCase()
-  const test = { kind, bars, signature, needle, folder, genre, feel, surface, part, era }
-
-  const store = db.transaction(GROOVES, 'readonly').objectStore(GROOVES)
-
-  /*
-   * The narrowest index, found by counting.
-   *
-   * `count()` on an index range is answered from the index itself without
-   * reading a single row, so asking all of them costs less than walking the
-   * wrong one. A library that has not been reindexed yet -- imported under
-   * version 1, opened before the upgrade finished -- simply has no such index,
-   * and the count throws rather than lying, so it is skipped.
-   */
-  let chosen = null
+/** Whether a row satisfies everything the index did not already guarantee. */
+export function matchesGroove(row, filters = {}) {
   for (const { name, value } of indexable(filters)) {
-    if (!store.indexNames.contains(name)) continue
-    try {
-      const holds = await ask(store.index(name).count(IDBKeyRange.only(value)))
-      if (!chosen || holds < chosen.holds) chosen = { name, value, holds }
-    } catch {
-      /* an index this database does not have is one not to walk */
+    if (name === 'folder') {
+      if (!String(row.f || '').startsWith(value)) return false
+      continue
     }
+    const field = INDEXED[name]
+    const held = field.includes('.')
+      ? (row[field.split('.')[0]] || {})[field.split('.')[1]]
+      : row[field]
+    if (held !== value) return false
   }
 
-  const holds = chosen ? chosen.holds : await ask(store.count()).catch(() => 0)
-  const stride = strideFor(holds, scanLimit)
-  const source = chosen
-    ? store.index(chosen.name).openCursor(IDBKeyRange.only(chosen.value))
-    : store.openCursor()
-
-  const rows = []
-  let scanned = 0
-  let matched = 0
-  let exhausted = false
-
-  await new Promise((resolve) => {
-    source.onsuccess = () => {
-      const cursor = source.result
-      if (!cursor) {
-        exhausted = true
-        resolve()
-        return
-      }
-      if (rows.length >= limit || scanned >= scanLimit) {
-        resolve()
-        return
-      }
-
-      scanned++
-      if (matchesGroove(cursor.value, test)) {
-        matched++
-        rows.push(cursor.value)
-      }
-      if (stride > 1) cursor.advance(stride)
-      else cursor.continue()
-    }
-    source.onerror = () => resolve()
-  })
-
-  /*
-   * How many there are, as opposed to how many are being shown.
-   *
-   * Exact when the walk reached the end of its scope: every row was seen and
-   * counted. Otherwise the rows seen were spread evenly over the scope, so the
-   * share that matched is the share of the whole that matches -- an estimate,
-   * and labelled as one, but the right order of magnitude rather than a number
-   * that says one when there are forty thousand.
-   */
-  const exact = exhausted && stride === 1
-  const total = exact || !scanned
-    ? matched
-    : Math.round((matched / scanned) * holds)
-
-  return {
-    rows,
-    scanned,
-    holds,
-    stride,
-    total,
-    exact,
-    // Kept for what reads it: the list was capped and is not the whole answer.
-    partial: !exact,
-  }
-}
-
-export function matchesGroove(row, { kind, bars, signature, needle, folder, genre, feel, surface, part, era }) {
-  if (kind && row.k !== kind) return false
-  if (bars && row.r !== bars) return false
-  if (signature && row.t !== signature) return false
-  if (folder && !String(row.f || '').startsWith(folder)) return false
-  if (genre && row.g !== genre) return false
-
-  const tags = row.x || {}
-  if (feel && tags.feel !== feel) return false
-  if (surface && tags.surface !== surface) return false
-  if (part && tags.part !== part) return false
-  if (era && tags.era !== era) return false
-
+  const needle = String(filters.text || '').trim().toLowerCase()
   if (!needle) return true
+
   // The whole path, not just the name and the shelf. A vendor puts the kit, the
   // drummer and the tempo in there -- `Chrome Kit`, `CARTER_BEAUFORD`, `170BPM`
   // -- none of which is a filter and all of which somebody might type.
+  const tags = row.x || {}
   if (String(row.p || '').toLowerCase().includes(needle)) return true
   if (String(row.n || '').toLowerCase().includes(needle)) return true
   if (String(row.f || '').toLowerCase().includes(needle)) return true
@@ -414,6 +314,251 @@ export function matchesGroove(row, { kind, bars, signature, needle, folder, genr
   return false
 }
 
+/**
+ * The range an indexed filter covers.
+ *
+ * A folder is a prefix rather than a value -- choosing the shelf `Pack/Rock`
+ * means everything filed under it -- and a prefix over strings is a bounded
+ * range, which an index counts as cheaply as it counts one key.
+ */
+function rangeFor(name, value) {
+  if (name === 'folder') return IDBKeyRange.bound(value, `${value}\uffff`)
+  return IDBKeyRange.only(value)
+}
+
+/*
+ * A transaction lives until the first moment nothing is pending on it.
+ *
+ * Which is the end of the task that has no request outstanding -- so an `await`
+ * between two requests on the same transaction ends it, and the second one
+ * throws `InvalidStateError: The transaction is finished`. It does not throw in
+ * every implementation: the stand-in these are tested against in node is
+ * lenient about it, and the plugin's WebKit is not, which is the only reason
+ * this was caught.
+ *
+ * So anything that awaits between requests takes a fresh transaction for each
+ * one. They are cheap. A cursor walk keeps its own alive by having a request
+ * outstanding at every moment, which is what `continue()` inside `onsuccess`
+ * means, so those hold one for the whole walk.
+ */
+function grooves(db) {
+  return db.transaction(GROOVES, 'readonly').objectStore(GROOVES)
+}
+
+/** How many rows one indexed filter covers, counted by the index itself. */
+async function countOn(db, name, value) {
+  const store = grooves(db)
+  if (!store.indexNames.contains(name)) return null
+  try {
+    return await ask(store.index(name).count(rangeFor(name, value)))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The narrowest index these filters can be walked on, and how many rows it
+ * covers.
+ *
+ * Chosen by counting rather than by a fixed order. One library out of fifty is
+ * usually the biggest cut, but one genre inside a single enormous library is a
+ * bigger one, and which it is is a fact about somebody's collection. Counting
+ * an index range reads no rows, so asking all of them costs less than walking
+ * the wrong one.
+ */
+async function narrowest(db, filters) {
+  let best = null
+  for (const { name, value } of indexable(filters)) {
+    const holds = await countOn(db, name, value)
+    if (holds === null) continue
+    if (!best || holds < best.holds) best = { name, value, holds }
+  }
+  return best
+}
+
+/**
+ * Everything matching, exactly counted, one page at a time.
+ *
+ * Three questions, and they used to be answered by one pass that got all three
+ * wrong: how many there are, which ones this page shows, and whether the answer
+ * is complete.
+ *
+ *   * **how many** is a count over an index range when one index answers the
+ *     whole filter, which is exact and reads no rows at all. With two filters
+ *     it is a walk of the narrower one, which is bounded by that index rather
+ *     than by the catalogue.
+ *   * **which ones** is the same walk with `offset` rows skipped -- so the last
+ *     page of eight hundred thousand is reachable, where before there were only
+ *     ever the first four hundred.
+ *   * **whether it is complete** is true unless the walk hit `scanLimit`, and
+ *     the only way to reach that is to type free text with no facet set at all,
+ *     because text is the one question no index can answer. It is a ceiling on
+ *     one hard case, not a sample: every row up to it is examined, every match
+ *     is counted, and every page of the result is reachable.
+ *
+ * Returns `{ rows, total, exact, scanned }`.
+ */
+export async function searchGrooves(filters = {}, { limit = 24, offset = 0,
+                                                    scanLimit = 400000 } = {}) {
+  const db = await open()
+  if (!db) return { rows: [], total: 0, exact: true, scanned: 0 }
+
+  const chosen = await narrowest(db, filters)
+  const needle = String(filters.text || '').trim().toLowerCase()
+  const others = indexable(filters).filter((one) => !chosen || one.name !== chosen.name)
+
+  /*
+   * The whole filter, answered by the index alone.
+   *
+   * One equality on one indexed field and no text: the index range *is* the
+   * answer, so the count is exact for nothing and the page is a walk that skips
+   * straight to it. This is the common case and it costs one count and one
+   * advance whatever the catalogue holds.
+   */
+  if (chosen && !others.length && !needle) {
+    const rows = await pageOf(grooves(db).index(chosen.name),
+                              rangeFor(chosen.name, chosen.value), offset, limit)
+    return { rows, total: chosen.holds, exact: true, scanned: rows.length }
+  }
+
+  // Nothing indexed at all: the scope is the whole store.
+  if (!chosen && !needle && !others.length) {
+    const total = await ask(grooves(db).count()).catch(() => 0)
+    const rows = await pageOf(grooves(db), undefined, offset, limit)
+    return { rows, total, exact: true, scanned: rows.length }
+  }
+
+  /*
+   * Two or more facets: intersect their keys rather than reading their rows.
+   *
+   * `getAllKeys` over an index range hands back the primary keys in that range
+   * without deserialising a single row -- one bulk call per facet, whatever the
+   * range holds. Intersecting those key sets *is* the answer: its size is the
+   * exact count, and a page is twelve `get`s by key. Nothing reads a row it is
+   * not going to show.
+   *
+   * The alternative, and what this replaced, is walking the narrowest index and
+   * testing each row -- which deserialises forty thousand rows to find three
+   * hundred and sixty-five of them, and does it again on every keystroke.
+   *
+   * Above a ceiling it falls back to the walk, because the key lists are held
+   * in memory and two facets covering half the catalogue each is a great many
+   * strings. The walk is slower and bounded; this is faster and is not.
+   */
+  const KEYS_AT_MOST = 250000
+  if (chosen && others.length && !needle && chosen.holds <= KEYS_AT_MOST) {
+    const lists = [await keysFor(db, chosen.name, chosen.value)]
+    for (const one of others) {
+      lists.push(await keysFor(db, one.name, one.value))
+      if (!lists[lists.length - 1]) { lists.pop(); break }
+    }
+
+    if (lists.every(Boolean)) {
+      const keys = lists.reduce((into, list) => intersect(into, list))
+      const rows = await byKeys(db, keys.slice(offset, offset + limit))
+      return { rows, total: keys.length, exact: true, scanned: keys.length }
+    }
+  }
+
+  /*
+   * Otherwise the narrowest index is the scope and the rest is a predicate.
+   *
+   * Counted by walking it, which is exact and bounded by that index rather than
+   * by the catalogue -- a second filter on top of a genre walks that genre, not
+   * three quarters of a million rows.
+   */
+  const walking = grooves(db)
+  const source = chosen
+    ? walking.index(chosen.name).openCursor(rangeFor(chosen.name, chosen.value))
+    : walking.openCursor()
+
+  const rows = []
+  let matched = 0
+  let scanned = 0
+  let capped = false
+
+  await new Promise((resolve) => {
+    source.onsuccess = () => {
+      const cursor = source.result
+      if (!cursor) { resolve(); return }
+      if (scanned >= scanLimit) { capped = true; resolve(); return }
+
+      scanned++
+      if (matchesGroove(cursor.value, filters)) {
+        if (matched >= offset && rows.length < limit) rows.push(cursor.value)
+        matched++
+      }
+      cursor.continue()
+    }
+    source.onerror = () => resolve()
+  })
+
+  return { rows, total: matched, exact: !capped, scanned }
+}
+
+/** Every primary key an indexed filter covers, without reading a row. */
+async function keysFor(db, name, value) {
+  const store = grooves(db)
+  if (!store.indexNames.contains(name)) return null
+  try {
+    const keys = await ask(store.index(name).getAllKeys(rangeFor(name, value)))
+    // getAllKeys orders by index key first, so the primary keys come back in
+    // whatever order the values happened to be in. Sorted, they intersect in
+    // one pass instead of needing a set per list.
+    return keys.sort()
+  } catch {
+    return null
+  }
+}
+
+/** Two sorted key lists, merged down to what is in both. */
+function intersect(left, right) {
+  const out = []
+  let a = 0
+  let b = 0
+  while (a < left.length && b < right.length) {
+    if (left[a] === right[b]) { out.push(left[a]); a++; b++ }
+    else if (left[a] < right[b]) a++
+    else b++
+  }
+  return out
+}
+
+/** The rows for a handful of keys, all asked for before anything is awaited. */
+async function byKeys(db, keys) {
+  if (!keys.length) return []
+  const store = grooves(db)
+  const asked = keys.map((key) => ask(store.get(key)).catch(() => null))
+  return (await Promise.all(asked)).filter(Boolean)
+}
+
+/** One page out of a source the range already answers: skip, then take. */
+function pageOf(source, range, offset, limit) {
+  return new Promise((resolve) => {
+    const rows = []
+    let skipped = offset <= 0
+    let request
+    try {
+      request = source.openCursor(range)
+    } catch {
+      resolve(rows)
+      return
+    }
+    request.onsuccess = () => {
+      const cursor = request.result
+      if (!cursor || rows.length >= limit) { resolve(rows); return }
+      if (!skipped) {
+        skipped = true
+        cursor.advance(offset)
+        return
+      }
+      rows.push(cursor.value)
+      cursor.continue()
+    }
+    request.onerror = () => resolve(rows)
+  })
+}
+
 /** One groove by id, for playing what a binding points at. */
 export async function getGroove(id) {
   const db = await open()
@@ -425,120 +570,248 @@ export async function getGroove(id) {
   }
 }
 
-/** Several at once, which is what compiling a chart needs. */
+/**
+ * Several at once, which is what compiling a chart needs.
+ *
+ * Every request issued before anything is awaited, so they all belong to one
+ * transaction that is still open when they are made. Awaiting them one at a
+ * time ends the transaction after the first, and the second throws -- in WebKit,
+ * which is where this runs. @see grooves
+ */
 export async function getGrooves(ids) {
   const db = await open()
   if (!db || !ids.length) return []
-  const store = db.transaction(GROOVES, 'readonly').objectStore(GROOVES)
-  const out = []
-  for (const id of ids) {
+
+  const store = grooves(db)
+  const asked = ids.map((id) => {
     try {
-      const row = await ask(store.get(id))
-      if (row) out.push(row)
+      return ask(store.get(id)).catch(() => null)
     } catch {
-      /* one missing groove is not a reason to lose the rest */
+      return Promise.resolve(null)
     }
+  })
+
+  // One missing groove is not a reason to lose the rest.
+  return (await Promise.all(asked)).filter(Boolean)
+}
+
+/**
+ * Every value a filter can offer, and exactly how many patterns carry it.
+ *
+ * Counted, not sampled. The previous version read every nth row, tallied what
+ * it saw and multiplied by the stride, which is a reasonable thing to do when
+ * counting is impossible and a lie when it is not. It reported "1 bar (494),
+ * 2 bars (1,428), 3 bars (78)" over a catalogue of eight hundred thousand --
+ * numbers that add up to exactly the two thousand rows it had looked at.
+ *
+ * Counting is not impossible. Every one of these fields is indexed, and an
+ * index answers two questions without reading a row: what distinct values are
+ * in it, and how many entries each one has.
+ *
+ *   * the distinct values come from a key cursor in `nextunique` mode, which
+ *     visits each value once and skips the rest -- so a field with sixty values
+ *     costs sixty steps whether the catalogue holds a thousand rows or a
+ *     million
+ *   * the count for each comes from `count()` over that value's range, which
+ *     the index answers from its own structure
+ *
+ * Scoped to one library it is a single pass over that library's rows instead,
+ * tallying every facet at once: a count within a subset is not a question a
+ * single-field index can answer, and one pass over one library is honest where
+ * a compound index for every pair would be a schema nobody could hold in their
+ * head.
+ *
+ * `exact` is true either way. It exists because it was false, and anything that
+ * reads these has to be able to tell the difference.
+ */
+const FACETS = ['kind', 'bars', 'genre', 'signature', 'feel', 'surface', 'part', 'era']
+
+export async function grooveFacets(setId = null) {
+  const db = await open()
+  if (!db) return emptyFacets()
+
+  const holds = setId
+    ? await countOn(db, 'set', setId)
+    : await ask(grooves(db).count()).catch(() => 0)
+
+  const counted = setId ? await tallyWithin(db, setId) : await tallyEverywhere(db)
+
+  return {
+    ...counted,
+    folders: await shelvesIn(db, setId, counted.folders),
+    holds: holds || 0,
+    exact: true,
+  }
+}
+
+function emptyFacets() {
+  const out = { folders: [], holds: 0, exact: true }
+  for (const name of FACETS) out[plural(name)] = []
+  return out
+}
+
+/** What the interface calls each facet's list. */
+function plural(name) {
+  if (name === 'kind') return 'kinds'
+  if (name === 'bars') return 'bars'
+  if (name === 'signature') return 'signatures'
+  if (name === 'feel') return 'feels'
+  if (name === 'surface') return 'surfaces'
+  if (name === 'part') return 'parts'
+  if (name === 'era') return 'eras'
+  return `${name}s`
+}
+
+/**
+ * Every distinct value in an index, without reading a row.
+ *
+ * `nextunique` is the whole trick: the cursor lands on the first entry for each
+ * distinct key and skips every duplicate, so this is one step per value rather
+ * than one per row.
+ */
+function distinctIn(db, name, cap = 4000) {
+  return new Promise((resolve) => {
+    const values = []
+    let request
+    try {
+      request = grooves(db).index(name).openKeyCursor(null, 'nextunique')
+    } catch {
+      resolve(values)
+      return
+    }
+    request.onsuccess = () => {
+      const cursor = request.result
+      if (!cursor || values.length >= cap) { resolve(values); return }
+      values.push(cursor.key)
+      cursor.continue()
+    }
+    request.onerror = () => resolve(values)
+  })
+}
+
+/** Across everything: the index knows the values and the index knows the counts. */
+async function tallyEverywhere(db) {
+  const out = { folders: [] }
+  for (const name of FACETS) {
+    if (!grooves(db).indexNames.contains(name)) { out[plural(name)] = []; continue }
+    const values = await distinctIn(db, name)
+    const pairs = []
+    for (const value of values) {
+      // A fresh transaction each time: the await above and the one below both
+      // end whichever transaction was open. @see grooves
+      const n = await ask(grooves(db).index(name).count(IDBKeyRange.only(value))).catch(() => 0)
+      if (n) pairs.push([value, n])
+    }
+    out[plural(name)] = order(name, pairs)
   }
   return out
 }
 
 /**
- * What is worth offering as a filter, from a sample.
+ * Within one library: one pass, every facet at once.
  *
- * Sampled rather than counted: counting the folders in three-quarters of a
- * million rows means reading three-quarters of a million rows, and the answer
- * -- a list of shelf names -- does not get more useful for being exact.
+ * A count within a subset is not something a single-field index can answer --
+ * it knows how many rows are in this genre and how many are in this library,
+ * and nothing about the overlap. Walking the library's own index is exact, and
+ * it is bounded by that library rather than by the catalogue.
  */
-export async function grooveFacets(setId = null, sample = 8000) {
-  const db = await open()
-  if (!db) return { folders: [], kinds: [], bars: [], signatures: [] }
-
-  const tx = db.transaction(GROOVES, 'readonly')
-  const store = tx.objectStore(GROOVES)
-  const range = setId ? IDBKeyRange.only(setId) : undefined
-  const holds = setId ? await ask(store.index('set').count(range)).catch(() => 0)
-                      : await ask(store.count()).catch(() => 0)
-
-  // Every nth row rather than the first n. Rows arrive in the order they were
-  // imported, which is the order of the tree, so the first eight thousand of a
-  // library of four hundred thousand are its first few shelves -- and its
-  // filters would offer those shelves and no others. @see spread, which is the
-  // same mistake caught once before.
-  const stride = strideFor(holds, sample)
-  const source = setId ? store.index('set').openCursor(range) : store.openCursor()
-
+async function tallyWithin(db, setId) {
+  const store = grooves(db)
+  const seen = {}
+  for (const name of FACETS) seen[name] = new Map()
   const folders = new Map()
-  const kinds = new Map()
-  const bars = new Map()
-  const signatures = new Map()
-  const genres = new Map()
-  const feels = new Map()
-  const surfaces = new Map()
-  const parts = new Map()
-  const eras = new Map()
-  let seen = 0
 
   await new Promise((resolve) => {
-    source.onsuccess = () => {
-      const cursor = source.result
-      if (!cursor || seen >= sample) {
-        resolve()
-        return
-      }
-      seen++
+    const request = store.index('set').openCursor(IDBKeyRange.only(setId))
+    request.onsuccess = () => {
+      const cursor = request.result
+      if (!cursor) { resolve(); return }
       const row = cursor.value
-      const bump = (map, key) => { if (key || key === 0) map.set(key, (map.get(key) || 0) + 1) }
-      // The top two levels of the path. Deeper than that is one shelf per
-      // pattern, which is a list nobody can use.
-      bump(folders, String(row.f || '').split('/').slice(0, 2).join('/'))
-      bump(kinds, row.k)
-      bump(bars, row.r)
-      bump(signatures, row.t)
-      bump(genres, row.g)
       const tags = row.x || {}
-      bump(feels, tags.feel)
-      bump(surfaces, tags.surface)
-      bump(parts, tags.part)
-      bump(eras, tags.era)
-      if (stride > 1) cursor.advance(stride)
-      else cursor.continue()
+      const value = {
+        kind: row.k, bars: row.r, genre: row.g, signature: row.t,
+        feel: tags.feel, surface: tags.surface, part: tags.part, era: tags.era,
+      }
+      for (const name of FACETS) {
+        const one = value[name]
+        if (one || one === 0) seen[name].set(one, (seen[name].get(one) || 0) + 1)
+      }
+      const shelf = String(row.f || '').split('/').slice(0, 2).join('/')
+      folders.set(shelf, (folders.get(shelf) || 0) + 1)
+      cursor.continue()
     }
-    source.onerror = () => resolve()
+    request.onerror = () => resolve()
   })
 
-  /*
-   * Scaled back up to the library.
-   *
-   * Every stride'th row was read, so a value seen n times in the sample stands
-   * for about n * stride rows in the library. Reporting the raw n instead is
-   * how a filter came to offer `Progressive (429)` over a shelf holding some
-   * forty thousand of them: a true count of what was looked at, presented as a
-   * count of what is there, and wrong by whatever the stride happened to be.
-   *
-   * These are estimates and `exact` says so, so nothing has to pretend a
-   * sample is a census.
-   */
-  const scale = (n) => (stride > 1 ? n * stride : n)
-  const listed = (map) => [...map.entries()]
-    .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
-    .map(([name, n]) => [name, scale(n)])
+  const out = { folders: order('folder', [...folders.entries()]) }
+  for (const name of FACETS) out[plural(name)] = order(name, [...seen[name].entries()])
+  return out
+}
 
-  return {
-    folders: listed(folders).slice(0, 60),
-    kinds: listed(kinds),
-    bars: [...bars.entries()].sort((a, b) => a[0] - b[0]).map(([n, count]) => [n, scale(count)]),
-    signatures: listed(signatures),
-    genres: listed(genres).slice(0, 60),
-    feels: listed(feels),
-    surfaces: listed(surfaces),
-    parts: listed(parts),
-    eras: [...eras.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0])))
-      .map(([name, count]) => [name, scale(count)]),
-    sampled: seen,
-    holds,
-    stride,
-    exact: stride === 1,
+/**
+ * The shelves, and exactly what is on each.
+ *
+ * A shelf is the top two levels of a path, which makes it a *prefix* rather
+ * than a value -- and a prefix over strings is a bounded range an index counts
+ * as cheaply as it counts one key.
+ *
+ * Finding them is the same trick in reverse. Rather than visiting every
+ * distinct folder, which in this collection is one per pattern, the cursor
+ * jumps: having seen `Pack/Rock/01`, it continues from just past everything
+ * beginning `Pack/Rock`, so the walk costs one step per shelf.
+ */
+async function shelvesIn(db, setId, already) {
+  if (setId) return already || []
+  if (!grooves(db).indexNames.contains('folder')) return []
+
+  const shelves = []
+
+  await new Promise((resolve) => {
+    let request
+    try {
+      request = grooves(db).index('folder').openKeyCursor()
+    } catch {
+      resolve()
+      return
+    }
+    request.onsuccess = () => {
+      const cursor = request.result
+      if (!cursor || shelves.length >= 400) { resolve(); return }
+      const shelf = String(cursor.key || '').split('/').slice(0, 2).join('/')
+      shelves.push(shelf)
+      try {
+        cursor.continue(`${shelf}\uffff`)
+      } catch {
+        resolve()
+      }
+    }
+    request.onerror = () => resolve()
+  })
+
+  const pairs = []
+  for (const shelf of shelves) {
+    const n = await ask(grooves(db).index('folder')
+      .count(IDBKeyRange.bound(shelf, `${shelf}\uffff`))).catch(() => 0)
+    if (n) pairs.push([shelf, n])
   }
+  return order('folder', pairs).slice(0, 120)
+}
+
+/**
+ * Biggest first, except lengths and decades, which read as a scale.
+ *
+ * A blank is never a value. Most paths say nothing about the feel and a good
+ * many say nothing about the genre, and an index happily counts the empty
+ * string as a key -- so the genre list offered `(903)` with no name against it,
+ * and choosing it matched everything, because "no genre" is the absence of a
+ * filter rather than a filter. Not having a genre is not a genre.
+ */
+function order(name, pairs) {
+  pairs = pairs.filter(([value]) => value !== '' && value !== null && value !== undefined)
+
+  if (name === 'bars') return pairs.slice().sort((a, b) => a[0] - b[0])
+  if (name === 'era') return pairs.slice().sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+  return pairs.slice().sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
 }
 
 /** Everything, gone. */
@@ -550,3 +823,96 @@ export async function clearImported() {
   tx.objectStore(GROOVES).clear()
   return done(tx)
 }
+
+/**
+ * How fast this browser's database really is, on rows written for the purpose.
+ *
+ * The filter path is checked against a real library in node -- @see
+ * scripts/filter_check.py -- against a stand-in for IndexedDB. That stand-in is
+ * correct and is not a performance model: its cursor deserialises every row it
+ * steps over, so it reports two hundred seconds for a walk WebKit does in a
+ * fraction of one. Choosing a storage engine on those numbers would be choosing
+ * it on a measurement of the wrong thing.
+ *
+ * So this exists to take the numbers where they matter, in the web view the
+ * plugin embeds. It writes into its own database and deletes it afterwards, so
+ * it can never touch somebody's catalogue. @see native/tools/boot_probe.m
+ */
+export async function measureStore(rows = 50000) {
+  if (typeof indexedDB === 'undefined') return 'no indexedDB'
+
+  const NAME = 'jamin.drums.probe'
+  await new Promise((done) => {
+    const wipe = indexedDB.deleteDatabase(NAME)
+    wipe.onsuccess = done; wipe.onerror = done; wipe.onblocked = done
+  })
+
+  const db = await new Promise((done) => {
+    const open = indexedDB.open(NAME, 1)
+    open.onupgradeneeded = () => {
+      const store = open.result.createObjectStore(GROOVES, { keyPath: 'id' })
+      for (const [name, field] of Object.entries(INDEXED)) store.createIndex(name, field)
+    }
+    open.onsuccess = () => done(open.result)
+    open.onerror = () => done(null)
+  })
+  if (!db) return 'would not open'
+
+  const GENRES = ['Rock', 'Jazz', 'Funk', 'Blues', 'Metal', 'Soul', 'Reggae', 'Pop']
+  const SURFACES = ['Hi-hat', 'Ride', 'Crash', 'Toms', 'Snare']
+  const since = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
+
+  const wrote = since()
+  for (let at = 0; at < rows; at += 2000) {
+    const tx = db.transaction(GROOVES, 'readwrite')
+    const store = tx.objectStore(GROOVES)
+    for (let n = at; n < Math.min(rows, at + 2000); n++) {
+      store.put({
+        id: `p:${n}`, s: `set-${n % 20}`, n: `groove ${n}`, p: `Pack ${n % 20}/Shelf ${n % 7}/g${n}`,
+        f: `Pack ${n % 20}/Shelf ${n % 7}`, k: n % 5 ? 'beat' : 'fill', r: (n % 8) + 1,
+        t: '4-4', g: GENRES[n % GENRES.length], b: 120,
+        x: { surface: SURFACES[n % SURFACES.length], feel: n % 3 ? 'Straight' : 'Shuffle' },
+        v: [], m: {},
+      })
+    }
+    await new Promise((done) => { tx.oncomplete = done; tx.onerror = done; tx.onabort = done })
+  }
+  const writeMs = Math.round(since() - wrote)
+
+  const timed = async (fn) => { const t = since(); const out = await fn(); return [Math.round(since() - t), out] }
+  const store = () => db.transaction(GROOVES, 'readonly').objectStore(GROOVES)
+  const one = (request) => new Promise((done) => {
+    request.onsuccess = () => done(request.result); request.onerror = () => done(null)
+  })
+
+  const [countMs, counted] = await timed(() =>
+    one(store().index('genre').count(IDBKeyRange.only('Rock'))))
+  const [keysMs, keys] = await timed(async () =>
+    (await one(store().index('genre').getAllKeys(IDBKeyRange.only('Rock')))) || [])
+  const [crossMs] = await timed(async () => {
+    const other = (await one(store().index('surface').getAllKeys(IDBKeyRange.only('Ride')))) || []
+    return intersect(keys.slice().sort(), other.slice().sort()).length
+  })
+  const [walkMs] = await timed(() => new Promise((done) => {
+    const request = store().index('genre').openCursor(IDBKeyRange.only('Rock'))
+    let seen = 0
+    request.onsuccess = () => {
+      const cursor = request.result
+      if (!cursor) { done(seen); return }
+      seen++
+      cursor.continue()
+    }
+    request.onerror = () => done(seen)
+  }))
+
+  db.close()
+  await new Promise((done) => {
+    const wipe = indexedDB.deleteDatabase(NAME)
+    wipe.onsuccess = done; wipe.onerror = done; wipe.onblocked = done
+  })
+
+  return `${rows} rows written in ${writeMs}ms · count ${counted} in ${countMs}ms`
+       + ` · keys in ${keysMs}ms · two facets in ${crossMs}ms · row walk in ${walkMs}ms`
+}
+
+if (typeof window !== 'undefined') window.__jaminStorageProbe = measureStore

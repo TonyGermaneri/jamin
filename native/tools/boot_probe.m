@@ -382,6 +382,40 @@ int main(int argc, const char **argv) {
               @"  }"
               @"  /* the plugin is a node: it joined, saw a peer, and sends its edits on */"
               @"  await wait(1200);"
+              /* What this web view can actually offer a database.
+                 Not an assertion -- it is a fact about the host's WebKit, and
+                 the point of measuring it is to stop anybody choosing a storage
+                 engine on a guess about a runtime nobody has looked at. */
+              @"  {"
+              @"    const has = [];"
+              @"    has.push('indexedDB=' + (typeof indexedDB !== 'undefined'));"
+              @"    has.push('opfs=' + !!(navigator.storage && navigator.storage.getDirectory));"
+              @"    has.push('worker=' + (typeof Worker !== 'undefined'));"
+              @"    has.push('wasm=' + (typeof WebAssembly !== 'undefined'));"
+              @"    has.push('sab=' + (typeof SharedArrayBuffer !== 'undefined'));"
+              @"    has.push('isolated=' + (typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : 'n/a'));"
+              @"    try {"
+              @"      if (navigator.storage && navigator.storage.getDirectory) {"
+              @"        const dir = await navigator.storage.getDirectory();"
+              @"        const file = await dir.getFileHandle('jamin-probe', { create: true });"
+              @"        has.push('opfsWrite=' + !!file);"
+              @"        has.push('sahpool=' + (typeof file.createSyncAccessHandle === 'function'));"
+              @"      }"
+              @"    } catch (e) { has.push('opfsWrite=threw:' + e.name); }"
+              @"    lines.push('storage: ' + has.join(' '));"
+              @"  }"
+              /* And how fast a real IndexedDB actually is.
+                 The filter path is verified against a real library in node,
+                 against a stand-in for the browser's database -- which is
+                 correct but is not a performance model for WebKit, where this
+                 runs. So the numbers are taken here, in the web view the plugin
+                 embeds, on rows written for the purpose.
+                 Reported rather than asserted: the machine decides the number,
+                 and a test that fails on a slow laptop teaches nobody anything. */
+              @"  if (window.__jaminStorageProbe) {"
+              @"    try { lines.push('idb: ' + await window.__jaminStorageProbe(20000)); }"
+              @"    catch (e) { lines.push('idb: threw ' + e.name + ' ' + e.message); }"
+              @"  }"
               @"  lines.push('netOps=' + ((window.__netOps || []).length));"
               @"  check('the plugin joined the network', (window.__netOps || []).length > 0);"
               @"  let sent = null;"
@@ -414,7 +448,7 @@ int main(int argc, const char **argv) {
                 if (e) { printf("probe failed: %s\n", e.localizedDescription.UTF8String); exit(1); }
             }];
         }];
-        [NSTimer scheduledTimerWithTimeInterval:25 repeats:NO block:^(NSTimer *t) {
+        [NSTimer scheduledTimerWithTimeInterval:40 repeats:NO block:^(NSTimer *t) {
             printf("timed out\n"); exit(1); }];
         [NSApp run];
     }

@@ -119,7 +119,7 @@ export const state = reactive({
   // What the last search of the catalogue did, so the list can say what it is
   // showing rather than implying it is everything. `total` is how many matched
   // and `exact` whether that was counted or estimated from an even sample.
-  drumSearch: { scanned: 0, holds: 0, stride: 1, total: 0, exact: true, partial: false },
+  drumSearch: { total: 0, exact: true, scanned: 0 },
   // True while the browser is rebuilding the catalogue's indexes, which it does
   // once after an update and silently. @see core/drumStore.js whileUpgrading
   drumUpgrading: false,
@@ -130,6 +130,8 @@ export const state = reactive({
     source: 'all',
     set: '', kind: '', bars: 0, signature: '', text: '', folder: '',
     genre: '', feel: '', surface: '', part: '', era: '',
+    // Which page of the answer, because the answer is not held in the browser.
+    page: 1, perPage: 12,
   },
   // A batch job. `total` is the browser's, which knows how many files it was
   // handed; the plugin walks a tree it has not counted, so it measures itself in
@@ -1075,7 +1077,7 @@ async function groovesForGenre(genre, kind) {
   let imported = []
   if (state.drumSets.length) {
     try {
-      const found = await searchGrooves({ kind, genre: genre || '' }, 200, 20000)
+      const found = await searchGrooves({ kind, genre: genre || '' }, { limit: 200 })
       imported = found.rows.map(unpackGroove)
     } catch {
       imported = []
@@ -2123,7 +2125,7 @@ function boundToImported(bindings) {
 }
 
 /** What the filters are showing, out of the imported catalogue. */
-export async function searchDrums(filters = null) {
+export async function searchDrums(filters = null, window = null) {
   if (filters) state.drumFilters = { ...state.drumFilters, ...filters }
   // Which library, remembered. Opening the plugin to the built-in corpus after
   // importing a collection reads as the collection having vanished.
@@ -2133,14 +2135,36 @@ export async function searchDrums(filters = null) {
   } catch {
     /* ignore */
   }
-  const found = await searchGrooves(state.drumFilters)
-  state.drumHits = found.rows.map(unpackGroove)
-  state.drumSearch = {
-    scanned: found.scanned, holds: found.holds, stride: found.stride,
-    total: found.total, exact: found.exact, partial: found.partial,
+  /*
+   * One page, not the first four hundred.
+   *
+   * The list used to pull four hundred rows and page through those in the
+   * browser, so a filter matching forty thousand patterns showed thirty-three
+   * pages and there was no way to reach the thirty-fourth. The database pages
+   * now: the count is exact and every page of it is reachable.
+   */
+  const limit = window && Number.isFinite(window.limit)
+    ? Math.max(0, window.limit) : state.drumFilters.perPage
+  const offset = window && Number.isFinite(window.offset)
+    ? Math.max(0, window.offset) : (state.drumFilters.page - 1) * state.drumFilters.perPage
+
+  // Nothing to fetch is not a reason to ask. A page filled entirely by the
+  // built-in corpus wants no rows from the database at all, and asking for
+  // zero of them would still cost the count.
+  if (limit <= 0) {
+    const counted = await searchGrooves(state.drumFilters, { limit: 0, offset: 0 })
+    state.drumHits = []
+    state.drumSearch = { total: counted.total, exact: counted.exact, scanned: counted.scanned }
+    return state.drumHits
   }
+
+  const found = await searchGrooves(state.drumFilters, { limit, offset })
+  state.drumHits = found.rows.map(unpackGroove)
+  state.drumSearch = { total: found.total, exact: found.exact, scanned: found.scanned }
   return state.drumHits
 }
+
+
 
 /** What the filters can offer. No library means across all of them. */
 export async function drumFacetsFor(setId) {

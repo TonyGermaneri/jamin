@@ -36,10 +36,16 @@ check('and the value to walk it at',
 // Without it a search for a genre walks every row there is.
 check('genre is indexable at all', indexable({ genre: 'Jazz' }).length, 1)
 
-// Nothing an index can answer. This is the case that has to sample.
-check('a surface is not indexed', indexable({ surface: 'Ride' }), [])
-check('nor a feel', indexable({ feel: 'Shuffle' }), [])
-check('nor free text', indexable({ text: 'carter' }), [])
+// What the folders said is indexed too, at the nested key where it already
+// lives. These were the facets with no index at all, which is why they were the
+// ones a search could not count and had to guess at.
+check('a surface is indexed', indexable({ surface: 'Ride' }).map((c) => c.name), ['surface'])
+check('so is a feel', indexable({ feel: 'Shuffle' }).map((c) => c.name), ['feel'])
+check('and a shelf', indexable({ folder: 'Pack/Rock' }).map((c) => c.name), ['folder'])
+
+// Free text is the one question no index can answer, so it is the one thing
+// applied as a predicate rather than as a range.
+check('free text is not indexable', indexable({ text: 'carter' }), [])
 check('and nothing at all is nothing', indexable({}), [])
 
 // An empty filter is not a filter. Asking the database for every row whose
@@ -48,22 +54,20 @@ check('an empty genre is not a filter', indexable({ genre: '' }), [])
 check('nor is no length', indexable({ bars: 0 }), [])
 check('and rubbish is survivable', indexable(), [])
 
-/* ---------------- how far apart to step --------------------------------- */
-// The whole of the bug, in one number. A budget that cannot cover the library
-// is spent across all of it rather than on the front of it.
-check('a budget that covers it walks every row', strideFor(500, 40000), 1)
-check('and exactly covering it still walks every row', strideFor(40000, 40000), 1)
-check('a library twice the budget is read every other row', strideFor(80000, 40000), 2)
-check('and the real one, every nineteenth', strideFor(774000, 40000), 19)
-
-// Stepping is a whole number of rows, so a stride always covers the library --
-// rounding up would walk off the end of it and read less than the budget.
-check('the stride never overshoots', strideFor(79999, 40000), 1)
-check('and 774,000 in nineteens is the whole of it', 19 * Math.floor(774000 / 19) <= 774000, true)
-
-check('an empty library needs no stride', strideFor(0, 40000), 1)
-check('nor does a missing one', strideFor(-1, 40000), 1)
-check('and no budget is not a divide by zero', strideFor(774000, 0), 1)
+/* ---------------- nothing is sampled any more ---------------------------
+ *
+ * There used to be a stride here: a budget of rows spread evenly over the
+ * catalogue, so a filter's count was a tally of what the walk happened to see
+ * multiplied by the gap between steps. It reported "1 bar (494), 2 bars
+ * (1,428), 3 bars (78)" over eight hundred thousand patterns -- three lengths
+ * where a real library has thirty-six, adding up to exactly the two thousand
+ * rows it had looked at.
+ *
+ * It is gone. Every filterable field is indexed, an index counts its own
+ * entries without reading a row, and what is measured against a real library is
+ * in scripts/filter_check.py -- which imports one and checks every count value
+ * by value against a tally kept in memory.
+ */
 
 /* ---------------- what a row is tested against -------------------------- */
 // Packed field names, because there are three quarters of a million of these
@@ -83,10 +87,16 @@ check('no filters is everything', matchesGroove(row, {}), true)
 
 // The whole path, not just the name: a vendor puts the kit, the drummer and the
 // tempo in there, none of which is a filter and all of which somebody types.
-check('text found in the path', matchesGroove(row, { needle: 'punk rock' }), true)
-check('text found in the name', matchesGroove(row, { needle: 'hihat' }), true)
-check('text found in a tag', matchesGroove(row, { needle: 'straight' }), true)
-check('and text found nowhere', matchesGroove(row, { needle: 'bagpipe' }), false)
+check('text found in the path', matchesGroove(row, { text: 'punk rock' }), true)
+check('text found in the name', matchesGroove(row, { text: 'hihat' }), true)
+check('text found in a tag', matchesGroove(row, { text: 'straight' }), true)
+check('and text found nowhere', matchesGroove(row, { text: 'bagpipe' }), false)
+
+// Text and a facet together: both have to hold. The index answers the facet and
+// this answers the rest, which is the only way the two can be combined.
+check('a facet and text together', matchesGroove(row, { genre: 'Punk', text: 'hihat' }), true)
+check('and the text still has to be there',
+      matchesGroove(row, { genre: 'Punk', text: 'bagpipe' }), false)
 
 // A shelf is a prefix of the path, so choosing a folder keeps what is under it.
 check('a shelf keeps what is on it', matchesGroove(row, { folder: 'Studio/11 Punk Rock' }), true)
