@@ -425,7 +425,11 @@ export function unpackGroove(row) {
     path: row.p,
     folder: row.f,
     kind: row.k,
-    genre: row.f ? String(row.f).split('/')[0] : '',
+    // The genre a folder name claimed, rather than whatever the top folder
+    // happened to be called -- which for `Superior Drummer 2 Drum Midi` was a
+    // genre of "Superior Drummer 2 Drum Midi". @see genres.js
+    genre: row.g || '',
+    tags: row.x || {},
     substyle: '',
     bpm: row.b || 0,
     timeSignature: row.t || '4-4',

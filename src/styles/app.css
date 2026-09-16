@@ -296,10 +296,9 @@ body,
     overflow-y: auto;
   }
 
-  /* Opening the filters spends about a third of a small window on controls.
-     The list is what gives way -- the pagination underneath it has to stay
-     where it can be reached, or the filters have taken away the only means of
-     acting on them. */
+  /* The drum book's filters moved to the right-hand pane, so they no longer
+     take height from the list and the list no longer gives way for them. The
+     phrase and progression books still have theirs above the list. */
   .jamin-book .jamin-filters-open .jamin-book-scroll {
     max-height: 12dvh;
   }

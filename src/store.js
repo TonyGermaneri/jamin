@@ -116,7 +116,14 @@ export const state = reactive({
   drumSets: [],
   drumHits: [],
   drumSearch: { scanned: 0, partial: false },
-  drumFilters: { set: '', kind: '', bars: 0, signature: '', text: '', folder: '' },
+  drumFilters: {
+    // `source` is what the interface chose: 'builtin', '' for every imported
+    // library at once, or one library's id. `set` is what the database query
+    // wants, which is the id or nothing.
+    source: 'builtin',
+    set: '', kind: '', bars: 0, signature: '', text: '', folder: '',
+    genre: '', feel: '', surface: '', part: '', era: '',
+  },
   // A batch job. `total` is the browser's, which knows how many files it was
   // handed; the plugin walks a tree it has not counted, so it measures itself in
   // packs and shelves, which it does know up front.
@@ -1798,9 +1805,12 @@ export async function openDrumBook() {
   state.ui.drums = true
   await refreshDrumSets()
   if (!state.drumSets.length) return
-  // A library that has since been removed is not one to search for.
-  if (!state.drumSets.some((set) => set.id === state.drumFilters.set)) state.drumFilters.set = ''
-  if (state.drumFilters.set) await searchDrums()
+  // A library that has since been removed is not one to search for; everything
+  // else is, including nothing at all, which now means every library at once.
+  if (state.drumFilters.set && !state.drumSets.some((set) => set.id === state.drumFilters.set)) {
+    state.drumFilters.set = ''
+  }
+  await searchDrums()
   measureStorage()
 }
 
@@ -1838,6 +1848,7 @@ export async function searchDrums(filters = null) {
   return state.drumHits
 }
 
+/** What the filters can offer. No library means across all of them. */
 export async function drumFacetsFor(setId) {
   return grooveFacets(setId || null)
 }

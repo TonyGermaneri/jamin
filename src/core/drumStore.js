@@ -211,12 +211,18 @@ export async function searchGrooves(filters = {}, limit = 400, scanLimit = 40000
   const db = await open()
   if (!db) return { rows: [], scanned: 0, partial: false }
 
-  const { set = '', kind = '', bars = 0, signature = '', text = '', folder = '' } = filters
+  const {
+    set = '', kind = '', bars = 0, signature = '', text = '', folder = '',
+    genre = '', feel = '', surface = '', part = '', era = '',
+  } = filters
   const needle = String(text || '').trim().toLowerCase()
 
   const store = db.transaction(GROOVES, 'readonly').objectStore(GROOVES)
   // The narrowest index the filters allow. A set is the biggest cut by far --
   // one library out of several -- so it wins when it is given.
+  // No set given means every library at once, which is what somebody looking
+  // for a groove rather than for a library wants. It costs a walk of the whole
+  // catalogue instead of one index range, which is what `scanLimit` is for.
   const source = set ? store.index('set').openCursor(IDBKeyRange.only(set))
     : kind ? store.index('kind').openCursor(IDBKeyRange.only(kind))
     : store.openCursor()
@@ -234,7 +240,9 @@ export async function searchGrooves(filters = {}, limit = 400, scanLimit = 40000
 
       scanned++
       const row = cursor.value
-      if (matches(row, { kind, bars, signature, needle, folder })) rows.push(row)
+      if (matches(row, { kind, bars, signature, needle, folder, genre, feel, surface, part, era })) {
+        rows.push(row)
+      }
       cursor.continue()
     }
     source.onerror = () => resolve()
@@ -243,15 +251,30 @@ export async function searchGrooves(filters = {}, limit = 400, scanLimit = 40000
   return { rows, scanned, partial: scanned >= scanLimit }
 }
 
-function matches(row, { kind, bars, signature, needle, folder }) {
+function matches(row, { kind, bars, signature, needle, folder, genre, feel, surface, part, era }) {
   if (kind && row.k !== kind) return false
   if (bars && row.r !== bars) return false
   if (signature && row.t !== signature) return false
   if (folder && !String(row.f || '').startsWith(folder)) return false
+  if (genre && row.g !== genre) return false
+
+  const tags = row.x || {}
+  if (feel && tags.feel !== feel) return false
+  if (surface && tags.surface !== surface) return false
+  if (part && tags.part !== part) return false
+  if (era && tags.era !== era) return false
 
   if (!needle) return true
+  // The whole path, not just the name and the shelf. A vendor puts the kit, the
+  // drummer and the tempo in there -- `Chrome Kit`, `CARTER_BEAUFORD`, `170BPM`
+  // -- none of which is a filter and all of which somebody might type.
+  if (String(row.p || '').toLowerCase().includes(needle)) return true
   if (String(row.n || '').toLowerCase().includes(needle)) return true
   if (String(row.f || '').toLowerCase().includes(needle)) return true
+  if (String(row.g || '').toLowerCase().includes(needle)) return true
+  for (const value of Object.values(tags)) {
+    if (String(value).toLowerCase().includes(needle)) return true
+  }
   for (const value of Object.values(row.m || {})) {
     if (String(value).toLowerCase().includes(needle)) return true
   }
@@ -315,6 +338,11 @@ export async function grooveFacets(setId = null, sample = 8000) {
   const kinds = new Map()
   const bars = new Map()
   const signatures = new Map()
+  const genres = new Map()
+  const feels = new Map()
+  const surfaces = new Map()
+  const parts = new Map()
+  const eras = new Map()
   let seen = 0
 
   await new Promise((resolve) => {
@@ -333,6 +361,12 @@ export async function grooveFacets(setId = null, sample = 8000) {
       bump(kinds, row.k)
       bump(bars, row.r)
       bump(signatures, row.t)
+      bump(genres, row.g)
+      const tags = row.x || {}
+      bump(feels, tags.feel)
+      bump(surfaces, tags.surface)
+      bump(parts, tags.part)
+      bump(eras, tags.era)
       if (stride > 1) cursor.advance(stride)
       else cursor.continue()
     }
@@ -345,6 +379,11 @@ export async function grooveFacets(setId = null, sample = 8000) {
     kinds: listed(kinds),
     bars: [...bars.entries()].sort((a, b) => a[0] - b[0]),
     signatures: listed(signatures),
+    genres: listed(genres).slice(0, 60),
+    feels: listed(feels),
+    surfaces: listed(surfaces),
+    parts: listed(parts),
+    eras: [...eras.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
     sampled: seen,
   }
 }

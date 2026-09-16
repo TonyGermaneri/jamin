@@ -56,6 +56,13 @@ const kind = ref('any')
 const genre = ref('any')
 const bars = ref('any')
 const signature = ref('any')
+// What the folders said. @see core/drumTags.js -- these were found by counting
+// 4,415 real paths, not by guessing: what the right hand is on turns up in half
+// of them and where in a song a pattern belongs in a fifth.
+const feel = ref('any')
+const surface = ref('any')
+const partTag = ref('any')
+const era = ref('any')
 const onlyFavourites = ref(false)
 /** Only patterns that go into one of the song's parts a whole number of times. */
 const onlyFitting = ref(false)
@@ -91,23 +98,41 @@ watch(() => state.ui.drums, (open) => {
  * is also what the database query needs.
  */
 const library = computed({
-  get: () => state.drumFilters.set || '',
+  get: () => state.drumFilters.source,
   set: (value) => {
-    state.drumFilters.set = value || ''
+    state.drumFilters.source = value
+    state.drumFilters.set = value === BUILT_IN ? '' : value
     state.drumFilters.folder = ''
   },
 })
 
-const libraries = computed(() => [
-  { title: `Built in (${state.drums.length.toLocaleString()})`, value: '' },
-  ...state.drumSets.map((set) => ({
-    title: `${set.name} (${(set.count || 0).toLocaleString()})`,
-    value: set.id,
-  })),
-])
+/**
+ * Which source, with two that are not one library.
+ *
+ * `builtin` is the shipped corpus, in memory. `` is every imported library at
+ * once, which is what somebody looking for a groove rather than for a library
+ * wants -- and was missing, so a collection of fifty packs could only ever be
+ * searched one pack at a time.
+ */
+const ALL_IMPORTED = ''
+const BUILT_IN = 'builtin'
+
+const libraries = computed(() => {
+  const imported = state.drumSets.reduce((sum, set) => sum + (set.count || 0), 0)
+  return [
+    { title: `Built in (${state.drums.length.toLocaleString()})`, value: BUILT_IN },
+    ...(state.drumSets.length
+      ? [{ title: `Everything imported (${imported.toLocaleString()})`, value: ALL_IMPORTED }]
+      : []),
+    ...state.drumSets.map((set) => ({
+      title: `${set.name} (${(set.count || 0).toLocaleString()})`,
+      value: set.id,
+    })),
+  ]
+})
 
 /** True when the list is coming out of the database rather than memory. */
-const imported = computed(() => Boolean(library.value))
+const imported = computed(() => library.value !== BUILT_IN)
 
 /**
  * The shelves inside the chosen library, as filters.
@@ -117,11 +142,16 @@ const imported = computed(() => Boolean(library.value))
  * wants to narrow by. Read from the database's own sampling rather than from
  * the rows on screen, which are one page of several hundred thousand.
  */
-const facets = ref({ folders: [], kinds: [], bars: [], signatures: [] })
+const EMPTY_FACETS = {
+  folders: [], kinds: [], bars: [], signatures: [],
+  genres: [], feels: [], surfaces: [], parts: [], eras: [],
+}
+const facets = ref(EMPTY_FACETS)
 
-watch(library, async (id) => {
-  facets.value = { folders: [], kinds: [], bars: [], signatures: [] }
-  if (id) facets.value = await drumFacetsFor(id)
+watch(library, async (which) => {
+  facets.value = EMPTY_FACETS
+  // An empty set id means every library, which the facets understand too.
+  if (which !== BUILT_IN) facets.value = await drumFacetsFor(state.drumFilters.set)
 }, { immediate: true })
 
 /** What this groove's library is read as, by name rather than by id. */
@@ -146,6 +176,18 @@ function fromFacet(pairs, label, title = (name) => String(name)) {
   ]
 }
 
+/**
+ * What the folders said, as filters.
+ *
+ * These are the facets nobody would think to ask for and the counting found:
+ * what the right hand is on turns up in half of all paths, and where in a song
+ * a pattern belongs in a fifth of them. @see core/drumTags.js
+ */
+const feels = computed(() => fromFacet(facets.value.feels, 'Any feel'))
+const surfaces = computed(() => fromFacet(facets.value.surfaces, 'Played on anything'))
+const partTags = computed(() => fromFacet(facets.value.parts, 'Any part of a song'))
+const eras = computed(() => fromFacet(facets.value.eras, 'Any era'))
+
 const shelves = computed(() => [
   { title: 'Every shelf', value: '' },
   ...facets.value.folders.map(([name, count]) => ({
@@ -162,14 +204,21 @@ const shelves = computed(() => [
  * corpus never comes here -- it is in memory and filtering it is a walk.
  */
 watch(
-  () => [library.value, shelf.value, search.value, kind.value, bars.value, signature.value],
+  () => [library.value, shelf.value, search.value, kind.value, bars.value, signature.value,
+         genre.value, feel.value, surface.value, partTag.value, era.value],
   () => {
-    if (!library.value) return
+    if (!imported.value) return
+    const some = (value) => (value === 'any' ? '' : value)
     searchDrums({
       text: search.value,
-      kind: kind.value === 'any' ? '' : kind.value,
+      kind: some(kind.value),
       bars: bars.value === 'any' ? 0 : Number(bars.value),
-      signature: signature.value === 'any' ? '' : signature.value,
+      signature: some(signature.value),
+      genre: some(genre.value),
+      feel: some(feel.value),
+      surface: some(surface.value),
+      part: some(partTag.value),
+      era: some(era.value),
     })
   },
   { immediate: true }
@@ -196,7 +245,9 @@ function facet(pick, label) {
 const kinds = computed(() => imported.value
   ? fromFacet(facets.value.kinds, 'Beats and fills')
   : facet((groove) => groove.kind, 'Beats and fills'))
-const genres = computed(() => facet((groove) => groove.genre, 'Any genre'))
+const genres = computed(() => imported.value
+  ? fromFacet(facets.value.genres, 'Any genre')
+  : facet((groove) => groove.genre, 'Any genre'))
 
 /** Length in bars, which is the filter that decides whether a groove fits. */
 const barCounts = computed(() => {
@@ -245,9 +296,11 @@ const matches = computed(() => {
 })
 
 const activeFilters = computed(() =>
-  [kind.value !== 'any', !imported.value && genre.value !== 'any',
+  [kind.value !== 'any', genre.value !== 'any',
    imported.value && Boolean(shelf.value), bars.value !== 'any',
-   signature.value !== 'any', onlyFavourites.value, onlyFitting.value].filter(Boolean).length)
+   signature.value !== 'any', feel.value !== 'any', surface.value !== 'any',
+   partTag.value !== 'any', era.value !== 'any',
+   onlyFavourites.value, onlyFitting.value].filter(Boolean).length)
 
 /** The song's parts and how long each is, for the fitting switch to explain
     itself -- "fits the song" is meaningless without saying what the song is. */
@@ -262,6 +315,10 @@ function clearFilters() {
   bars.value = 'any'
   signature.value = 'any'
   shelf.value = ''
+  feel.value = 'any'
+  surface.value = 'any'
+  partTag.value = 'any'
+  era.value = 'any'
   onlyFavourites.value = false
   onlyFitting.value = false
 }
@@ -650,81 +707,11 @@ function resetMap() {
                   </InfoTip>
                 </div>
 
-                <v-expansion-panels v-model="filtersOpen" variant="accordion"
-                                    class="mb-2 flex-grow-0 jamin-book-filters">
-                  <v-expansion-panel>
-                    <v-expansion-panel-title class="text-caption py-0">
-                      <v-icon size="16" class="mr-2">mdi-filter-variant</v-icon>
-                      <span v-if="activeFilters">{{ activeFilters }} filter{{ activeFilters === 1 ? '' : 's' }}</span>
-                      <span v-else>Filters</span>
-                      <v-spacer />
-                      <span class="text-medium-emphasis mr-2">{{ matches.length.toLocaleString() }}</span>
-                    </v-expansion-panel-title>
-                    <v-expansion-panel-text>
-                      <v-row dense>
-                        <!-- Which catalogue. The built-in corpus is in memory
-                             and an imported one is in the database, so this is
-                             a choice rather than a filter: they cannot be shown
-                             as one list without holding the big one. -->
-                        <v-col v-if="state.drumSets.length" cols="12">
-                          <v-select v-model="library" :items="libraries" label="Library"
-                                    density="compact" hide-details />
-                        </v-col>
-                        <v-col cols="6">
-                          <v-select v-model="kind" :items="kinds" label="Kind" density="compact" hide-details />
-                        </v-col>
-                        <!-- A vendor's folder names are the only structure a
-                             collection like this has, so they are what somebody
-                             narrows by. The built-in corpus has genres instead. -->
-                        <v-col cols="6">
-                          <v-select v-if="imported" v-model="shelf" :items="shelves"
-                                    label="Folder it came from" density="compact" hide-details />
-                          <v-select v-else v-model="genre" :items="genres" label="Genre"
-                                    density="compact" hide-details />
-                        </v-col>
-                        <v-col cols="6">
-                          <v-select v-model="bars" :items="barCounts" label="Length" density="compact" hide-details />
-                        </v-col>
-                        <v-col cols="6">
-                          <v-select v-model="signature" :items="signatures" label="Time signature"
-                                    density="compact" hide-details />
-                        </v-col>
-                        <v-col cols="12">
-                          <v-switch v-model="onlyFavourites" density="compact" hide-details color="error"
-                                    :label="`Favourites only (${state.favourites.length})`" />
-                          <div class="d-flex align-center">
-                            <v-switch v-model="onlyFitting" density="compact" hide-details color="primary"
-                                      :disabled="!parts.length"
-                                      label="Only what fits the song" />
-                            <InfoTip>
-                              Keeps the patterns that go into one of this song's parts a whole
-                              number of times. A two-bar groove fits an eight-bar verse four times;
-                              a three-bar one does not fit at all and would be cut off mid-phrase
-                              every time round, which is what makes a loop sound like a mistake
-                              rather than a part.
-                              <br /><br />
-                              <span v-if="parts.length">
-                                This song:
-                                <span v-for="part in parts" :key="part.name" class="mr-2">
-                                  {{ part.name === ' song' ? 'the whole song' : part.name }}
-                                  {{ part.bars }} bars
-                                </span>
-                              </span>
-                              <span v-else>There is nothing in the chart to fit yet.</span>
-                            </InfoTip>
-                          </div>
-                        </v-col>
-                        <v-col v-if="activeFilters" cols="12" class="text-right">
-                          <v-btn size="x-small" variant="text" @click="clearFilters">Clear them</v-btn>
-                        </v-col>
-                      </v-row>
-                    </v-expansion-panel-text>
-                  </v-expansion-panel>
-                </v-expansion-panels>
 
+                <!-- No longer gives way when the filters open: they are on
+                     the other side now and take nothing from the list. -->
                 <v-list v-if="list.length" ref="listEl" density="compact"
                         class="py-0 jamin-book-scroll"
-                        :class="{ 'jamin-filters-open': filtersOpen !== undefined }"
                         tabindex="0"
                         style="outline: none"
                         @keydown="onKey"
@@ -831,6 +818,106 @@ function resetMap() {
 
               <!-- What you picked -->
               <v-col cols="12" md="5" class="jamin-book-col">
+                <!-- The filters live here rather than above the list.
+                     Folded away over the list they still took a line, and
+                     opened they took a third of the window from the one thing
+                     there are three quarters of a million of. On this side they
+                     cost the list nothing. -->
+                <v-expansion-panels v-model="filtersOpen" variant="accordion"
+                                    class="mb-3 flex-grow-0 jamin-book-filters">
+                  <v-expansion-panel>
+                    <v-expansion-panel-title class="text-caption py-0">
+                      <v-icon size="16" class="mr-2">mdi-filter-variant</v-icon>
+                      <span v-if="activeFilters">
+                        {{ activeFilters }} filter{{ activeFilters === 1 ? '' : 's' }}
+                      </span>
+                      <span v-else>Filters</span>
+                      <v-spacer />
+                      <span class="text-medium-emphasis mr-2">{{ matches.length.toLocaleString() }}</span>
+                    </v-expansion-panel-title>
+                    <v-expansion-panel-text>
+                      <v-row dense>
+                        <v-col v-if="state.drumSets.length" cols="12">
+                          <v-select v-model="library" :items="libraries" label="Library"
+                                    density="compact" hide-details />
+                        </v-col>
+                        <v-col cols="6">
+                          <v-select v-model="kind" :items="kinds" label="Kind"
+                                    density="compact" hide-details />
+                        </v-col>
+                        <v-col cols="6">
+                          <v-select v-model="genre" :items="genres" label="Genre"
+                                    density="compact" hide-details />
+                        </v-col>
+                        <v-col cols="6">
+                          <v-select v-model="bars" :items="barCounts" label="Length"
+                                    density="compact" hide-details />
+                        </v-col>
+                        <v-col cols="6">
+                          <v-select v-model="signature" :items="signatures" label="Time signature"
+                                    density="compact" hide-details />
+                        </v-col>
+
+                        <!-- What the folders said. Found by counting 4,415 real
+                             paths rather than by guessing: what the right hand
+                             is on is in half of them. @see core/drumTags.js -->
+                        <template v-if="imported">
+                          <v-col cols="6">
+                            <v-select v-model="surface" :items="surfaces" label="Played on"
+                                      density="compact" hide-details />
+                          </v-col>
+                          <v-col cols="6">
+                            <v-select v-model="feel" :items="feels" label="Feel"
+                                      density="compact" hide-details />
+                          </v-col>
+                          <v-col cols="6">
+                            <v-select v-model="partTag" :items="partTags" label="Part of a song"
+                                      density="compact" hide-details />
+                          </v-col>
+                          <v-col cols="6">
+                            <v-select v-model="era" :items="eras" label="Era"
+                                      density="compact" hide-details />
+                          </v-col>
+                          <v-col cols="12">
+                            <v-select v-model="shelf" :items="shelves" label="Folder it came from"
+                                      density="compact" hide-details />
+                          </v-col>
+                        </template>
+
+                        <v-col cols="12">
+                          <v-switch v-model="onlyFavourites" density="compact" hide-details
+                                    color="error"
+                                    :label="`Favourites only (${state.favourites.length})`" />
+                          <div class="d-flex align-center">
+                            <v-switch v-model="onlyFitting" density="compact" hide-details
+                                      color="primary" :disabled="!parts.length"
+                                      label="Only what fits the song" />
+                            <InfoTip>
+                              Keeps the patterns that go into one of this song's parts a whole
+                              number of times. A two-bar groove fits an eight-bar verse four times;
+                              a three-bar one does not fit at all and would be cut off mid-phrase
+                              every time round, which is what makes a loop sound like a mistake
+                              rather than a part.
+                              <br /><br />
+                              <span v-if="parts.length">
+                                This song:
+                                <span v-for="one in parts" :key="one.name" class="mr-2">
+                                  {{ one.name === ' song' ? 'the whole song' : one.name }}
+                                  {{ one.bars }} bars
+                                </span>
+                              </span>
+                              <span v-else>There is nothing in the chart to fit yet.</span>
+                            </InfoTip>
+                          </div>
+                        </v-col>
+                        <v-col v-if="activeFilters" cols="12" class="text-right">
+                          <v-btn size="x-small" variant="text" @click="clearFilters">Clear them</v-btn>
+                        </v-col>
+                      </v-row>
+                    </v-expansion-panel-text>
+                  </v-expansion-panel>
+                </v-expansion-panels>
+
                 <div v-if="!selected" class="text-caption text-medium-emphasis pa-2">
                   Pick a groove to see what it is and bind it to a part of the song.
                 </div>
