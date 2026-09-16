@@ -50,6 +50,7 @@ import { searchDrums as searchGrooveList, summarizeGroove } from '../core/drums.
 import { DRUM_KITS, DRUM_VOICES, kitById, gmName, mapDrumNote, TD11_TO_VOICE } from '../core/drumKits.js'
 import InfoTip from './InfoTip.vue'
 import { vDragMidi } from '../core/dragOut.js'
+import { everyTag } from '../core/drumTags.js'
 
 const search = ref('')
 const kind = ref('any')
@@ -183,10 +184,38 @@ function fromFacet(pairs, label, title = (name) => String(name)) {
  * what the right hand is on turns up in half of all paths, and where in a song
  * a pattern belongs in a fifth of them. @see core/drumTags.js
  */
-const feels = computed(() => fromFacet(facets.value.feels, 'Any feel'))
-const surfaces = computed(() => fromFacet(facets.value.surfaces, 'Played on anything'))
-const partTags = computed(() => fromFacet(facets.value.parts, 'Any part of a song'))
-const eras = computed(() => fromFacet(facets.value.eras, 'Any era'))
+/**
+ * A dropdown that is never mysteriously empty.
+ *
+ * Where the catalogue has counted values, those are offered with their counts.
+ * Where it has none -- an empty library, or the built-in corpus, which carries
+ * no surface or feel at all -- the whole vocabulary is offered instead, so the
+ * control says what it is for rather than being a blank box or vanishing.
+ * Whether it can actually narrow anything is said next to it. @see tagHint
+ */
+function tagOptions(counted, kind, label) {
+  if (counted && counted.length) return fromFacet(counted, label)
+  return [{ title: label, value: 'any' }, ...everyTag(kind).map((name) => ({ title: name, value: name }))]
+}
+
+const feels = computed(() => tagOptions(facets.value.feels, 'feel', 'Any feel'))
+const surfaces = computed(() => tagOptions(facets.value.surfaces, 'surface', 'Played on anything'))
+const partTags = computed(() => tagOptions(facets.value.parts, 'part', 'Any part of a song'))
+const eras = computed(() => tagOptions(facets.value.eras, 'era', 'Any era'))
+
+/**
+ * Whether a filter has anything to work with here, and why not.
+ *
+ * Hiding a control that cannot do anything leaves somebody looking for a filter
+ * that is not there; showing one that silently matches nothing is worse. So it
+ * is shown, and it says.
+ */
+function tagHint(counted) {
+  if (counted && counted.length) return ''
+  if (!imported.value) return 'The built-in corpus does not say'
+  if (!state.drumSets.length) return 'Nothing imported yet'
+  return 'Nothing in this library says'
+}
 
 const shelves = computed(() => [
   { title: 'Every shelf', value: '' },
@@ -837,9 +866,11 @@ function resetMap() {
                     </v-expansion-panel-title>
                     <v-expansion-panel-text>
                       <v-row dense>
-                        <v-col v-if="state.drumSets.length" cols="12">
+                        <v-col cols="12">
                           <v-select v-model="library" :items="libraries" label="Library"
-                                    density="compact" hide-details />
+                                    :hint="state.drumSets.length ? '' : 'Point at a folder on the Libraries tab to add more'"
+                                    :persistent-hint="!state.drumSets.length"
+                                    density="compact" />
                         </v-col>
                         <v-col cols="6">
                           <v-select v-model="kind" :items="kinds" label="Kind"
@@ -860,29 +891,35 @@ function resetMap() {
 
                         <!-- What the folders said. Found by counting 4,415 real
                              paths rather than by guessing: what the right hand
-                             is on is in half of them. @see core/drumTags.js -->
-                        <template v-if="imported">
-                          <v-col cols="6">
-                            <v-select v-model="surface" :items="surfaces" label="Played on"
-                                      density="compact" hide-details />
-                          </v-col>
-                          <v-col cols="6">
-                            <v-select v-model="feel" :items="feels" label="Feel"
-                                      density="compact" hide-details />
-                          </v-col>
-                          <v-col cols="6">
-                            <v-select v-model="partTag" :items="partTags" label="Part of a song"
-                                      density="compact" hide-details />
-                          </v-col>
-                          <v-col cols="6">
-                            <v-select v-model="era" :items="eras" label="Era"
-                                      density="compact" hide-details />
-                          </v-col>
-                          <v-col cols="12">
-                            <v-select v-model="shelf" :items="shelves" label="Folder it came from"
-                                      density="compact" hide-details />
-                          </v-col>
-                        </template>
+                             is on is in half of them. @see core/drumTags.js
+
+                             All of them shown whatever the source. A control
+                             that appears and disappears with the library is one
+                             somebody goes looking for and cannot find. -->
+                        <v-col cols="6">
+                          <v-select v-model="surface" :items="surfaces" label="Played on"
+                                    :hint="tagHint(facets.surfaces)" persistent-hint
+                                    density="compact" />
+                        </v-col>
+                        <v-col cols="6">
+                          <v-select v-model="feel" :items="feels" label="Feel"
+                                    :hint="tagHint(facets.feels)" persistent-hint
+                                    density="compact" />
+                        </v-col>
+                        <v-col cols="6">
+                          <v-select v-model="partTag" :items="partTags" label="Part of a song"
+                                    :hint="tagHint(facets.parts)" persistent-hint
+                                    density="compact" />
+                        </v-col>
+                        <v-col cols="6">
+                          <v-select v-model="era" :items="eras" label="Era"
+                                    :hint="tagHint(facets.eras)" persistent-hint
+                                    density="compact" />
+                        </v-col>
+                        <v-col v-if="imported" cols="12">
+                          <v-select v-model="shelf" :items="shelves" label="Folder it came from"
+                                    density="compact" hide-details />
+                        </v-col>
 
                         <v-col cols="12">
                           <v-switch v-model="onlyFavourites" density="compact" hide-details
