@@ -418,14 +418,14 @@ function clearFilters() {
 }
 
 /**
- * When the count is not the whole truth, which is one case and it says so.
+ * How many pages there are, which the pager now says on its own.
  *
- * A free-text search with no facet set has no index to narrow it, so it walks
- * the catalogue and stops at a fixed number of rows. Everything else is counted
- * by an index and is exact.
+ * `found` is exact in every case but one: a free-text search with no facet set
+ * has no index to narrow it, so it walks the catalogue and stops at a fixed
+ * number of rows. `state.drumSearch.exact` is false there, and the page count
+ * is a floor rather than a total -- which is the honest thing for a pager to
+ * do, since the pages it offers all exist.
  */
-const capped = computed(() => !state.drumSearch.exact)
-
 const pageCount = computed(() => Math.max(1, Math.ceil(found.value / PER_PAGE)))
 
 /**
@@ -1127,24 +1127,25 @@ function resetMap() {
                   </div>
                 </div>
 
+                <!--
+                  The pager gets the line to itself.
+
+                  It used to share it with "404,339 found · page 22 of 40,434",
+                  which is a lot of characters to say what the pager is already
+                  showing and what the filter panel says two inches away. With
+                  the room back, more page numbers fit, which is the thing that
+                  actually helps at forty thousand pages.
+                -->
                 <div class="d-flex align-center flex-grow-0 mt-1">
                   <v-pagination v-if="pageCount > 1" v-model="page" :length="pageCount"
-                                :total-visible="5" density="compact" size="small" />
-                  <v-spacer />
-                  <span class="text-caption text-medium-emphasis">
-                    <template v-if="state.drumUpgrading">
-                      <v-progress-circular indeterminate size="12" width="2" class="mr-1" />
-                      Rebuilding the catalogue's index, once
-                    </template>
-                    <template v-else>
-                      <!-- Counted by an index, which answers it without reading
-                           a row. The one exception says so: a free-text search
-                           with no facet set has nothing to narrow it. -->
-                      {{ found.toLocaleString() }}<span v-if="capped">+</span> found
-                      <span v-if="pageCount > 1">
-                        · page {{ page.toLocaleString() }} of {{ pageCount.toLocaleString() }}
-                      </span>
-                    </template>
+                                :total-visible="9" density="compact" size="small"
+                                class="flex-grow-1" />
+                  <v-spacer v-else />
+                  <!-- Transient, and the only thing here worth a line of text:
+                       a wait nobody asked for looks like a hang. -->
+                  <span v-if="state.drumUpgrading" class="text-caption text-medium-emphasis ml-2">
+                    <v-progress-circular indeterminate size="12" width="2" class="mr-1" />
+                    Rebuilding the catalogue's index, once
                   </span>
                 </div>
               </v-col>
