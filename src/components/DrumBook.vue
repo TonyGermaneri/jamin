@@ -110,16 +110,14 @@ watch(() => state.ui.book === 'drums', (open) => {
 /**
  * Which catalogue the list is showing.
  *
- * Two sources, and they cannot be one. The bundled corpus is 1,150 patterns in
- * memory and is filtered by walking it. An imported library can be three
- * quarters of a million and lives in the database, so it is filtered by asking
- * the database and what comes back is a page of answers. Merging them into one
- * array would mean holding the second one, which is the thing that cannot be
- * done.
+ * One source. The corpus that ships with jamin is filed in the database
+ * alongside everything imported, so a library is a library and the only
+ * question is which one -- or all of them.
  *
- * So the library is a choice: the built-in corpus, or one of the libraries that
- * was imported. `state.drumFilters.set` is where that choice lives, because it
- * is also what the database query needs.
+ * It was two, and they were different all the way down: the corpus in memory
+ * filtered by walking it, an imported library in the database filtered by
+ * asking it. Every count had to be added up from two places and every page
+ * stitched out of two sources. @see store.shelveTheCorpus
  */
 const library = computed({
   get: () => state.drumFilters.source,
@@ -127,7 +125,7 @@ const library = computed({
     state.drumFilters.source = value
     // Neither 'everything' nor 'built in' names a library, and the query wants
     // a library or nothing -- nothing meaning every one of them.
-    state.drumFilters.set = value === BUILT_IN || value === EVERYTHING ? '' : value
+    state.drumFilters.set = value === EVERYTHING ? '' : value
     state.drumFilters.folder = ''
   },
 })
@@ -135,19 +133,24 @@ const library = computed({
 /**
  * Which source, with two that are not one library.
  *
- * `builtin` is the shipped corpus, in memory. `` is every imported library at
- * once, which is what somebody looking for a groove rather than for a library
- * wants -- and was missing, so a collection of fifty packs could only ever be
- * searched one pack at a time.
+ * `` is every library at once, which is what somebody looking for a groove
+ * rather than for a library wants -- and was missing, so a collection of fifty
+ * packs could only ever be searched one pack at a time.
  */
 const EVERYTHING = 'all'
-const BUILT_IN = 'builtin'
 
+/**
+ * Every library, and the corpus is one of them.
+ *
+ * There used to be a third thing here -- "Built in", which was not a library
+ * but a separate list in memory with its own filtering, its own counting and
+ * its own half of every page. @see store.shelveTheCorpus for why it is filed in
+ * the database now: so that there is one question with one answer.
+ */
 const libraries = computed(() => {
-  const inLibraries = state.drumSets.reduce((sum, set) => sum + (set.count || 0), 0)
+  const all = state.drumSets.reduce((sum, set) => sum + (set.count || 0), 0)
   return [
-    { title: `Everything (${(state.drums.length + inLibraries).toLocaleString()})`, value: EVERYTHING },
-    { title: `Built in (${state.drums.length.toLocaleString()})`, value: BUILT_IN },
+    { title: `Everything (${all.toLocaleString()})`, value: EVERYTHING },
     ...state.drumSets.map((set) => ({
       title: `${set.name} (${(set.count || 0).toLocaleString()})`,
       value: set.id,
@@ -155,11 +158,9 @@ const libraries = computed(() => {
   ]
 })
 
-/** Whether the catalogue is being searched at all. */
-const imported = computed(() => library.value !== BUILT_IN)
-
-/** Whether the corpus that ships with jamin is part of what is showing. */
-const builtinShowing = computed(() => library.value === EVERYTHING || library.value === BUILT_IN)
+/** How many patterns there are in total, whoever made them. */
+const everything = computed(() =>
+  state.drumSets.reduce((sum, set) => sum + (set.count || 0), 0))
 
 /**
  * The shelves inside the chosen library, as filters.
@@ -176,10 +177,10 @@ const EMPTY_FACETS = {
 }
 const facets = ref(EMPTY_FACETS)
 
-watch(library, async (which) => {
+watch(library, async () => {
   facets.value = EMPTY_FACETS
   // An empty set id means every library, which the facets understand too.
-  if (which !== BUILT_IN) facets.value = await drumFacetsFor(state.drumFilters.set)
+  facets.value = await drumFacetsFor(state.drumFilters.set)
 }, { immediate: true })
 
 /** What this groove's library is read as, by name rather than by id. */
@@ -247,7 +248,6 @@ const eras = computed(() => tagOptions(facets.value.eras, 'era', 'Any era'))
  */
 function tagHint(counted) {
   if (counted && counted.length) return ''
-  if (!imported.value) return 'The built-in corpus does not say'
   if (!state.drumSets.length) return 'Nothing imported yet'
   return 'Nothing in this library says'
 }
@@ -267,6 +267,24 @@ const shelves = computed(() => [
  * them is one query rather than each control running its own. The built-in
  * corpus never comes here -- it is in memory and filtering it is a walk.
  */
+/**
+ * Every length that goes into one of this song's parts a whole number of times.
+ *
+ * Which is all "only what fits" means: a two-bar groove fits an eight-bar verse
+ * four times, a three-bar one does not fit at all. @see core/drums.js fitsBars
+ * decides it from the groove's length and nothing else -- so the question can
+ * be put to an index rather than asked of every row.
+ */
+function lengthsThatFit() {
+  const lengths = new Set()
+  for (const section of parts.value) {
+    for (let n = 1; n <= section.bars; n++) {
+      if (section.bars % n === 0) lengths.add(n)
+    }
+  }
+  return [...lengths].sort((a, b) => a - b)
+}
+
 const filterValues = () => {
   const some = (value) => (value === 'any' ? '' : value)
   return {
@@ -295,17 +313,13 @@ const filterValues = () => {
  * filled what it can.
  */
 function ask({ fresh = false } = {}) {
-  if (!imported.value) return
-  const before = builtinShowing.value ? fromCorpus.value.length : 0
-  const at = (page.value - 1) * PER_PAGE
-  const fromHere = Math.max(0, Math.min(PER_PAGE, before - at))
   // Filters go down only when they have changed. Passing them again on a page
   // turn is how the store learns the question is new, and a new question throws
   // away where the last page ended -- which is the whole of what makes turning
   // to page eighty thousand cost the same as turning to page two.
   searchDrums(fresh ? filterValues() : null, {
-    offset: Math.max(0, at - before),
-    limit: PER_PAGE - fromHere,
+    offset: Math.max(0, (page.value - 1) * PER_PAGE),
+    limit: PER_PAGE,
   })
 }
 
@@ -350,96 +364,34 @@ function facet(pick, label) {
   ]
 }
 
-const kinds = computed(() => imported.value
-  ? fromFacet(facets.value.kinds, 'Beats and fills')
-  : facet((groove) => groove.kind, 'Beats and fills'))
-const genres = computed(() => imported.value
-  ? fromFacet(facets.value.genres, 'Any genre')
-  : facet((groove) => groove.genre, 'Any genre'))
+const kinds = computed(() => fromFacet(facets.value.kinds, 'Beats and fills'))
+const genres = computed(() => fromFacet(facets.value.genres, 'Any genre'))
 
 /** Length in bars, which is the filter that decides whether a groove fits. */
-const barCounts = computed(() => {
-  if (imported.value) {
-    return fromFacet(facets.value.bars, 'Any length', (n) => `${n} bar${n === '1' || n === 1 ? '' : 's'}`)
-  }
-  const counts = new Map()
-  for (const groove of drums.value) counts.set(groove.bars, (counts.get(groove.bars) || 0) + 1)
-  return [
-    { title: 'Any length', value: 'any' },
-    ...[...counts.entries()].sort((a, b) => a[0] - b[0]).map(([n, count]) => ({
-      title: `${n} bar${n === 1 ? '' : 's'} (${count.toLocaleString()})`,
-      value: String(n),
-    })),
-  ]
-})
+const barCounts = computed(() =>
+  fromFacet(facets.value.bars, 'Any length', (n) => `${n} bar${n === '1' || n === 1 ? '' : 's'}`))
 
 /** Time signature. Nearly all of the corpus is in four, which is worth seeing
     rather than discovering when a groove in seven will not sit in the bar. */
-const signatures = computed(() => imported.value
-  ? fromFacet(facets.value.signatures, 'Any time signature')
-  : facet((groove) => groove.timeSignature, 'Any time signature'))
+const signatures = computed(() => fromFacet(facets.value.signatures, 'Any time signature'))
 
 /**
- * The built-in corpus, filtered here because it is here.
+ * How many patterns the filters are showing. Exactly, and all of them.
  *
- * Eleven hundred patterns in memory: filtering them is a walk and counting them
- * is exact, so they are counted rather than estimated and they come first on
- * the page. The stars and the fitting switch live here too -- both are facts
- * about this chart and this browser, which no index in the database knows.
+ * One number from one place. It used to be the length of an in-memory list plus
+ * a count from the database, because the corpus and an imported library were
+ * two different kinds of thing filtered two different ways -- which is how the
+ * tab came to say "Grooves (1,150)" over a catalogue of three quarters of a
+ * million. @see store.shelveTheCorpus
  */
-const fromCorpus = computed(() => {
-  if (!builtinShowing.value) return []
-  const starred = state.favourites.length
-  return searchGrooveList(drums.value, search.value).filter((groove) => {
-    if (kind.value !== 'any' && groove.kind !== kind.value) return false
-    if (genre.value !== 'any' && groove.genre !== genre.value) return false
-    if (bars.value !== 'any' && String(groove.bars) !== bars.value) return false
-    if (signature.value !== 'any' && groove.timeSignature !== signature.value) return false
-    if (onlyFavourites.value && (!starred || !favourite(groove))) return false
-    if (onlyFitting.value && !partsItFits(groove).length) return false
-    return true
-  })
-})
+const found = computed(() => state.drumSearch.total)
 
-/**
- * The rows from the catalogue, which are one page of a much longer answer.
- *
- * The stars and the fitting switch are applied after the fact here, which makes
- * them the one pair of filters whose count can be off -- so they are counted
- * against this page rather than against the catalogue. @see found
- */
-const fromCatalogue = computed(() => {
-  if (!imported.value) return []
-  const starred = state.favourites.length
-  return state.drumHits.filter((groove) => {
-    if (onlyFavourites.value && (!starred || !favourite(groove))) return false
-    if (onlyFitting.value && !partsItFits(groove).length) return false
-    return true
-  })
-})
-
-/**
- * How many patterns the filters are showing. Exactly.
- *
- * The corpus is counted and the catalogue is counted -- `total` comes back from
- * an index, which answers it without reading a row. This used to be the length
- * of whatever array happened to be on screen, over a sample scaled by a stride,
- * and it reported two thousand for a catalogue of eight hundred thousand.
- * Nothing here samples anything.
- */
-const found = computed(() =>
-  fromCorpus.value.length + (imported.value ? state.drumSearch.total : 0))
-
-/** The page, which is the corpus first and then whatever the database sent. */
-const list = computed(() => {
-  const at = (page.value - 1) * PER_PAGE
-  const mine = fromCorpus.value.slice(at, at + PER_PAGE)
-  return [...mine, ...fromCatalogue.value.slice(0, PER_PAGE - mine.length)]
-})
+/** The page, exactly as the database sent it. */
+const list = computed(() => state.drumHits)
 
 const activeFilters = computed(() =>
   [kind.value !== 'any', genre.value !== 'any',
-   imported.value && Boolean(shelf.value), bars.value !== 'any',
+   Boolean(shelf.value), bars.value !== 'any',
    signature.value !== 'any', feel.value !== 'any', surface.value !== 'any',
    partTag.value !== 'any', era.value !== 'any',
    onlyFavourites.value, onlyFitting.value].filter(Boolean).length)
@@ -472,7 +424,7 @@ function clearFilters() {
  * the catalogue and stops at a fixed number of rows. Everything else is counted
  * by an index and is exact.
  */
-const capped = computed(() => imported.value && !state.drumSearch.exact)
+const capped = computed(() => !state.drumSearch.exact)
 
 const pageCount = computed(() => Math.max(1, Math.ceil(found.value / PER_PAGE)))
 
@@ -491,10 +443,7 @@ async function roll() {
   if (wanted !== page.value) {
     page.value = wanted
     await nextTick()
-    await searchDrums(null, {
-      offset: Math.max(0, (wanted - 1) * PER_PAGE - fromCorpus.value.length),
-      limit: PER_PAGE,
-    })
+    await searchDrums(null, { offset: Math.max(0, (wanted - 1) * PER_PAGE), limit: PER_PAGE })
   }
   const pool = list.value
   if (pool.length) choose(pool[at % PER_PAGE] || pool[pool.length - 1])
@@ -1023,7 +972,9 @@ function resetMap() {
       </v-card-title>
 
       <v-tabs v-model="state.ui.drumsTab">
-        <v-tab value="grooves">Grooves ({{ drums.length.toLocaleString() }})</v-tab>
+        <!-- Everything there is, not the half of it this page used to be able
+             to count. @see store.shelveTheCorpus -->
+        <v-tab value="grooves">Grooves ({{ everything.toLocaleString() }})</v-tab>
         <v-tab value="parts">Parts</v-tab>
         <v-tab value="sets">
           Libraries<span v-if="state.drumSets.length"> ({{ state.drumSets.length }})</span>
@@ -1185,7 +1136,7 @@ function resetMap() {
                       <v-progress-circular indeterminate size="12" width="2" class="mr-1" />
                       Rebuilding the catalogue's index, once
                     </template>
-                    <template v-else-if="imported">
+                    <template v-else>
                       <!-- Counted by an index, which answers it without reading
                            a row. The one exception says so: a free-text search
                            with no facet set has nothing to narrow it. -->
@@ -1193,9 +1144,6 @@ function resetMap() {
                       <span v-if="pageCount > 1">
                         · page {{ page.toLocaleString() }} of {{ pageCount.toLocaleString() }}
                       </span>
-                    </template>
-                    <template v-else>
-                      {{ found.toLocaleString() }} of {{ drums.length.toLocaleString() }}
                     </template>
                   </span>
                 </div>
@@ -1272,7 +1220,7 @@ function resetMap() {
                                     :hint="tagHint(facets.eras)" persistent-hint
                                     density="compact" />
                         </v-col>
-                        <v-col v-if="imported" cols="12">
+                        <v-col cols="12">
                           <v-select v-model="shelf" :items="shelves" label="Folder it came from"
                                     density="compact" hide-details />
                         </v-col>

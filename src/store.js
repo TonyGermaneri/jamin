@@ -145,6 +145,8 @@ export const state = reactive({
     // wants, which is the id or nothing.
     source: 'all',
     set: '', kind: '', bars: 0, signature: '', text: '', folder: '',
+    // A named handful, for "only what I starred". Null is no such filter.
+    ids: null,
     genre: '', feel: '', surface: '', part: '', era: '',
     // Which page of the answer, because the answer is not held in the browser.
     page: 1, perPage: 10,
@@ -424,9 +426,10 @@ export async function initApp() {
     refreshDrumSets().then(() => rememberBoundGrooves().then(refreshDrums))
   }
   state.drumAccent = readStored(DRUM_ACCENT_KEY)
-  loadDrums().then((list) => {
+  loadDrums().then(async (list) => {
     state.drums = list
     state.drumReport = drumReport()
+    await shelveTheCorpus(list)
     // The part can only be built once the catalogue is here, and the plugin is
     // already playing the chords while it arrives.
     refreshDrums()
@@ -2524,6 +2527,66 @@ export async function searchDrums(filters = null, window = null) {
  * store into the database layer. @see core/drumStore.js buildIndexes -- the one
  * thing that upgrades, and never on its own.
  */
+/**
+ * The corpus that ships with jamin, filed as a library like any other.
+ *
+ * There used to be two kinds of drum pattern here and they were different all
+ * the way down: the bundled corpus lived in memory and was filtered by walking
+ * it, an imported library lived in the database and was filtered by asking it.
+ * Every count had to be added up from two places, every page had to be stitched
+ * out of two sources, and the tab said "Grooves (1,150)" over a catalogue of
+ * three quarters of a million because that was the half of it this page could
+ * count.
+ *
+ * So the corpus goes in the database too. Eleven hundred rows written once is
+ * nothing beside what is already there, and afterwards there is one question
+ * with one answer -- exact counts, uniform paging, and `Everything` that really
+ * means it.
+ *
+ * The ids are the corpus's own (`g1841`, not `builtin:41`), because a chart
+ * binds a groove by id and those bindings are somebody's song. `state.drums`
+ * stays as it was: the player resolves grooves from it at compile time and has
+ * no business waiting on a database to do it.
+ */
+export const BUILT_IN_SET = 'builtin'
+
+async function shelveTheCorpus(list) {
+  if (!list || !list.length) return
+
+  // Re-shelved when the corpus changes, and not otherwise. The count is enough
+  // to notice a new one: it is the thing that moves when patterns are added.
+  const held = await countGrooves(BUILT_IN_SET)
+  if (held === list.length) return
+
+  const rows = list.map((groove, at) => ({
+    ...packGroove(groove, BUILT_IN_SET, at),
+    // Its own id, not one made from its place in the file.
+    id: groove.id,
+  }))
+
+  const trouble = await putGrooves(rows)
+  if (trouble) {
+    noteError(`the bundled corpus would not be filed: ${trouble}`, 'shelveTheCorpus')
+    return
+  }
+
+  await putSet({
+    id: BUILT_IN_SET,
+    name: 'Built in',
+    builtIn: true,
+    kit: 'vdrums',
+    customMap: {},
+    folderKits: {},
+    folders: 0,
+    kitReason: '',
+    partial: false,
+    facts: {},
+    count: rows.length,
+    addedAt: 0,
+  })
+  await refreshDrumSets()
+}
+
 export { buildIndexes, indexesAreCurrent }
 
 export async function countEachDrumSet() {

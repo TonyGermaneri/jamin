@@ -417,6 +417,12 @@ export function indexable(filters = {}) {
   const out = []
   for (const name of Object.keys(INDEXED)) {
     const value = filters[name]
+    if (Array.isArray(value)) {
+      // Several values of one field, meaning any of them. A length filter of
+      // "whatever fits this song" is a handful of bar counts rather than one.
+      if (value.length) out.push({ name, value, several: true })
+      continue
+    }
     if (value || value === 0) {
       if (typeof value === 'number' ? Number.isFinite(value) && value !== 0 : String(value).length) {
         out.push({ name, value })
@@ -428,7 +434,10 @@ export function indexable(filters = {}) {
 
 /** Whether a row satisfies everything the index did not already guarantee. */
 export function matchesGroove(row, filters = {}) {
-  for (const { name, value } of indexable(filters)) {
+  // A named handful of ids, which is what "only the ones I starred" is.
+  if (Array.isArray(filters.ids) && !filters.ids.includes(row.id)) return false
+
+  for (const { name, value, several } of indexable(filters)) {
     if (name === 'folder') {
       if (!String(row.f || '').startsWith(value)) return false
       continue
@@ -437,7 +446,7 @@ export function matchesGroove(row, filters = {}) {
     const held = field.includes('.')
       ? (row[field.split('.')[0]] || {})[field.split('.')[1]]
       : row[field]
-    if (held !== value) return false
+    if (several ? !value.includes(held) : held !== value) return false
   }
 
   const needle = String(filters.text || '').trim().toLowerCase()
@@ -517,7 +526,10 @@ async function countOn(db, name, value) {
  */
 async function narrowest(db, filters) {
   let best = null
-  for (const { name, value } of indexable(filters)) {
+  for (const { name, value, several } of indexable(filters)) {
+    // A field with several values is walked through the key sets rather than a
+    // cursor, so it is not a candidate for the one-index shortcut.
+    if (several) continue
     const holds = await countOn(db, name, value)
     if (holds === null) continue
     if (!best || holds < best.holds) best = { name, value, holds }
@@ -624,6 +636,38 @@ export async function searchGrooves(filters = {}, { limit = 24, offset = 0,
    * strings. The walk is slower and bounded; this is faster and is not.
    */
   const KEYS_AT_MOST = 250000
+  const several = indexable(filters).filter((one) => one.several)
+
+  /*
+   * Only what was starred, or only what fits the song.
+   *
+   * Both used to be applied to whatever page happened to be on screen, so the
+   * count beside them was the count of something else. Stars are a named
+   * handful of ids; fitting is a handful of bar counts, because whether a
+   * groove fits is decided by its length alone. Both are answerable exactly.
+   */
+  if (Array.isArray(filters.ids)) {
+    const wanted = await byKeys(db, filters.ids)
+    const kept = wanted.filter((row) => matchesGroove(row, { ...filters, ids: null }))
+    return { rows: kept.slice(offset, offset + limit), ended: null,
+             total: kept.length, exact: true, scanned: kept.length }
+  }
+
+  if (several.length && !needle) {
+    const lists = []
+    for (const one of [...(chosen ? [chosen] : []), ...several]) {
+      const list = await keysFor(db, one.name, one.value)
+      if (!list) { lists.length = 0; break }
+      lists.push(list)
+    }
+    if (lists.length) {
+      const keys = lists.reduce((into, list) => intersect(into, list))
+      const rows = await byKeys(db, keys.slice(offset, offset + limit))
+      const kept = rows.filter((row) => matchesGroove(row, filters))
+      return { rows: kept, ended: null, total: keys.length, exact: true, scanned: keys.length }
+    }
+  }
+
   if (chosen && others.length && !needle && chosen.holds <= KEYS_AT_MOST) {
     const lists = [await keysFor(db, chosen.name, chosen.value)]
     for (const one of others) {
@@ -679,6 +723,14 @@ async function keysFor(db, name, value) {
   const store = grooves(db)
   if (!store.indexNames.contains(name)) return null
   try {
+    // Several values of one field is the union of what each covers.
+    if (Array.isArray(value)) {
+      const lists = []
+      for (const one of value) {
+        lists.push(await ask(grooves(db).index(name).getAllKeys(rangeFor(name, one))))
+      }
+      return [...new Set(lists.flat())].sort()
+    }
     const keys = await ask(store.index(name).getAllKeys(rangeFor(name, value)))
     // getAllKeys orders by index key first, so the primary keys come back in
     // whatever order the values happened to be in. Sorted, they intersect in
