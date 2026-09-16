@@ -368,8 +368,7 @@ int main(int argc, const char **argv) {
 
                         const bool isTrigger = strstr(name, "Random") != NULL
                                             || strstr(name, "articulation") != NULL;
-                        const bool isSwitch = strstr(name, "plays") != NULL
-                                            || strcmp(name, "Mute") == 0;
+                        const bool isSwitch = strncmp(name, "Mute", 4) == 0;
                         if (! isTrigger && ! isSwitch)
                             continue;
 

@@ -138,9 +138,21 @@ JaminProcessor::JaminProcessor()
         "Closed hi-hat", "Open hi-hat", "Pedal hi-hat",
         "Crash 1", "Crash 2", "Ride", "Ride bell",
     };
+    /*
+        On means silent, and off is the default -- the same sense as the track's
+        own Mute, a few lines up.
+
+        It read the other way round at first ("Kick plays", on by default) and
+        that is two conventions for one word in one plugin: a DAW showing both
+        would have Mute lit to silence a track and Kick lit to sound a drum.
+        Pressing a button to mute is also what somebody means by muting, and it
+        leaves all fourteen at rest in their off state rather than publishing
+        fourteen parameters that sit at 1 forever.
+    */
     for (int at = 0; at < numVoices; ++at)
         addParameter (voices[at].param = new juce::AudioParameterBool (
-            { "drum" + juce::String (at), 1 }, juce::String (voiceNames[at]) + " plays", true));
+            { "drum" + juce::String (at), 1 }, "Mute " + juce::String (voiceNames[at]).toLowerCase(),
+            false));
 
     seat = jamin::Roster::instance().join (instanceId.toStdString());
 
@@ -207,11 +219,12 @@ void JaminProcessor::setVoiceSounding (int voice, bool sounding, double atPpq)
     }
 
     // The parameter is what a DAW reads back and what it saves, so a switch
-    // thrown in the window has to move it too.
-    if (one.param != nullptr && one.param->get() != sounding)
+    // thrown in the window has to move it too. It says muted, which is the
+    // opposite of what the voice holds.
+    if (one.param != nullptr && one.param->get() == sounding)
     {
         one.param->beginChangeGesture();
-        *one.param = sounding;
+        *one.param = ! sounding;
         one.param->endChangeGesture();
     }
 }
@@ -740,7 +753,8 @@ void JaminProcessor::timerCallback()
         */
         for (int at = 0; at < numVoices; ++at)
         {
-            const bool wanted = voices[at].param->get();
+            // The parameter says muted; the voice holds whether it sounds.
+            const bool wanted = ! voices[at].param->get();
             if (wanted != voices[at].soundingAfter.load (std::memory_order_relaxed))
                 setVoiceSounding (at, wanted, nextBoundaryPpq());
         }
