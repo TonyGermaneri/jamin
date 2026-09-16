@@ -315,11 +315,92 @@ int main(int argc, const char **argv) {
                                 char name[128] = { 0 };
                                 CFStringGetCString(info.cfNameString, name, sizeof(name),
                                                    kCFStringEncodingUTF8);
-                                printf("%s %s", at ? "," : "", name);
+                                /*
+                                    How a host will draw it.
+
+                                    Every automation parameter is a float
+                                    underneath -- there is no other kind. What
+                                    decides whether a DAW shows a knob or a
+                                    switch is the unit and the range: Boolean
+                                    with a range of 0..1 is what a host reads as
+                                    a two-state control, and anything else is a
+                                    slider. Printed because "can it be a button"
+                                    is a question about these two numbers and
+                                    nothing else.
+                                */
+                                const char* shape =
+                                    (info.unit == kAudioUnitParameterUnit_Boolean
+                                     && info.minValue == 0.0f && info.maxValue == 1.0f)
+                                        ? "switch" : "slider";
+                                printf("%s %s[%s]", at ? "," : "", name, shape);
                             }
                         }
                         printf("\n");
                     }
+
+                    /*
+                        And that the buttons behave like buttons.
+
+                        A DAW has no momentary control: every automation
+                        parameter is a value that stays where it was put. So the
+                        dice release themselves after firing, which is what
+                        makes them press-and-pop rather than press-and-stuck --
+                        and mute does not, because a state that let go of itself
+                        would be a mute that unmuted.
+
+                        Both halves are checked, because each is the other's
+                        bug: a trigger that latches cannot be pressed twice, and
+                        a switch that releases cannot be held.
+                    */
+                    for (int at = 0; at < count; at++)
+                    {
+                        AudioUnitParameterInfo info;
+                        UInt32 infoSize = sizeof(info);
+                        if (AudioUnitGetProperty(unit, kAudioUnitProperty_ParameterInfo,
+                                                 kAudioUnitScope_Global, ids[at],
+                                                 &info, &infoSize) != noErr
+                            || info.cfNameString == NULL)
+                            continue;
+
+                        char name[128] = { 0 };
+                        CFStringGetCString(info.cfNameString, name, sizeof(name),
+                                           kCFStringEncodingUTF8);
+
+                        const bool isTrigger = strstr(name, "Random") != NULL
+                                            || strstr(name, "articulation") != NULL;
+                        const bool isSwitch = strstr(name, "plays") != NULL
+                                            || strcmp(name, "Mute") == 0;
+                        if (! isTrigger && ! isSwitch)
+                            continue;
+
+                        AudioUnitSetParameter(unit, ids[at], kAudioUnitScope_Global, 0,
+                                              isTrigger ? 1.0f : 0.0f, 0);
+                        spin(0.35);      // the parameters are read on a timer
+
+                        AudioUnitParameterValue back = -1.0f;
+                        AudioUnitGetParameter(unit, ids[at], kAudioUnitScope_Global, 0, &back);
+
+                        if (isTrigger && back != 0.0f)
+                        {
+                            printf("FAIL \"%s\" is a trigger and stayed down at %g"
+                                   " -- it could only ever be pressed once\n", name, back);
+                            free(ids);
+                            AudioComponentInstanceDispose(unit);
+                            return 1;
+                        }
+                        if (isSwitch && back != 0.0f)
+                        {
+                            printf("FAIL \"%s\" is a switch and would not stay at 0 (%g)\n",
+                                   name, back);
+                            free(ids);
+                            AudioComponentInstanceDispose(unit);
+                            return 1;
+                        }
+                        if (isSwitch)
+                            AudioUnitSetParameter(unit, ids[at], kAudioUnitScope_Global, 0, 1.0f, 0);
+                    }
+                    printf("  triggers release, switches hold\n");
+
                     free(ids);
                     if (count <= 0)
                     {

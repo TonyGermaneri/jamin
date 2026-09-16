@@ -679,32 +679,57 @@ void JaminProcessor::timerCallback()
             setInstanceSoloed (instanceId, solo);
         }
 
-        // The step parameters are nudges, not positions. The editor does the
-        // stepping, because which articulation comes next is a question about a
-        // catalogue that lives in a browser.
-        const bool next = nextPhraseParam->get();
-        if (next && ! lastNext) phraseStep.fetch_add (1, std::memory_order_relaxed);
-        lastNext = next;
+        /*
+            The step parameters are nudges, not positions.
 
-        const bool prev = prevPhraseParam->get();
-        if (prev && ! lastPrev) phraseStep.fetch_sub (1, std::memory_order_relaxed);
-        lastPrev = prev;
+            Which means they have to let go by themselves. A DAW has no
+            momentary control -- every automation parameter is a value that
+            stays where it was put -- so "next articulation" left on would be
+            pressed once and then stuck down, and pressing it again would mean
+            first putting it back. So the rising edge does the work and the
+            parameter is released immediately afterwards, which is what makes it
+            behave like a button: press, it fires, it pops back out.
 
-        const bool random = randomPhraseParam->get();
-        if (random && ! lastRandom) phraseRandom.fetch_add (1, std::memory_order_relaxed);
-        lastRandom = random;
+            Safe here because this is the message thread. It would not be in
+            processBlock, which is why the parameters are read on a timer.
 
-        const bool rollDrums = randomDrumsParam->get();
-        if (rollDrums && ! lastRandomDrums) drumsRandom.fetch_add (1, std::memory_order_relaxed);
-        lastRandomDrums = rollDrums;
+            The switches are not like this. Mute, solo and the fourteen drums
+            are states rather than acts, and a state that let go of itself would
+            be a mute that unmuted.
+        */
+        const auto press = [] (juce::AudioParameterBool* param, bool& was) {
+            const bool now = param->get();
+            const bool fired = now && ! was;
+            was = now;
+            if (now)
+            {
+                param->beginChangeGesture();
+                *param = false;
+                param->endChangeGesture();
+                was = false;
+            }
+            return fired;
+        };
 
-        const bool rollProgression = randomProgressionParam->get();
-        if (rollProgression && ! lastRandomProgression) progressionRandom.fetch_add (1, std::memory_order_relaxed);
-        lastRandomProgression = rollProgression;
+        // The editor does the stepping, because which articulation comes next
+        // is a question about a catalogue that lives in a browser.
+        if (press (nextPhraseParam, lastNext))
+            phraseStep.fetch_add (1, std::memory_order_relaxed);
 
-        const bool rollSong = randomSongParam->get();
-        if (rollSong && ! lastRandomSong) songRandom.fetch_add (1, std::memory_order_relaxed);
-        lastRandomSong = rollSong;
+        if (press (prevPhraseParam, lastPrev))
+            phraseStep.fetch_sub (1, std::memory_order_relaxed);
+
+        if (press (randomPhraseParam, lastRandom))
+            phraseRandom.fetch_add (1, std::memory_order_relaxed);
+
+        if (press (randomDrumsParam, lastRandomDrums))
+            drumsRandom.fetch_add (1, std::memory_order_relaxed);
+
+        if (press (randomProgressionParam, lastRandomProgression))
+            progressionRandom.fetch_add (1, std::memory_order_relaxed);
+
+        if (press (randomSongParam, lastRandomSong))
+            songRandom.fetch_add (1, std::memory_order_relaxed);
 
         /*
             A drum switched from the DAW rather than from the window.
