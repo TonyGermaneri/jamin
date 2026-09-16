@@ -177,6 +177,20 @@ export function defaultSettings() {
       // Voice -> note, overriding the chosen kit. Where a hand-built Drum Rack
       // gets fixed.
       customMap: {},
+      /**
+       * Send the drums and nothing else.
+       *
+       * A plugin has one MIDI output -- the track it is on -- so the chords go
+       * out on channel 1 and the drums on channel 10, and it is the instrument
+       * that decides whether to care. A drum sampler generally does not:
+       * Ableton's Drum Rack takes every note on every channel, so a chord
+       * lands on whichever pads happen to sit under it and the kit plays the
+       * harmony.
+       *
+       * Off by default, because jamin is a chord program. On, for a track whose
+       * instrument is a drum kit.
+       */
+      only: false,
       // A fill in the bar before every section change, which is what a drum
       // chart has meant since long before there were corpora to draw on.
       fillOnEveryBoundary: true,

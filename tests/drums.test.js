@@ -286,6 +286,62 @@ check('and it knows what it is', reconcileBindings({}, [])[0].wholeSong, true)
 check('a repeated section is one row',
       reconcileBindings({}, parseScore('[A] C\n[B] F\n[A] G').sections).map((r) => r.name), ['A', 'B'])
 
+/* ---------------- the drums, and nothing else ---------------------------- */
+/*
+ * A plugin has one MIDI output -- the track it is on -- so the chords go out on
+ * channel 1 and the drums on channel 10, and it is the instrument that decides
+ * whether to care. A drum sampler generally does not: Ableton's Drum Rack takes
+ * every note on every channel, so the chords land on whichever pads sit under
+ * them and the kit plays the harmony.
+ */
+;(() => {
+  const heard = []
+  const engine = {
+    noteOn: (_o, channel, note) => (heard.push({ channel, note }), true),
+    noteOff: () => true,
+  }
+  const settings = defaultSettings()
+  settings.midi.chordOutputId = 'out'
+  settings.midi.drumOutputId = 'out'
+  settings.drums.enabled = true
+  settings.drums.only = true
+
+  const beat = {
+    id: 'k', name: 'k', kind: 'beat', bars: 1, lengthPulses: 96,
+    notes: [{ at: 0, note: 36, duration: 6, velocity: 100 }],
+  }
+
+  const player = new Player(engine, settings)
+  player.getGroove = () => beat
+  player.getFill = () => null
+  player.setScore(parseScore('| Cmaj7 | F | G |', { beatsPerBar: 4 }))
+  for (let p = 1; p <= 200; p++) player.tick(p)
+
+  const onDrums = heard.filter((n) => n.channel === settings.midi.drumChannel)
+  const elsewhere = heard.filter((n) => n.channel !== settings.midi.drumChannel)
+
+  check('the drums still play', onDrums.length > 0, true)
+  check('and nothing else does', elsewhere.length, 0)
+})()
+
+// With it off, the chords come back -- this is a switch, not a removal.
+;(() => {
+  const heard = []
+  const engine = {
+    noteOn: (_o, channel, note) => (heard.push({ channel, note }), true),
+    noteOff: () => true,
+  }
+  const settings = defaultSettings()
+  settings.midi.chordOutputId = 'out'
+  settings.drums.enabled = false
+  settings.drums.only = false
+
+  const player = new Player(engine, settings)
+  player.setScore(parseScore('| Cmaj7 |', { beatsPerBar: 4 }))
+  for (let p = 1; p <= 90; p++) player.tick(p)
+  check('with it off the chords play', heard.length > 0, true)
+})()
+
 /* ---------------- the 1 lands on the 1 ----------------------------------- */
 /*
  * A groove is locked to the song's bars, not to its own length.

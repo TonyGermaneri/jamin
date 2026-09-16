@@ -234,6 +234,28 @@ export class Player {
     const midi = this.settings.midi
     const accompany = this.settings.accompany
 
+    /*
+     * The drums and nothing else.
+     *
+     * A plugin has one output, so everything it plays arrives at the same
+     * instrument, and a drum sampler takes every note on every channel --
+     * Ableton's Drum Rack does not look at the channel at all. The chords then
+     * land on whatever pads sit under them and the kit plays the harmony.
+     *
+     * The drums are not touched here: they run off the song's own clock rather
+     * than off chord events, and stopping them is nothing to do with what a
+     * chord is doing. @see flushDrums
+     */
+    if (this.settings.drums.only) {
+      this.activePhrase = null
+      this.phraseQueue = []
+      this.phraseCursor = 0
+      this.chordNotes = []
+      if (this.onEventChange) this.onEventChange(event, { notes: [], phrase: null })
+      if (this.onNotes) this.onNotes([])
+      return
+    }
+
     // An accent replaces whatever this chord was going to play, and is not
     // gated on the accompaniment being switched on: it is a deliberate gesture
     // rather than part of the arrangement.
