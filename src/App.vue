@@ -16,7 +16,9 @@ import {
   engine,
   toast,
   openDrumBook,
+  rollSong,
 } from './store.js'
+import { SAMPLE_CHART } from './core/settings.js'
 
 const idle = ref(false)
 let idleTimer = null
@@ -108,6 +110,22 @@ function openMidi() {
   if (!state.host.active && (state.midi.state === 'denied' || state.midi.state === 'idle')) engine.enable()
 }
 
+/**
+ * A whole song, at once.
+ *
+ * It replaces the chart, which is not a small thing to do by accident, so a
+ * chart with anything in it is asked about first. An empty one is not: there is
+ * nothing to lose and being asked would be pointless ceremony.
+ */
+function rollWholeSong() {
+  const written = state.text.trim()
+  if (written && written !== SAMPLE_CHART.trim()) {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm('Roll a new song? This replaces what is in the notepad.')) return
+  }
+  rollSong()
+}
+
 /** Mr. Accompany Me on or off: hearing what is played and answering it. */
 function toggleListen() {
   const accompany = state.settings.accompany
@@ -124,6 +142,16 @@ function toggleListen() {
       <ChordCanvas />
 
       <div class="jamin-chrome" :class="{ 'is-idle': idle }">
+        <!-- A whole song, at once. First in the row because it is where you
+             start from nothing, and everything else here adjusts what it made. -->
+        <v-btn
+          icon="mdi-dice-5-outline"
+          size="small"
+          variant="text"
+          color="secondary"
+          title="Roll a whole song — changes, sections, articulations and drums"
+          @click="rollWholeSong"
+        />
         <v-btn
           v-if="noClockBound"
           :icon="state.status.internal ? 'mdi-stop' : 'mdi-play'"

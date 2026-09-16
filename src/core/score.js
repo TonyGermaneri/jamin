@@ -548,7 +548,18 @@ export function sameChord(a, b) {
  * are for.
  */
 function resolvePhraseSections(events, opts) {
-  if (!opts.perChordPhrases) {
+  /*
+   * A chart that names a phrase means it, whatever the setting says.
+   *
+   * Writing `{p2551}` against a chord is an instruction, and a switch in a
+   * dialog somewhere quietly ignoring it is the program arguing with what is
+   * written in front of somebody. So the markup turns per-chord articulation on
+   * for this chart -- the setting only decides what happens to a chart that
+   * says nothing.
+   */
+  const named = events.some((event) => event.phraseChange || event.phraseRef)
+
+  if (!opts.perChordPhrases && !named) {
     const songPhrase = opts.songPhrase || null
     for (const event of events) {
       event.phraseId = songPhrase
@@ -557,7 +568,9 @@ function resolvePhraseSections(events, opts) {
     return
   }
 
-  let current = null
+  // Where the chart has forced this, the song's own phrase plays until the
+  // chart first says otherwise -- rather than silence up to the first marker.
+  let current = opts.perChordPhrases ? null : (opts.songPhrase || null)
   let sectionStart = 0
   for (const event of events) {
     if (event.phraseChange || event.index === 0) {

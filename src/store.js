@@ -858,6 +858,132 @@ export function randomSongPhrase(pool = null) {
  * ------------------------------------------------------------------ */
 
 /* ------------------------------------------------------------------ *
+ * A whole song, at once
+ * ------------------------------------------------------------------ */
+
+/**
+ * The shape of a song, which is not a random shape.
+ *
+ * Verses and choruses alternate and something tops and tails them. Rolling a
+ * die over the *form* as well as the content would produce arrangements nobody
+ * writes -- the die is for the choices inside a shape, not for the shape.
+ */
+const FORMS = [
+  ['Intro', 'Verse', 'Chorus', 'Verse', 'Chorus', 'Outro'],
+  ['Verse', 'Chorus', 'Verse', 'Chorus', 'Bridge', 'Chorus'],
+  ['Intro', 'A', 'A', 'B', 'A'],
+  ['Verse', 'Chorus', 'Verse', 'Chorus'],
+]
+
+const pick = (list) => (list && list.length ? list[Math.floor(Math.random() * list.length)] : null)
+
+/** The bars of a progression, without its leading and trailing pipes. */
+function barsOfProgression(text) {
+  return String(text || '')
+    .split('|')
+    .map((bar) => bar.trim())
+    .filter(Boolean)
+}
+
+/**
+ * A whole song from the things to hand.
+ *
+ * One progression supplies the harmony, because a song has one set of changes
+ * and six unrelated ones is a medley. What differs between sections is how they
+ * are *played*: each gets its own articulation, written into the chart against
+ * its first chord, and its own groove and fill.
+ *
+ * Written into the chart rather than held somewhere else, so it can be read,
+ * edited and understood afterwards -- and so the phrase markers mean the chart
+ * asks for per-chord articulation whether or not the setting is on.
+ * @see resolvePhraseSections
+ */
+export function rollSong() {
+  const progression = pick(allProgressions())
+  if (!progression) {
+    toast('No progressions to draw on')
+    return false
+  }
+
+  const bars = barsOfProgression(progression.text)
+  if (!bars.length) {
+    toast('That progression has no bars in it')
+    return false
+  }
+
+  const phrases = catalogue().filter((phrase) => phrase && phrase.notes && phrase.notes.length)
+  const form = pick(FORMS)
+  const lines = []
+  const used = []
+
+  for (const section of form) {
+    // Intros and outros are shorter than what they introduce, which is the one
+    // thing about them that is always true.
+    const short = section === 'Intro' || section === 'Outro'
+    const take = short ? Math.min(2, bars.length) : bars.length
+    const mine = bars.slice(0, take)
+
+    const phrase = pick(phrases)
+    if (phrase) used.push(phrase.name)
+
+    // The articulation goes on the section's first chord: a dot to say the
+    // phrase changes here, and the id because a name can be shared.
+    const first = phrase ? `.${mine[0]}{${phrase.id || phrase.name}}` : mine[0]
+    const rest = mine.slice(1)
+
+    lines.push(`[${section}]`)
+    lines.push(`| ${[first, ...rest].join(' | ')} |`)
+  }
+
+  setText(lines.join('\n'))
+  const placed = rollDrums()
+
+  toast(`${form.length} sections, ${used.length} articulation${used.length === 1 ? '' : 's'}`
+    + (placed ? `, ${placed} drum part${placed === 1 ? '' : 's'}` : ''))
+  return true
+}
+
+/**
+ * A groove and a fill for every section in the chart.
+ *
+ * Each section gets its own beat rather than the song getting one: that is what
+ * makes a chorus sound like a chorus. The fill is chosen to suit the beat it
+ * leads out of -- same feel, same metre -- which is what @see matchingFill is
+ * for, and separately per section so the song does not end every part with the
+ * same flurry.
+ */
+function rollDrums() {
+  const rows = drumRows().filter((row) => !row.stale)
+  if (!rows.length) return 0
+
+  const beats = state.drums.filter((groove) => groove.kind === 'beat')
+  const pool = beats.length ? beats : state.drums
+  if (!pool.length) return 0
+
+  let next = state.drumBindings
+  let placed = 0
+
+  for (const row of rows) {
+    const beat = pick(pool)
+    if (!beat) continue
+    next = bindGroove(next, row.name, beat.id, 'groove')
+    placed++
+
+    const fill = matchingFill(beat, state.drums, { prefer: 'random' })
+    if (fill) {
+      next = bindGroove(next, row.name, fill.id, 'fill')
+      placed++
+    }
+  }
+
+  state.drumBindings = next
+  saveDrumBindings(next)
+  rememberBoundGrooves().then(refreshDrums)
+  refreshDrums()
+  return placed
+}
+
+/* ------------------------------------------------------------------ *
  * Dragging something out into the arrangement
  *
  * Three kinds of thing can be dragged and they are not the same shape, so each

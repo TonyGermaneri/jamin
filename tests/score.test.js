@@ -95,13 +95,21 @@ check('adjacent no-chords merge', parseScore('N.C. N.C. C', { beatsPerBar: 4 }).
 
 
 
-// one phrase for the whole song is the default; dots only matter when asked for
-s = parseScore('.C7{walk} F G', { beatsPerBar: 4, songPhrase: 'riff' })
+// One phrase for the whole song is the default -- until the chart names one.
+// These three used to assert that dots were "parsed, just not acted on" with
+// the setting off. They are acted on now: a phrase written against a chord is
+// an instruction, and a switch in a dialog ignoring it is the program arguing
+// with what is written in front of somebody.
+s = parseScore('C F G', { beatsPerBar: 4, songPhrase: 'riff' })
 check('the song phrase covers every chord', s.events.map(e => e.phraseId), ['riff', 'riff', 'riff'])
-check('dots are ignored in that mode', s.events[0].phraseId, 'riff')
-check('the dot is still parsed, just not acted on', s.tokens[0].phraseChange, true)
+s = parseScore('.C7{walk} F G', { beatsPerBar: 4, songPhrase: 'riff' })
+check('but a named phrase takes over from where it is written',
+      s.events.map(e => e.phraseId), ['walk', 'walk', 'walk'])
+check('and the dot is still parsed', s.tokens[0].phraseChange, true)
+s = parseScore('C F G', { beatsPerBar: 4 })
+check('no song phrase and no markup, no phrase', s.events.map(e => e.phraseId), [null, null, null])
 s = parseScore('.C7{walk} F G', { beatsPerBar: 4 })
-check('no song phrase, no phrase', s.events.map(e => e.phraseId), [null, null, null])
+check('markup alone is enough', s.events.map(e => e.phraseId), ['walk', 'walk', 'walk'])
 s = parseScore('.C7{walk} F G', { beatsPerBar: 4, perChordPhrases: true, songPhrase: 'riff' })
 check('per-chord mode uses the dots, not the song phrase', s.events.map(e => e.phraseId), ['walk', 'walk', 'walk'])
 
@@ -211,5 +219,31 @@ check('dot and repeat together', s.tokens[0].phraseChange, true)
 check('body is just the chord', s.tokens[0].body, 'C7')
 check('and it repeats', s.events.length, 4)
 
+
+/* ---------------- the chart beats the setting --------------------------- */
+// Writing `{p2551}` against a chord is an instruction. A switch in a dialog
+// quietly ignoring it is the program arguing with what somebody has written in
+// front of them, so the markup turns per-chord articulation on for this chart.
+// The setting only decides what happens to a chart that says nothing.
+s = parseScore('.C7{walk} F G .Am{riff} Bb', { beatsPerBar: 4, perChordPhrases: false })
+check('a named phrase is honoured with the setting off',
+      s.events.map((e) => e.phraseId), ['walk', 'walk', 'walk', 'riff', 'riff'])
+
+// Before the first marker, the song's own phrase carries on -- silence up to
+// the first marker would be a worse reading of "respect what the chart says".
+s = parseScore('C F .G{riff} Am', { beatsPerBar: 4, perChordPhrases: false, songPhrase: 'song' })
+check('the song phrase holds until the chart says otherwise',
+      s.events.map((e) => e.phraseId), ['song', 'song', 'riff', 'riff'])
+
+// A chart that says nothing is still one phrase for the whole song.
+s = parseScore('C F G Am', { beatsPerBar: 4, perChordPhrases: false, songPhrase: 'song' })
+check('a chart with no markup is unchanged',
+      s.events.map((e) => e.phraseId), ['song', 'song', 'song', 'song'])
+
+// And with the setting on, nothing about the old behaviour moves: no marker
+// yet means no phrase yet.
+s = parseScore('C F .G{riff} Am', { beatsPerBar: 4, perChordPhrases: true })
+check('with the setting on it still waits for the first marker',
+      s.events.map((e) => e.phraseId), [null, null, 'riff', 'riff'])
 
 console.log(failed === 0 ? 'score: all checks passed' : `score: ${failed} FAILED`)
