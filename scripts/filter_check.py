@@ -84,7 +84,7 @@ for (const file of files) {
   setOf.set(setId, (setOf.get(setId) || 0) + 1)
   const row = packGroove(groove, setId, n)
   batch.push(row)
-  everyRow.push({ k: row.k, r: row.r, g: row.g, t: row.t, x: row.x })
+  everyRow.push({ s: row.s, k: row.k, r: row.r, g: row.g, t: row.t, x: row.x })
 
   const tags = row.x || {}
   bump(truth.kind, row.k); bump(truth.bars, row.r); bump(truth.genre, row.g)
@@ -168,6 +168,60 @@ for (const [a, b] of [['genre', 'surface'], ['bars', 'kind'], ['era', 'feel'], [
  * So every row of the unfiltered catalogue is walked by resuming, and what
  * comes out has to be all of them, each once, in order.
  */
+/*
+ * And the same questions asked of one library at a time.
+ *
+ * A different path entirely: a count within a subset is not something a
+ * single-field index can answer -- it knows how many rows are in this genre and
+ * how many are in this library, and nothing about the overlap -- so one library
+ * is a pass over its own rows. Only the everything case was being checked, and
+ * "select a library and the genre list empties" is exactly what an untested
+ * second path looks like.
+ */
+const perSet = []
+for (const [setId] of setOf) {
+  const only = await grooveFacets(setId)
+  const mine = everyRow.filter((row) => row.s === setId)
+  const truthFor = (pick) => {
+    const counts = new Map()
+    for (const row of mine) {
+      const value = pick(row)
+      if (value || value === 0) counts.set(String(value), (counts.get(String(value)) || 0) + 1)
+    }
+    return counts
+  }
+  const said = (list) => new Map((list || []).map(([v, c]) => [String(v), c]))
+
+  const fields = {
+    genres: (row) => row.g,
+    bars: (row) => row.r,
+    kinds: (row) => row.k,
+    surfaces: (row) => (row.x || {}).surface,
+    eras: (row) => (row.x || {}).era,
+  }
+
+  const wrong = []
+  for (const [name, pick] of Object.entries(fields)) {
+    const real = truthFor(pick)
+    const offered = said(only[name])
+    for (const [value, count] of real) {
+      if (offered.get(value) !== count) {
+        wrong.push(`${name} ${value || '(blank)'}: offered ${offered.get(value) ?? 'nothing'} of ${count}`)
+      }
+    }
+  }
+
+  perSet.push({
+    set: setId,
+    rows: mine.length,
+    holds: only.holds,
+    genres: (only.genres || []).length,
+    realGenres: [...truthFor((row) => row.g).keys()].filter(Boolean).length,
+    wrong: wrong.slice(0, 4),
+    wrongCount: wrong.length,
+  })
+}
+
 const PER = 10
 const seenIds = new Set()
 let cursorAfter = null
@@ -193,6 +247,20 @@ for (;;) {
 }
 const turning = { pages, walked: seenIds.size, repeated, of: stored }
 
+// A library and one facet together, which is the pair an index answers
+// directly and the commonest thing anybody asks of a catalogue with fifty
+// libraries in it.
+const scoped = []
+for (const [setId] of [...setOf].slice(0, 6)) {
+  const mine = everyRow.filter((row) => row.s === setId)
+  const genre = (await grooveFacets(setId)).genres?.[0]
+  if (!genre) continue
+  const hit = await searchGrooves({ set: setId, genre: genre[0] }, { limit: 5 })
+  scoped.push({ set: setId, genre: String(genre[0]), total: hit.total,
+                real: mine.filter((row) => row.g === genre[0]).length,
+                offered: genre[1], got: hit.rows.length })
+}
+
 // Paging reaches the end rather than stopping at a few hundred.
 const biggest = (facets.bars || []).slice().sort((a, b) => b[1] - a[1])[0]
 let paging = null
@@ -214,7 +282,7 @@ if (biggest) {
 
 process.stdout.write(JSON.stringify({
   read: n, skipped, stored, holds: facets.holds, exact: facets.exact,
-  sets: [...setOf.entries()].length, report, searched, paging, pairs, turning,
+  sets: [...setOf.entries()].length, report, searched, paging, pairs, turning, perSet, scoped,
   shelves: (facets.folders || []).length,
   shelfSum: (facets.folders || []).reduce((a, [, c]) => a + c, 0),
 }))
@@ -321,6 +389,41 @@ def main():
               f"{paging['pastTheEnd']} rows past the end")
         check("and no row appears on two pages", paging["dupes"] == 0,
               f"{paging['dupes']} repeated")
+
+    # One library at a time, which is a different path from all of them at once
+    # and was the one nobody checked: "select a library and the genre list
+    # empties" is exactly what an untested second path looks like.
+    for one in found.get("perSet", []):
+        note = "" if one["wrongCount"] == 0 else "  <-- WRONG"
+        print(f"  library    {one['set']}: {one['rows']:,} rows, "
+              f"{one['genres']} genres offered of {one['realGenres']} real{note}")
+        for detail in one["wrong"]:
+            print(f"             {detail}")
+
+    empty = [one for one in found.get("perSet", [])
+             if one["realGenres"] > 0 and one["genres"] == 0]
+    check("a library's own genre list is not empty", not empty,
+          "; ".join(f"{one['set']} has {one['realGenres']} genres and offers none"
+                    for one in empty[:4]))
+
+    offbeam = [one for one in found.get("perSet", []) if one["wrongCount"] > 0]
+    check("and every count in it is exact", not offbeam,
+          "; ".join(f"{one['set']}: {one['wrong'][0]}" for one in offbeam[:3]))
+
+    check("and it knows how many rows it holds",
+          all(one["holds"] == one["rows"] for one in found.get("perSet", [])),
+          "; ".join(f"{one['set']} says {one['holds']} of {one['rows']}"
+                    for one in found.get("perSet", []) if one["holds"] != one["rows"]))
+
+    # A library and one facet, which goes through the paired index.
+    for one in found.get("scoped", []):
+        print(f"  scoped     {one['set']} + {one['genre']}: "
+              f"offered {one['offered']:,}, found {one['total']:,}, really {one['real']:,}")
+    off = [one for one in found.get("scoped", [])
+           if one["total"] != one["real"] or one["offered"] != one["real"]]
+    check("a library and a facet together count exactly", not off,
+          "; ".join(f"{one['set']}+{one['genre']} offered {one['offered']}"
+                    f" found {one['total']} of {one['real']}" for one in off[:3]))
 
     # Turning the page, from the first to the last, resuming each time.
     turning = found.get("turning") or {}

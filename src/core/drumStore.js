@@ -37,8 +37,45 @@ const INDEXED = {
   era: 'x.era',
 }
 
+/**
+ * And the same fields again, paired with the library.
+ *
+ * A single-field index cannot answer a question about two things at once. It
+ * knows how many rows are in this genre and how many are in this library, and
+ * nothing whatever about the overlap -- so "the genres in *this* library" had
+ * to be a walk of that library's rows.
+ *
+ * Measured in the plugin's own WebKit, that walk is 23ms per thousand rows. The
+ * GM pack is three hundred and sixty thousand of them, so choosing it meant
+ * eight and a half seconds during which the genre list was empty -- which reads
+ * exactly like a library that has no genres, and was reported as one.
+ *
+ * A compound index on [library, value] counts the pair directly, in under a
+ * millisecond. Building them over rows already imported costs about five
+ * seconds each, once, on the first open -- forty for the set, against eight and
+ * a half every time somebody picks a library.
+ */
+const PAIRED = {
+  setKind: ['s', 'k'],
+  setBars: ['s', 'r'],
+  setGenre: ['s', 'g'],
+  setSignature: ['s', 't'],
+  setFolder: ['s', 'f'],
+  setFeel: ['s', 'x.feel'],
+  setSurface: ['s', 'x.surface'],
+  setPart: ['s', 'x.part'],
+  setEra: ['s', 'x.era'],
+}
+
+/** Which paired index answers a facet within one library. */
+const PAIR_FOR = {
+  kind: 'setKind', bars: 'setBars', genre: 'setGenre', signature: 'setSignature',
+  folder: 'setFolder', feel: 'setFeel', surface: 'setSurface', part: 'setPart',
+  era: 'setEra',
+}
+
 const DB_NAME = 'jamin.drums'
-const DB_VERSION = 3
+const DB_VERSION = 4
 const SETS = 'sets'
 const GROOVES = 'grooves'
 
@@ -109,6 +146,11 @@ function open() {
 
       for (const [name, field] of Object.entries(INDEXED)) {
         if (!store.indexNames.contains(name)) store.createIndex(name, field)
+      }
+      // And the same fields paired with the library, so a facet can be counted
+      // *within* one. @see PAIRED for what that is worth and what it costs.
+      for (const [name, fields] of Object.entries(PAIRED)) {
+        if (!store.indexNames.contains(name)) store.createIndex(name, fields)
       }
     }
 
@@ -322,6 +364,9 @@ export function matchesGroove(row, filters = {}) {
  * range, which an index counts as cheaply as it counts one key.
  */
 function rangeFor(name, value) {
+  // Already a range: a paired index builds its own, because a pair's bounds are
+  // arrays rather than values. @see narrowest
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value
   if (name === 'folder') return IDBKeyRange.bound(value, `${value}\uffff`)
   return IDBKeyRange.only(value)
 }
@@ -373,6 +418,32 @@ async function narrowest(db, filters) {
     if (holds === null) continue
     if (!best || holds < best.holds) best = { name, value, holds }
   }
+
+  /*
+   * A library and one facet is a pair, and a pair has its own index.
+   *
+   * Which makes it exact and instant rather than a walk of whichever of the two
+   * is smaller -- and "this library, this genre" is the commonest thing anybody
+   * asks of a catalogue with fifty libraries in it. @see PAIRED
+   */
+  const set = filters.set
+  const others = indexable(filters).filter((one) => one.name !== 'set')
+  if (set && others.length === 1) {
+    const paired = PAIR_FOR[others[0].name]
+    const store = grooves(db)
+    if (paired && store.indexNames.contains(paired)) {
+      const range = others[0].name === 'folder'
+        ? IDBKeyRange.bound([set, others[0].value], [set, `${others[0].value}\uffff`])
+        : IDBKeyRange.only([set, others[0].value])
+      try {
+        const holds = await ask(store.index(paired).count(range))
+        return { name: paired, value: range, holds, pair: true }
+      } catch {
+        /* no such index here, so the single-field answer above stands */
+      }
+    }
+  }
+
   return best
 }
 
@@ -406,7 +477,9 @@ export async function searchGrooves(filters = {}, { limit = 24, offset = 0,
 
   const chosen = await narrowest(db, filters)
   const needle = String(filters.text || '').trim().toLowerCase()
-  const others = indexable(filters).filter((one) => !chosen || one.name !== chosen.name)
+  const others = chosen && chosen.pair
+    ? []
+    : indexable(filters).filter((one) => !chosen || one.name !== chosen.name)
 
   /*
    * The whole filter, answered by the index alone.
@@ -766,44 +839,67 @@ async function tallyEverywhere(db) {
 }
 
 /**
- * Within one library: one pass, every facet at once.
+ * Within one library: counted by an index, the same as everything else.
  *
- * A count within a subset is not something a single-field index can answer --
- * it knows how many rows are in this genre and how many are in this library,
- * and nothing about the overlap. Walking the library's own index is exact, and
- * it is bounded by that library rather than by the catalogue.
+ * This was a pass over every row the library holds, tallying all eight facets
+ * as it went -- which is correct and costs 23ms per thousand rows in the
+ * plugin's WebKit. For the GM pack, three hundred and sixty thousand rows, that
+ * is eight and a half seconds during which the genre list is empty. Empty is
+ * indistinguishable from "this library has no genres", and was reported as it.
+ *
+ * With a [library, value] index the pair is countable directly: one key cursor
+ * for the distinct values and one count each, neither of which reads a row.
  */
 async function tallyWithin(db, setId) {
-  const store = grooves(db)
-  const seen = {}
-  for (const name of FACETS) seen[name] = new Map()
-  const folders = new Map()
+  const out = { folders: [] }
+  for (const name of FACETS) {
+    out[plural(name)] = order(name, await pairsWithin(db, setId, PAIR_FOR[name]))
+  }
+  return out
+}
 
-  await new Promise((resolve) => {
-    const request = store.index('set').openCursor(IDBKeyRange.only(setId))
+/**
+ * Every value of one field inside one library, and exactly how many rows carry
+ * each.
+ *
+ * The range is everything from `[set]` up to `[set, []]`. Short arrays sort
+ * before longer ones that start the same way, and an array sorts after every
+ * string and number -- so those two bounds are "this library, whatever the
+ * value" and nothing else. @see PAIRED
+ */
+async function pairsWithin(db, setId, indexName) {
+  if (!indexName) return []
+  const store = grooves(db)
+  if (!store.indexNames.contains(indexName)) return []
+
+  const span = IDBKeyRange.bound([setId], [setId, []])
+  const values = await new Promise((resolve) => {
+    const found = []
+    let request
+    try {
+      request = store.index(indexName).openKeyCursor(span, 'nextunique')
+    } catch {
+      resolve(found)
+      return
+    }
     request.onsuccess = () => {
       const cursor = request.result
-      if (!cursor) { resolve(); return }
-      const row = cursor.value
-      const tags = row.x || {}
-      const value = {
-        kind: row.k, bars: row.r, genre: row.g, signature: row.t,
-        feel: tags.feel, surface: tags.surface, part: tags.part, era: tags.era,
-      }
-      for (const name of FACETS) {
-        const one = value[name]
-        if (one || one === 0) seen[name].set(one, (seen[name].get(one) || 0) + 1)
-      }
-      const shelf = String(row.f || '').split('/').slice(0, 2).join('/')
-      folders.set(shelf, (folders.get(shelf) || 0) + 1)
+      if (!cursor || found.length >= 4000) { resolve(found); return }
+      found.push(cursor.key[1])
       cursor.continue()
     }
-    request.onerror = () => resolve()
+    request.onerror = () => resolve(found)
   })
 
-  const out = { folders: order('folder', [...folders.entries()]) }
-  for (const name of FACETS) out[plural(name)] = order(name, [...seen[name].entries()])
-  return out
+  const pairs = []
+  for (const value of values) {
+    // A fresh transaction each time: the await ends whichever was open.
+    // @see grooves
+    const n = await ask(grooves(db).index(indexName).count(IDBKeyRange.only([setId, value])))
+      .catch(() => 0)
+    if (n) pairs.push([value, n])
+  }
+  return pairs
 }
 
 /**
@@ -819,7 +915,19 @@ async function tallyWithin(db, setId) {
  * beginning `Pack/Rock`, so the walk costs one step per shelf.
  */
 async function shelvesIn(db, setId, already) {
-  if (setId) return already || []
+  // Inside one library the folders come from the paired index, grouped to the
+  // top two levels here rather than by jumping the cursor: a library's shelves
+  // are tens of names, not the hundreds a whole collection has.
+  if (setId) {
+    const deep = await pairsWithin(db, setId, 'setFolder')
+    const shelves = new Map()
+    for (const [folder, n] of deep) {
+      const shelf = String(folder || '').split('/').slice(0, 2).join('/')
+      shelves.set(shelf, (shelves.get(shelf) || 0) + n)
+    }
+    return order('folder', [...shelves.entries()]).slice(0, 120)
+  }
+
   if (!grooves(db).indexNames.contains('folder')) return []
 
   const shelves = []
@@ -982,7 +1090,74 @@ export async function measureStore(rows = 50000) {
     request.onerror = () => done(seen)
   }))
 
+  /*
+    The two numbers that decide how a library's own facets can be counted.
+
+    Within one library a single-field index is no use: it knows how many rows
+    are in this genre and how many are in this library, and nothing about the
+    overlap. So it is either a walk of that library's rows, or a compound index
+    on [library, value] which counts the pair directly.
+
+    The walk is what a 360,000-row library costs today. The build is what the
+    alternative costs once, on upgrade, per index.
+  */
+  const [tallyMs] = await timed(() => new Promise((done) => {
+    const request = store().index('set').openCursor(IDBKeyRange.only('set-3'))
+    const seen = new Map()
+    let n = 0
+    request.onsuccess = () => {
+      const cursor = request.result
+      if (!cursor) { done(n); return }
+      n++
+      const row = cursor.value
+      seen.set(row.g, (seen.get(row.g) || 0) + 1)
+      cursor.continue()
+    }
+    request.onerror = () => done(n)
+  }))
+
+  const perSet = await ask(store().index('set').count(IDBKeyRange.only('set-3'))).catch(() => 0)
+
   db.close()
+
+  /*
+    And what the upgrade costs -- which is the number that decides it.
+
+    A compound index turns "how many of this genre are in this library" from a
+    walk of that library into a count, but the browser has to build it over
+    every row already there, once, inside the upgrade transaction with nothing
+    able to report on it. So it is measured the way it will actually happen:
+    reopen at a higher version and add the index to a store that already holds
+    the rows.
+  */
+  const upgraded = since()
+  const later = await new Promise((done) => {
+    const open = indexedDB.open(NAME, 2)
+    open.onupgradeneeded = () => {
+      const store2 = open.transaction.objectStore(GROOVES)
+      store2.createIndex('setGenre', ['s', 'g'])
+      store2.createIndex('setBars', ['s', 'r'])
+    }
+    open.onsuccess = () => done(open.result)
+    open.onerror = () => done(null)
+  })
+  const upgradeMs = Math.round(since() - upgraded)
+
+  // And that the thing it was built for is now instant.
+  let pairMs = 0
+  let pairCount = 0
+  if (later) {
+    const t = since()
+    pairCount = await new Promise((done) => {
+      const request = later.transaction(GROOVES, 'readonly').objectStore(GROOVES)
+        .index('setGenre').count(IDBKeyRange.only(['set-3', 'Rock']))
+      request.onsuccess = () => done(request.result)
+      request.onerror = () => done(-1)
+    })
+    pairMs = Math.round(since() - t)
+    later.close()
+  }
+
   await new Promise((done) => {
     const wipe = indexedDB.deleteDatabase(NAME)
     wipe.onsuccess = done; wipe.onerror = done; wipe.onblocked = done
@@ -991,6 +1166,9 @@ export async function measureStore(rows = 50000) {
   return `${rows} rows written in ${writeMs}ms · count ${counted} in ${countMs}ms`
        + ` · keys in ${keysMs}ms · two facets in ${crossMs}ms · row walk in ${walkMs}ms`
        + ` · advance to row ${deep} in ${advanceMs}ms`
+       + ` · tally of one ${perSet}-row library in ${tallyMs}ms`
+       + ` · two compound indexes built over ${rows} existing rows in ${upgradeMs}ms`
+       + ` · that pair counted (${pairCount}) in ${pairMs}ms`
 }
 
 if (typeof window !== 'undefined') window.__jaminStorageProbe = measureStore
