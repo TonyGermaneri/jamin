@@ -104,6 +104,17 @@ const netTitle = computed(() => {
 
 const readoutColor = computed(() => state.settings.theme.fg)
 
+/** The theme's five colours, for the stylesheets that need them. */
+const themeVars = computed(() => ({
+  background: state.settings.theme.bg,
+  '--jamin-bg': state.settings.theme.bg,
+  '--jamin-fg': state.settings.theme.fg,
+  '--jamin-dim': state.settings.theme.dim,
+  '--jamin-accent': state.settings.theme.accent,
+  '--jamin-accent-alt': state.settings.theme.accentAlt,
+  '--jamin-error': state.settings.theme.error,
+}))
+
 function openMidi() {
   state.ui.settingsTab = 'midi'
   state.ui.settings = true
@@ -121,7 +132,12 @@ function toggleListen() {
 </script>
 
 <template>
-  <v-app :style="{ background: state.settings.theme.bg }">
+  <!-- The theme, as CSS variables.
+       It was already driving the chart and the readout from JavaScript; this
+       puts the same five colours where a stylesheet can reach them, so the
+       graph, its labels and its edges belong to whatever jamin is wearing
+       rather than to a palette of their own. @see core/themes.js -->
+  <v-app :style="themeVars">
     <div class="jamin-root">
       <ChordCanvas />
 

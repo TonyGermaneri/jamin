@@ -146,15 +146,59 @@ check('one size per node', sizes.length, tree.nodes.length)
 check('the biggest thing is the biggest', sizes[library], 26)
 check('and nothing is invisible', [...sizes].every((one) => one >= 3), true)
 
-// Colour says which *level* a node is, because that is what a reader needs
-// first in a tree and no two levels share it.
-const colours = treeColours(tree.nodes)
+/*
+ * Colour says which *level* a node is, because that is what a reader needs
+ * first in a tree and no two levels share it -- and it says it in the theme's
+ * own colours, because a graph in a palette nothing else on screen uses looks
+ * like a different program.
+ */
+const theme = { from: '#7c5cff', to: '#22d3ee', dim: '#5b6480' }
+const colours = treeColours(tree.nodes, theme)
 check('four channels each', colours.length, tree.nodes.length * 4)
 check('and opaque', colours[3], 1)
 check('every channel in range', [...colours].every((one) => one >= 0 && one <= 1), true)
-const rootHue = colours.slice(0, 3).join()
-const leafHue = colours.slice(deep * 4, deep * 4 + 3).join()
-check('a root and a leaf are different colours', rootHue === leafHue, false)
+
+const rootColour = colours.slice(0, 3).join()
+const leafColour = colours.slice(deep * 4, deep * 4 + 3).join()
+check('a root and a leaf are different colours', rootColour === leafColour, false)
+
+// Compared with a tolerance: the colours are kept in a Float32Array and the
+// expectation is a double, so they differ in the eighth decimal place and
+// always will.
+const sameColour = (label, got, want) => {
+  const off = [0, 1, 2].some((n) => Math.abs(got[n] - want[n]) > 1e-6)
+  if (off) { failed++; console.log(`FAIL ${label}: got ${[...got].slice(0, 3)} want ${want}`) }
+}
+
+// The top of the tree is the theme's first accent.
+sameColour('a root is the first accent', colours.slice(0, 3), toRgb('#7c5cff'))
+
+// Change the theme and the graph changes with it, which is the whole point.
+const other = treeColours(tree.nodes, { from: '#ff2e97', to: '#00e5ff', dim: '#7a4b86' })
+sameColour('another theme is another graph', other.slice(0, 3), toRgb('#ff2e97'))
+
+/*
+ * And the leaves fade towards the dim colour.
+ *
+ * They are most of a catalogue -- three quarters of a million of the eight
+ * hundred thousand nodes -- so at full strength they are the entire picture and
+ * the structure above them is invisible.
+ */
+const folder = tree.nodes.findIndex((one) => one.label === 'Punk Rock')
+const far = (at) => Math.hypot(...[0, 1, 2].map((n) =>
+  colours[at * 4 + n] - toRgb(theme.dim)[n]))
+check('a leaf sits nearer the dim colour than its folder', far(deep) < far(folder), true)
+
+/* ---------------- reading a colour ------------------------------------- */
+check('six digits', toRgb('#7c5cff'), [124 / 255, 92 / 255, 255 / 255])
+check('three digits', toRgb('#fff'), [1, 1, 1])
+check('without a hash', toRgb('000000'), [0, 0, 0])
+// Unreadable is mid grey: visible and obviously wrong beats invisible and
+// puzzling.
+check('rubbish is grey', toRgb('not a colour'), [0.5, 0.5, 0.5])
+check('and nothing is too', toRgb(null), [0.5, 0.5, 0.5])
+check('with an alpha, for the things that take strings',
+      rgba('#7c5cff', 0.5), 'rgba(124,92,255,0.5)')
 
 // Each level on its own ring, so a force layout starts tidy rather than knotted.
 const rings = ringsByDepth(tree.nodes, { spacing: 100 })

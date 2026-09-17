@@ -40,7 +40,7 @@ export default {}
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { Graph } from '@cosmos.gl/graph'
 import { state } from '../store.js'
-import { treeSizes, treeColours, ringsByDepth, trail, childrenOf } from '../core/pathTree.js'
+import { treeSizes, treeColours, ringsByDepth, trail, childrenOf, rgba } from '../core/pathTree.js'
 
 const props = defineProps({
   /** `{ nodes, edges, parents, depth, truncated }` from core/pathTree.js. */
@@ -62,7 +62,15 @@ const along = ref(0)
 const where = computed(() => (at.value >= 0 && props.tree ? trail(props.tree, at.value) : []))
 const below = computed(() => (at.value >= 0 && props.tree ? childrenOf(props.tree, at.value) : []))
 
-const dark = computed(() => state.settings.display.theme !== 'light')
+/**
+ * The theme's own colours, which the graph is drawn in.
+ *
+ * `accent` and `accentAlt` are the two ends of the depth ramp, `dim` is what
+ * the leaves fade towards and what the edges are drawn in, and `error` marks
+ * whatever is selected. A graph in a palette nothing else on screen uses looks
+ * like a different program. @see core/pathTree.js treeColours
+ */
+const theme = computed(() => state.settings.theme)
 
 /*
  * The simulation's dials, in settings rather than in this file.
@@ -101,13 +109,15 @@ function build() {
     simulationLinkDistance: physics.value.linkDistance,
     simulationDecay: physics.value.decay,
     linkWidth: physics.value.linkWidth,
-    linkColor: dark.value ? 'rgba(170,185,215,0.32)' : 'rgba(40,60,110,0.28)',
+    // The dim colour: the edges are the structure, and structure should be
+    // legible without competing with what hangs off it.
+    linkColor: rgba(theme.value.dim, 0.38),
     curvedLinks: false,
     fitViewOnInit: true,
     enableDrag: false,
     renderHoveredPointRing: true,
-    hoveredPointRingColor: dark.value ? '#9db4ff' : '#3D4E8C',
-    focusedPointRingColor: dark.value ? '#ffd479' : '#A8543A',
+    hoveredPointRingColor: theme.value.accentAlt,
+    focusedPointRingColor: theme.value.error,
     onClick: (index) => { if (index !== undefined && index !== null) choose(index) },
   })
 
@@ -117,7 +127,9 @@ function build() {
   const known = Boolean(kept) && kept.length === nodes.value.length * 2
   graph.setPointPositions(known ? kept.slice() : ringsByDepth(nodes.value))
   graph.setPointSizes(treeSizes(nodes.value))
-  graph.setPointColors(treeColours(nodes.value, { dark: dark.value }))
+  graph.setPointColors(treeColours(nodes.value, {
+    from: theme.value.accent, to: theme.value.accentAlt, dim: theme.value.dim,
+  }))
 
   const pairs = new Float32Array(props.tree.edges.length)
   pairs.set(props.tree.edges)
@@ -348,7 +360,8 @@ function restir() {
 
 onMounted(build)
 watch(() => props.tree, () => { at.value = -1; along.value = 0; build() })
-watch(dark, build)
+// Re-drawn when the theme changes, because every colour in it came from there.
+watch(() => JSON.stringify(theme.value), build)
 
 onBeforeUnmount(() => {
   clearTimeout(settleTimer)

@@ -792,7 +792,7 @@ body,
 /* Each relationship is a button, because it is one: clicking it and pressing
    the down arrow do the same thing. */
 .jamin-graph-rel {
-  border: 1px solid rgba(127, 127, 127, 0.3);
+  border: 1px solid color-mix(in srgb, var(--jamin-dim) 55%, transparent);
   border-radius: 11px;
   background: transparent;
   color: inherit;
@@ -805,13 +805,13 @@ body,
 }
 
 .jamin-graph-rel:hover {
-  background: rgba(127, 127, 127, 0.16);
+  background: color-mix(in srgb, var(--jamin-dim) 26%, transparent);
 }
 
 /* Where the keyboard is pointing. The strip is the menu, so this is the cursor. */
 .jamin-graph-rel.is-pointed {
-  border-color: rgb(var(--v-theme-primary));
-  background: rgba(var(--v-theme-primary), 0.14);
+  border-color: var(--jamin-accent);
+  background: color-mix(in srgb, var(--jamin-accent) 18%, transparent);
 }
 
 .jamin-graph-rel i {
@@ -825,7 +825,9 @@ body,
   flex: 1 1 auto;
   min-height: 220px;
   border-radius: 4px;
-  background: rgba(127, 127, 127, 0.06);
+  /* A shade off the theme's ground rather than a grey: the canvas is
+     transparent, so this is what the graph is drawn on. */
+  background: color-mix(in srgb, var(--jamin-fg) 5%, var(--jamin-bg));
   outline: none;
   position: relative;
   overflow: hidden;
@@ -833,7 +835,7 @@ body,
 
 /* It takes the arrow keys, so it has to be visibly the thing that has them. */
 .jamin-graph-canvas:focus-visible {
-  box-shadow: inset 0 0 0 2px rgb(var(--v-theme-primary));
+  box-shadow: inset 0 0 0 2px var(--jamin-accent);
 }
 
 .jamin-graph-foot {
@@ -857,9 +859,9 @@ body,
   border-radius: 3px;
 }
 
-.jamin-graph-foot button:hover { background: rgba(127, 127, 127, 0.18); }
+.jamin-graph-foot button:hover { background: color-mix(in srgb, var(--jamin-dim) 28%, transparent); }
 
-.jamin-graph-settling { color: rgb(var(--v-theme-primary)); opacity: 1; }
+.jamin-graph-settling { color: var(--jamin-accent); opacity: 1; }
 
 /* The canvas and whatever is drawn over it. */
 .jamin-graph-wrap {
@@ -883,7 +885,8 @@ body,
   padding: 4px 10px;
   border-radius: 4px;
   font-size: 0.78rem;
-  background: rgba(var(--v-theme-surface), 0.92);
+  background: color-mix(in srgb, var(--jamin-bg) 90%, transparent);
+  color: var(--jamin-fg);
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.25);
   pointer-events: none;
 }
@@ -895,7 +898,7 @@ body,
 
 .jamin-graph-typed em {
   font-style: normal;
-  color: rgb(var(--v-theme-primary));
+  color: var(--jamin-accent);
 }
 
 .jamin-graph-typed span:last-child { opacity: 0.6; }
@@ -915,7 +918,7 @@ body,
   border-radius: 3px;
 }
 
-.jamin-graph-crumb:hover { opacity: 1; background: rgba(127, 127, 127, 0.16); }
+.jamin-graph-crumb:hover { opacity: 1; background: color-mix(in srgb, var(--jamin-dim) 26%, transparent); }
 
 .jamin-graph-crumb.is-here {
   opacity: 1;
@@ -952,9 +955,11 @@ body,
   border-radius: 3px;
   /* Over whatever the graph drew, which is any colour at all -- so the label
      carries its own ground rather than hoping. */
-  background: rgba(var(--v-theme-surface), 0.78);
-  color: rgb(var(--v-theme-on-surface));
-  opacity: 0.82;
+  /* The theme's own ground and ink, so a label reads on whatever the graph
+     drew behind it and belongs to the same program. @see core/themes.js */
+  background: color-mix(in srgb, var(--jamin-bg) 82%, transparent);
+  color: var(--jamin-fg);
+  opacity: 0.88;
 }
 
 .jamin-graph-label i {
@@ -972,6 +977,6 @@ body,
 .jamin-graph-label.is-here {
   opacity: 1;
   font-weight: 600;
-  background: rgb(var(--v-theme-primary));
-  color: rgb(var(--v-theme-on-primary));
+  background: var(--jamin-accent);
+  color: var(--jamin-bg);
 }
