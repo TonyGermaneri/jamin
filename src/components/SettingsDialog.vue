@@ -5,6 +5,8 @@
  */
 import { computed, ref, watch } from 'vue'
 import InfoTip from './InfoTip.vue'
+import DrumLibraries from './DrumLibraries.vue'
+import DrumKit from './DrumKit.vue'
 import { state, engine, applyTheme, resetSettings, applyPortBindings, forgetErrors, toast } from '../store.js'
 import { THEMES, SHADER_DEFAULTS } from '../core/themes.js'
 import { loadChordDictionary, searchChords } from '../core/chordDictionary.js'
@@ -100,6 +102,13 @@ async function retryMidi() {
         <v-tab value="themes">Themes</v-tab>
         <v-tab value="shaders">Shaders</v-tab>
         <v-tab value="accompany">Accompany</v-tab>
+        <!-- Both were tabs in the drum book, which was four tabs of which one
+             was a catalogue. Pointing at a folder and fixing a note map are
+             things somebody does once and never while choosing a groove. -->
+        <v-tab value="libraries">
+          Libraries<span v-if="state.drumSets.length"> ({{ state.drumSets.length }})</span>
+        </v-tab>
+        <v-tab value="kit">Kit</v-tab>
         <v-tab value="random">Dice</v-tab>
         <v-tab value="errors">
           Errors<span v-if="state.errors.length"> ({{ state.errors.length }})</span>
@@ -617,6 +626,16 @@ async function retryMidi() {
                 />
               </v-col>
             </v-row>
+          </v-window-item>
+
+          <!-- Libraries: somebody's own MIDI, read from where it lives ---- -->
+          <v-window-item value="libraries">
+            <DrumLibraries />
+          </v-window-item>
+
+          <!-- Kit: where the drums actually are --------------------------- -->
+          <v-window-item value="kit">
+            <DrumKit />
           </v-window-item>
 
           <!-- Dice: what the random buttons draw on --------------------- -->

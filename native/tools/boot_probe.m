@@ -238,6 +238,24 @@ int main(int argc, const char **argv) {
               @"    }"
               @"    return null;"
               @"  };"
+              /* A tab panel that has stopped moving.
+                 v-window slides the outgoing panel out and the incoming one in
+                 over 300ms, so measuring after a 300ms wait measures whichever
+                 side of the boundary the machine lands on -- and a panel caught
+                 mid-slide is hundreds of pixels outside its own card, which
+                 reads as a control clipped off the edge. Waited for rather than
+                 guessed at: poll until the left edge stops changing. */
+              @"  const settled = async (el) => {"
+              @"    let was = null;"
+              @"    for (let n = 0; n < 30; n++) {"
+              @"      const pane = el();"
+              @"      const now = pane ? Math.round(pane.getBoundingClientRect().left) : null;"
+              @"      if (now !== null && now === was) return pane;"
+              @"      was = now;"
+              @"      await wait(50);"
+              @"    }"
+              @"    return el();"
+              @"  };"
               @"  const openBook = async (title) => {"
               @"    const button = [...document.querySelectorAll('button')].find(b => b.title === title);"
               @"    if (!button) return null;"
@@ -310,8 +328,8 @@ int main(int argc, const char **argv) {
                  with no scrollbar and no way to reach the rest of it. */
               @"      for (const tab of [...card.querySelectorAll('.v-tab')]) {"
               @"        const label = (tab.textContent || '').trim().slice(0, 24);"
-              @"        tab.click(); await wait(350);"
-              @"        const pane = card.querySelector('.v-window-item--active');"
+              @"        tab.click();"
+              @"        const pane = await settled(() => card.querySelector('.v-window-item--active'));"
               @"        if (!pane) continue;"
               @"        const body = card.querySelector('.v-card-text');"
               @"        const over = (el) => el && el.scrollHeight > el.clientHeight + 2;"
@@ -368,8 +386,8 @@ int main(int argc, const char **argv) {
               @"    if (dialog) {"
               @"      for (const tab of [...dialog.querySelectorAll('.v-tab')]) {"
               @"        const label = (tab.textContent || '').trim().slice(0, 24);"
-              @"        tab.click(); await wait(300);"
-              @"        const pane = dialog.querySelector('.v-window-item--active');"
+              @"        tab.click();"
+              @"        const pane = await settled(() => dialog.querySelector('.v-window-item--active'));"
               @"        if (!pane) continue;"
               @"        const clipped = clippedIn(pane);"
               @"        if (clipped) lines.push('  settings ' + label + ' clips: ' + clipped);"
@@ -403,6 +421,60 @@ int main(int argc, const char **argv) {
               @"      }"
               @"    } catch (e) { has.push('opfsWrite=threw:' + e.name); }"
               @"    lines.push('storage: ' + has.join(' '));"
+              /* And what it can draw with. A graph of a million nodes is a
+                 WebGL question before it is anything else, and the answer is a
+                 fact about this host's WebKit rather than about any library. */
+              @"    const gpu = [];"
+              @"    try {"
+              @"      const c = document.createElement('canvas');"
+              @"      const gl2 = c.getContext('webgl2');"
+              @"      const gl = gl2 || c.getContext('webgl');"
+              @"      gpu.push('webgl2=' + !!gl2);"
+              @"      if (gl) {"
+              @"        const dbg = gl.getExtension('WEBGL_debug_renderer_info');"
+              @"        if (dbg) gpu.push('gpu=' + JSON.stringify(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)));"
+              @"        gpu.push('maxTexture=' + gl.getParameter(gl.MAX_TEXTURE_SIZE));"
+              @"        gpu.push('maxVaryings=' + gl.getParameter(gl.MAX_VARYING_VECTORS));"
+              @"        gpu.push('vertexTextureUnits=' + gl.getParameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS));"
+              @"        if (gl2) {"
+              @"          gpu.push('colorBufferFloat=' + !!gl2.getExtension('EXT_color_buffer_float'));"
+              @"          gpu.push('floatBlend=' + !!gl2.getExtension('EXT_float_blend'));"
+              @"          gpu.push('maxDrawBuffers=' + gl2.getParameter(gl2.MAX_DRAW_BUFFERS));"
+              @"          gpu.push('transformFeedback=' + (typeof gl2.beginTransformFeedback === 'function'));"
+              @"        }"
+              @"      }"
+              @"      gpu.push('webgpu=' + (typeof navigator.gpu !== 'undefined'));"
+              @"    } catch (e) { gpu.push('threw:' + e.name); }"
+              @"    lines.push('gpu: ' + gpu.join(' '));"
+              /* And whether a worker can open a file synchronously, which is the
+                 whole question for SQLite-on-OPFS: the fast VFS needs
+                 createSyncAccessHandle, and that exists only inside a worker.
+                 Asked in a worker rather than guessed at from the main thread,
+                 where it is absent by design and says nothing. */
+              @"    try {"
+              @"      const src = `onmessage = async () => {"
+              @"        const out = { worker: true };"
+              @"        try {"
+              @"          const dir = await navigator.storage.getDirectory();"
+              @"          const f = await dir.getFileHandle('probe.db', { create: true });"
+              @"          out.sync = typeof f.createSyncAccessHandle === 'function';"
+              @"          if (out.sync) { const h = await f.createSyncAccessHandle();"
+              @"            h.write(new TextEncoder().encode('x'), { at: 0 }); h.flush();"
+              @"            out.wrote = h.getSize(); h.close(); }"
+              @"        } catch (e) { out.err = e.name + ':' + e.message; }"
+              @"        postMessage(out);"
+              @"      };`;"
+              @"      const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));"
+              @"      const w = new Worker(url);"
+              @"      const said = await new Promise((r) => {"
+              @"        const t = setTimeout(() => r({ timeout: true }), 4000);"
+              @"        w.onmessage = (e) => { clearTimeout(t); r(e.data); };"
+              @"        w.onerror = (e) => { clearTimeout(t); r({ workerError: e.message }); };"
+              @"        w.postMessage(1);"
+              @"      });"
+              @"      w.terminate(); URL.revokeObjectURL(url);"
+              @"      lines.push('worker opfs: ' + JSON.stringify(said));"
+              @"    } catch (e) { lines.push('worker opfs: threw ' + e.name + ' ' + e.message); }"
               @"  }"
               /* And how fast a real IndexedDB actually is.
                  The filter path is verified against a real library in node,

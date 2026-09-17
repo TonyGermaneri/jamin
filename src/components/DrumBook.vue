@@ -18,9 +18,6 @@ import {
   state,
   toast,
   drumRows,
-  setGrooveFor,
-  forgetDrumBinding,
-  grooveById,
   favourite,
   toggleFavourite,
   setDrumAccent,
@@ -30,13 +27,6 @@ import {
   assignEverywhere,
   autoFillFrom,
   tapDrum,
-  refreshDrumSets,
-  importDrumFolder,
-  cancelDrumImport,
-  forgetDrumSet,
-  forgetEveryDrumSet,
-  setDrumSetKit,
-  importDrumFolderByReference,
   notesFor,
   inboundKitFor,
   midiForGroove,
@@ -47,17 +37,12 @@ import {
   clearEverySlot,
   aimedElsewhere,
   instanceLabel,
-  countEachDrumSet,
-  buildIndexes,
-  indexesAreCurrent,
   setDrumVoiceMuted,
   drumVoiceMuted,
   unmuteEveryDrumVoice,
 } from '../store.js'
-// The in-memory text search, which is not the store's searchDrums: that one
-// asks the database. Both are needed and they are not the same thing.
-import { searchDrums as searchGrooveList, summarizeGroove } from '../core/drums.js'
-import { DRUM_KITS, DRUM_VOICES, DEFAULT_KIT, kitById, gmName, mapDrumNote, TD11_TO_VOICE } from '../core/drumKits.js'
+import { summarizeGroove } from '../core/drums.js'
+import { DRUM_VOICES, kitById, gmName, TD11_TO_VOICE } from '../core/drumKits.js'
 import InfoTip from './InfoTip.vue'
 import { vDragMidi } from '../core/dragOut.js'
 import { everyTag } from '../core/drumTags.js'
@@ -578,52 +563,11 @@ watch(transport, (now, before) => {
   gliding.value = now !== null && before !== null && now >= before
 })
 
-const folderInput = ref(null)
 
-/** Bytes, as somebody would say them. */
-function inGigabytes(bytes) {
-  const mb = (bytes || 0) / 1024 / 1024
-  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`
-}
 
-/** Everything the sampling found, minus the pitch list, which is machinery
-    rather than something to read. */
-function setFacts(set) {
-  const { pitches, ...rest } = set.facts || {}
-  return rest
-}
 
-/**
- * How much of a library the kit it is set to cannot play.
- *
- * A pack written for one sampler and played through another loses notes in
- * silence: nothing errors, the pattern is simply thinner than it should be. The
- * pitches the sampling saw are kept for exactly this, so the number is live
- * against whichever kit the library is set to.
- */
-function unplayable(set) {
-  const pitches = (set.facts && set.facts.pitches) || []
-  if (!pitches.length) return null
 
-  const map = set.kit ? kitById(set.kit).map : chosenKit.value.map
-  const lost = pitches.filter((pitch) => mapDrumNote(pitch, map) === null)
-  return { lost: lost.length, total: pitches.length,
-           percent: Math.round(100 * lost.length / pitches.length) }
-}
 
-function pickFolder() {
-  if (folderInput.value) folderInput.value.click()
-}
-
-async function onFolderPicked(event) {
-  const files = event.target.files
-  if (!files || !files.length) return
-  // The folder's own name, from the first file's path -- a directory picker
-  // gives no other way to know what was chosen.
-  const first = files[0].webkitRelativePath || files[0].name
-  await importDrumFolder(files, first.split('/')[0] || 'library')
-  event.target.value = ''
-}
 
 /** The part the playhead is in, so its pill can say so. @see store.syncDrumsPlaying */
 const playingSection = computed(() => state.playing.section)
@@ -788,33 +732,10 @@ const waiting = computed(() => rows.value.filter((row) => !row.stale && !row.gro
 const elsewhere = computed(() => aimedElsewhere())
 const whose = computed(() => instanceLabel(state.ui.targetInstance))
 
-/*
- * What is really in there, counted rather than recalled.
- *
- * Asked when the Libraries tab is opened, because it is a count per library and
- * nobody needs it until they are looking at the list.
- */
-function reallyHolds(set) {
-  const held = state.drumCounts[set.id]
-  return held === undefined ? null : held
-}
-
-watch(() => [state.ui.book === 'drums', state.ui.drumsTab], ([open, tab]) => {
-  if (open && tab === 'sets') countEachDrumSet()
-}, { immediate: false })
-
 const boundGrooves = computed(() => rows.value.filter((row) => row.groove).length)
 const boundFills = computed(() => rows.value.filter((row) => row.fill).length)
 
-/** Both slots at once, which is what "start this part again" means. */
-function clearPart(row) {
-  setGrooveFor(row.name, null, 'groove')
-  setGrooveFor(row.name, null, 'fill')
-  toast(`${partLabel(row)} cleared`)
-}
 
-const partLabel = (row) => (row.wholeSong ? 'The whole song' : row.name)
-const grooveName = (id) => (grooveById(id) ? grooveById(id).name : null)
 
 /* ---------------- the kit ---------------- */
 const kit = computed({
@@ -829,46 +750,8 @@ function noteFor(voice) {
   return custom[voice] ?? chosenKit.value.map[voice]
 }
 
-function setNote(voice, value) {
-  const note = Math.round(Number(value))
-  const custom = { ...(settings.value.customMap || {}) }
-  if (!Number.isFinite(note) || note < 0 || note > 127 || note === chosenKit.value.map[voice]) {
-    delete custom[voice]
-  } else {
-    custom[voice] = note
-  }
-  settings.value.customMap = custom
-}
 
-/**
- * How much of the bundled corpus lands on each voice.
- *
- * Counted once from what is loaded. It is here because when a drum sounds
- * wrong, the first question is how much of the music goes through it -- the
- * hi-hat foot is 11.7% of every note in the corpus, so a wrong sample there is
- * heard constantly, and the crash at 0.7% is a curiosity.
- */
-const voiceShares = computed(() => {
-  const counts = new Map()
-  let total = 0
-  for (const groove of state.drums) {
-    for (const note of groove.notes) {
-      const voice = TD11_TO_VOICE[note.note]
-      if (!voice) continue
-      counts.set(voice, (counts.get(voice) || 0) + 1)
-      total++
-    }
-  }
-  return { counts, total }
-})
 
-function voiceShare(id) {
-  const { counts, total } = voiceShares.value
-  const hits = counts.get(id) || 0
-  if (!hits || !total) return ''
-  const share = (100 * hits) / total
-  return `${share < 0.1 ? '<0.1' : share.toFixed(1)}%`
-}
 
 /**
  * Erasing the lot, confirmed by a second press rather than by a dialog.
@@ -893,54 +776,12 @@ function onKeyClick(event, voice) {
 /** How many drums are out, for the button that brings them all back. */
 const silenced = computed(() => Object.values(state.drumMutes).filter(Boolean).length)
 
-const eraseArmed = ref(false)
-let eraseTimer = null
 
-function eraseEverything() {
-  if (!eraseArmed.value) {
-    eraseArmed.value = true
-    toast('Press again to erase every imported library')
-    clearTimeout(eraseTimer)
-    eraseTimer = setTimeout(() => { eraseArmed.value = false }, 6000)
-    return
-  }
-  clearTimeout(eraseTimer)
-  eraseArmed.value = false
-  forgetEveryDrumSet()
-}
 
-/*
- * A catalogue imported before the paired indexes existed.
- *
- * It works without them -- the facets fall back to a walk of the library, which
- * is correct and slow -- so this is an offer rather than a warning, and it is
- * made where somebody is already looking at their libraries.
- */
-const indexesOld = ref(false)
 
-watch(() => [state.ui.book === 'drums', state.ui.drumsTab, state.drumSets.length],
-      async ([open]) => {
-        if (open) indexesOld.value = !(await indexesAreCurrent())
-      }, { immediate: false })
 
-async function bringIndexesUpToDate() {
-  state.drumImport.preparing = true
-  state.drumImport.name = 'Preparing the catalogue'
-  await buildIndexes()
-  state.drumImport.preparing = false
-  indexesOld.value = false
-  await refreshDrumSets()
-  toast('The catalogue is indexed')
-}
 
-/** What a library written before kits were always named falls back to. */
-const defaultKitId = DEFAULT_KIT
 
-const overridden = computed(() => Object.keys(settings.value.customMap || {}).length)
-function resetMap() {
-  settings.value.customMap = {}
-  toast(`Back to ${chosenKit.value.name}`)
-}
 </script>
 
 <template>
@@ -975,11 +816,6 @@ function resetMap() {
         <!-- Everything there is, not the half of it this page used to be able
              to count. @see store.shelveTheCorpus -->
         <v-tab value="grooves">Grooves ({{ everything.toLocaleString() }})</v-tab>
-        <v-tab value="parts">Parts</v-tab>
-        <v-tab value="sets">
-          Libraries<span v-if="state.drumSets.length"> ({{ state.drumSets.length }})</span>
-        </v-tab>
-        <v-tab value="kit">Kit</v-tab>
       </v-tabs>
 
       <v-card-text>
@@ -1415,422 +1251,6 @@ function resetMap() {
           </v-window-item>
 
           <!-- Parts: what plays where ------------------------------------ -->
-          <v-window-item value="parts">
-            <div class="text-caption text-medium-emphasis mb-3">
-              Every <code>[Section]</code> in the chart, and what the drums do there.
-              <InfoTip>
-                A fill goes in the bar before every section change, which is what a drum chart has
-                meant since long before there were corpora to draw on — write
-                <code>[d:nofill]</code> in a section to stop it, or switch it off for the whole song
-                in Settings. A part whose marker is deleted from the chart keeps its groove and is
-                marked below rather than thrown away, because charts get rewritten and losing an
-                assignment to a retyped label would be its own small disaster.
-              </InfoTip>
-            </div>
-
-            <v-table density="compact">
-              <thead>
-                <tr>
-                  <th class="text-caption">Part</th>
-                  <th class="text-caption">Groove</th>
-                  <th class="text-caption">Fill out of it</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="row in rows" :key="row.name" :class="{ 'text-medium-emphasis': row.stale }">
-                  <td class="text-body-2">
-                    {{ partLabel(row) }}
-                    <v-chip v-if="row.stale" size="x-small" variant="tonal" class="ml-2">
-                      not in the chart
-                    </v-chip>
-                  </td>
-                  <!-- A clear against each slot rather than one at the end of
-                       the row. There are two things bound here and one button
-                       could only ever undo one of them, which is why the fill
-                       could be set and never taken off again. -->
-                  <td class="text-caption">
-                    <div class="d-flex align-center" style="gap: 4px">
-                      <span v-if="row.groove">{{ grooveName(row.groove) || 'a groove that is gone' }}</span>
-                      <span v-else class="text-warning">nothing yet</span>
-                      <v-btn v-if="row.groove" icon size="x-small" variant="text"
-                             :aria-label="`Clear the groove on ${partLabel(row)}`"
-                             title="Take this groove off"
-                             @click="setGrooveFor(row.name, null, 'groove')">
-                        <v-icon size="14">mdi-close</v-icon>
-                      </v-btn>
-                    </div>
-                  </td>
-                  <td class="text-caption">
-                    <div class="d-flex align-center" style="gap: 4px">
-                      <span v-if="row.fill">{{ grooveName(row.fill) || 'a fill that is gone' }}</span>
-                      <span v-else class="text-medium-emphasis">whatever suits</span>
-                      <v-btn v-if="row.fill" icon size="x-small" variant="text"
-                             :aria-label="`Clear the fill on ${partLabel(row)}`"
-                             title="Take this fill off"
-                             @click="setGrooveFor(row.name, null, 'fill')">
-                        <v-icon size="14">mdi-close</v-icon>
-                      </v-btn>
-                    </div>
-                  </td>
-                  <td class="text-right">
-                    <v-btn v-if="row.groove || row.fill" size="x-small" variant="text"
-                           @click="clearPart(row)">clear both</v-btn>
-                    <v-btn v-if="row.stale" icon size="x-small" variant="text" color="error"
-                           :aria-label="`Forget ${row.name}`" @click="forgetDrumBinding(row.name)">
-                      <v-icon size="16">mdi-delete-outline</v-icon>
-                    </v-btn>
-                  </td>
-                </tr>
-              </tbody>
-            </v-table>
-
-            <div v-if="!rows.length" class="text-caption text-medium-emphasis pa-4">
-              No parts yet. Write <code>[Intro]</code>, <code>[Verse]</code>, <code>[Chorus]</code>
-              on their own in the chart and they appear here.
-            </div>
-          </v-window-item>
-
-          <!-- Libraries: somebody's own MIDI, read from where it lives ---- -->
-          <v-window-item value="sets">
-            <div class="text-caption text-medium-emphasis mb-3">
-              <span v-if="state.host.active">
-                Point jamin at a folder of drum MIDI. The files stay where they are and play from
-                there.
-              </span>
-              <span v-else>Add a folder of drum MIDI and it reads what is in it.</span>
-              <InfoTip>
-                <span v-if="state.host.active">
-                  Point at one pack and it becomes one library. Point at a folder with fifty
-                  packs in it and each becomes its own library, because that is the level a
-                  vendor's name is at, and a note map belongs to a vendor rather than to a
-                  collection. Everything below a pack is its shelves.
-                  <br /><br />
-                  Stopping leaves what has been read where it is; starting again carries on from
-                  the pack it stopped in rather than beginning over.
-                  <br /><br />
-                  A plugin can reach the filesystem, so a library is pointed at rather than
-                  swallowed: what is kept here is an index — what each pattern is called, how long
-                  it is, what shelf it sits on — and the notes stay in the file, read at the moment
-                  something needs to play them. Half a gigabyte of MIDI becomes a few tens of
-                  megabytes of index, and what plays is the original rather than a copy of it.
-                  <br /><br />
-                  Move or rename the folder and the patterns stop playing, which is the price of
-                  not copying it.
-                  <br /><br />
-                </span>
-                Nothing imported is ever redistributed: it is read from where it already is on
-                this machine, kept in this browser's own database, and never leaves. The bundled
-                corpus is the only one that can legally travel with the program — a library you
-                bought is yours to use and not ours to ship.
-                <br /><br />
-                Files are read whole. A pattern is whatever the file is, because a library of
-                authored loops is already a whole number of bars and cutting it up would only
-                make it worse.
-              </InfoTip>
-            </div>
-
-            <div class="d-flex align-center flex-wrap mb-4" style="gap: 8px">
-              <!-- Inside a plugin the filesystem is right there, so the library
-                   is pointed at rather than swallowed: the database keeps an
-                   index and the notes stay in the files. A web page has no path
-                   to point at and has to take a copy. -->
-              <v-btn v-if="state.host.active" size="small" variant="tonal"
-                     prepend-icon="mdi-folder-open-outline"
-                     :disabled="state.drumImport.running" @click="importDrumFolderByReference">
-                Point at a folder
-              </v-btn>
-              <v-btn v-else size="small" variant="tonal" prepend-icon="mdi-folder-open-outline"
-                     :disabled="state.drumImport.running" @click="pickFolder">
-                Add a folder
-              </v-btn>
-              <input ref="folderInput" type="file" webkitdirectory directory multiple
-                     style="display: none" @change="onFolderPicked" />
-
-              <!-- Building the indexes, which happens once at the start of an
-                   import and never on its own. There is no progress to be had
-                   from inside an upgrade transaction, so what it says is what
-                   there is: what it is doing, why, and that it is once. -->
-              <template v-if="state.drumImport.preparing">
-                <v-progress-circular indeterminate size="18" width="2" color="primary" />
-                <span class="text-caption">
-                  Preparing the catalogue — building the filter indexes over the patterns
-                  already imported. This happens once and may take up to a minute on a
-                  large collection.
-                </span>
-              </template>
-
-              <template v-else-if="state.drumImport.running">
-                <!-- Packs, because that is the only count known before the
-                     work starts. The tree below each is walked while it is read
-                     rather than measured first, so folders and files are
-                     reported as they are found rather than as a fraction. -->
-                <v-progress-circular
-                  v-if="!state.drumImport.packs" indeterminate size="18" width="2" />
-                <v-progress-circular
-                  v-else size="18" width="2"
-                  :model-value="100 * state.drumImport.packsDone / state.drumImport.packs"
-                />
-                <span class="text-caption">
-                  <template v-if="state.drumImport.packs > 1">
-                    {{ state.drumImport.pack || state.drumImport.name }} —
-                    library {{ state.drumImport.packsDone + 1 }} of
-                    {{ state.drumImport.packs }} ·
-                    {{ state.drumImport.shelvesDone.toLocaleString() }} folders ·
-                    {{ state.drumImport.read.toLocaleString() }} read
-                  </template>
-                  <template v-else>
-                    {{ state.drumImport.name }} —
-                    {{ state.drumImport.read.toLocaleString() }}<template
-                      v-if="state.drumImport.total"> of
-                      {{ state.drumImport.total.toLocaleString() }}</template>
-                  </template>
-                  <span v-if="state.drumImport.skipped">
-                    · {{ state.drumImport.skipped.toLocaleString() }} skipped
-                  </span>
-                  <span v-if="state.drumImport.packsKept">
-                    · {{ state.drumImport.packsKept.toLocaleString() }} already here
-                  </span>
-                </span>
-                <v-btn size="x-small" variant="text" @click="cancelDrumImport">Stop</v-btn>
-              </template>
-            </div>
-
-            <!-- Taking a library out is minutes of work for a large one, and
-                 a window that has not changed looks like a window that has
-                 hung. -->
-            <div v-if="state.drumRemoval.running" class="mb-3">
-              <div class="d-flex align-center mb-1" style="gap: 8px">
-                <v-progress-circular indeterminate size="16" width="2" color="error" />
-                <span class="text-caption">
-                  Removing {{ state.drumRemoval.name }} —
-                  {{ state.drumRemoval.done.toLocaleString() }}<span v-if="state.drumRemoval.total">
-                    of {{ state.drumRemoval.total.toLocaleString() }}</span> patterns
-                </span>
-              </div>
-              <v-progress-linear
-                v-if="state.drumRemoval.total"
-                :model-value="100 * state.drumRemoval.done / state.drumRemoval.total"
-                color="error" height="4" rounded
-              />
-            </div>
-
-            <v-table v-if="state.drumSets.length" density="compact">
-              <thead>
-                <tr>
-                  <th class="text-caption">Library</th>
-                  <th class="text-caption">Patterns</th>
-                  <th class="text-caption">Kit its notes were written for</th>
-                  <th class="text-caption">What it says about itself</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="set in state.drumSets" :key="set.id">
-                  <td class="text-body-2">
-                    {{ set.name }}
-                    <div v-if="set.byReference || set.partial"
-                         class="text-caption text-medium-emphasis" :title="set.root">
-                      <span v-if="set.byReference">played from disk</span>
-                      <span v-if="set.byReference && set.partial"> · </span>
-                      <span v-if="set.partial">stopped part way</span>
-                    </div>
-                  </td>
-                  <!-- What the import counted, and what the database actually
-                       holds when the two disagree. The recorded number is a
-                       record of what happened rather than a reading of what is
-                       there, and it is the one that lies. -->
-                  <td class="text-caption">
-                    {{ (set.count || 0).toLocaleString() }}
-                    <div v-if="reallyHolds(set) !== null && reallyHolds(set) !== (set.count || 0)"
-                         class="text-warning">
-                      {{ reallyHolds(set).toLocaleString() }} in the database
-                    </div>
-                  </td>
-                  <td style="min-width: 190px">
-                    <!-- No "whatever the Kit tab says". Which numbering a
-                         library's files are written in is a fact about the
-                         files; it does not change because somebody picked a
-                         different drum instrument for the track. -->
-                    <v-select
-                      :model-value="set.kit || defaultKitId"
-                      :items="DRUM_KITS.map((k) => ({ title: k.name, value: k.id }))"
-                      density="compact" hide-details variant="plain"
-                      @update:model-value="setDrumSetKit(set.id, $event)"
-                    />
-                  </td>
-                  <td class="text-caption text-medium-emphasis">
-                    <!-- The number that says whether the kit above is right.
-                         A library played through the wrong map loses notes in
-                         silence; nothing else would tell you. -->
-                    <div v-if="unplayable(set)" class="mb-1">
-                      <span :class="unplayable(set).percent > 10 ? 'text-warning' : ''">
-                        {{ unplayable(set).lost }} of {{ unplayable(set).total }} sounds
-                        have nowhere to go on this kit
-                        <span v-if="unplayable(set).percent > 10">— try another map</span>
-                      </span>
-                    </div>
-                    <!-- Why, when the classifier gave up. A pack of chromatic
-                         runs is how a sample library indexes itself and is not a
-                         kit; an empty box does not say that. -->
-                    <div v-if="set.kitReason" class="mb-1 text-medium-emphasis">
-                      No map could be worked out — {{ set.kitReason }}
-                    </div>
-                    <!-- What the classifier made of the shelves inside. A pack
-                         disagrees with itself often enough that this is worth
-                         showing rather than hiding behind one setting. -->
-                    <div v-if="set.folders" class="mb-1">
-                      {{ set.folders.toLocaleString() }} shelves<span
-                        v-if="Object.keys(set.folderKits || {}).length">,
-                        {{ Object.keys(set.folderKits).length.toLocaleString() }} with a map of
-                        their own</span>
-                    </div>
-                    <span v-for="(value, key) in setFacts(set)" :key="key" class="mr-2">
-                      <strong>{{ key }}</strong> {{ value }}
-                    </span>
-                  </td>
-                  <td class="text-right">
-                    <v-btn icon size="x-small" variant="text" color="error"
-                           :disabled="state.drumRemoval.running"
-                           :aria-label="`Remove ${set.name}`" @click="forgetDrumSet(set.id)">
-                      <v-icon size="16">mdi-delete-outline</v-icon>
-                    </v-btn>
-                  </td>
-                </tr>
-              </tbody>
-            </v-table>
-
-            <div v-if="state.drumSets.length && state.drumStorage.quota"
-                 class="text-caption text-medium-emphasis mt-2">
-              The catalogue is using {{ inGigabytes(state.drumStorage.usage) }} of the
-              {{ inGigabytes(state.drumStorage.quota) }} this machine will give it.
-            </div>
-
-            <div v-else-if="!state.drumSets.length" class="text-caption text-medium-emphasis pa-4">
-              No libraries yet. The bundled corpus is on the Grooves tab and works without any.
-            </div>
-
-            <!-- Imported before this version knew how to index them. It works
-                 either way; without the indexes a library's own filters are a
-                 walk of its rows, which on a large one is a wait every time. -->
-            <div v-if="indexesOld && state.drumSets.length && !state.drumImport.preparing"
-                 class="d-flex align-center mt-4" style="gap: 8px">
-              <v-btn size="small" variant="tonal" color="primary"
-                     prepend-icon="mdi-database-refresh-outline"
-                     @click="bringIndexesUpToDate">
-                Index the catalogue
-              </v-btn>
-              <span class="text-caption text-medium-emphasis">
-                These libraries were imported before the filter indexes existed. Filtering
-                works without them by reading each library, which on a large one is a wait
-                every time you choose it. Building them takes up to a minute, once — it
-                happens on its own at the start of your next import.
-              </span>
-            </div>
-
-            <!-- Start again. One library at a time is fifty confirmations when
-                 what somebody means is "clear it out", which after a run of
-                 broken imports is a thing they mean often. -->
-            <div v-if="state.drumSets.length" class="d-flex align-center mt-4" style="gap: 8px">
-              <v-btn size="small" variant="tonal" color="error"
-                     prepend-icon="mdi-delete-sweep-outline"
-                     :disabled="state.drumRemoval.running"
-                     @click="eraseEverything">
-                {{ eraseArmed ? 'Press again to erase them' : `Erase all ${state.drumSets.length} imported libraries` }}
-              </v-btn>
-              <span class="text-caption text-medium-emphasis">
-                The MIDI files are not touched — these are pointers into folders that stay
-                where they are.
-              </span>
-            </div>
-          </v-window-item>
-
-          <!-- Kit: where the drums actually are -------------------------- -->
-          <v-window-item value="kit">
-            <v-select
-              v-model="kit" :items="DRUM_KITS.map((k) => ({ title: k.name, value: k.id }))"
-              label="Kit" density="compact" hide-details class="mb-2"
-            />
-            <div class="text-caption text-medium-emphasis mb-4">
-              {{ chosenKit.notes }}
-              <InfoTip>
-                The corpus was played on a Roland TD-11 and its note numbers are not General MIDI —
-                48 is a high tom there and a hi-mid tom in GM, 58 is a floor tom rim and a
-                vibraslap. So nothing is sent as it was recorded: every groove is read into a
-                vocabulary of fourteen voices and written back out to whichever kit is chosen here.
-                If a drum is silent or wrong, this table is where it is fixed.
-              </InfoTip>
-            </div>
-
-            <v-table density="compact">
-              <thead>
-                <tr>
-                  <th />
-                  <th class="text-caption">Voice</th>
-                  <th class="text-caption">How often</th>
-                  <th class="text-caption">Note</th>
-                  <th class="text-caption">General MIDI calls it</th>
-                  <th class="text-caption">{{ chosenKit.name }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="voice in DRUM_VOICES" :key="voice.id"
-                    :class="{ 'is-struck': playingVoices.has(voice.id) }">
-                  <td style="width: 34px">
-                    <!-- Hit it. A table of numbers cannot answer "what is
-                         actually on 42"; hitting it can, and it works with the
-                         transport stopped, which is when somebody is checking. -->
-                    <v-btn icon size="x-small" variant="text"
-                           :aria-label="`Hear the ${voice.name.toLowerCase()}`"
-                           @click="tapDrum(noteFor(voice.id))">
-                      <v-icon size="16">mdi-play-circle-outline</v-icon>
-                    </v-btn>
-                  </td>
-                  <td class="text-body-2">
-                    <v-icon size="12" class="jamin-kit-dot">mdi-circle</v-icon>
-                    {{ voice.name }}
-                  </td>
-                  <!-- How much of the corpus lands on this voice, because a
-                       wrong sample on a common one is a wrong record and a
-                       wrong sample on a rare one is a curiosity. The hi-hat
-                       foot is one note in eight, which is why it is the first
-                       place to look when something sounds wrong. -->
-                  <td class="text-caption text-medium-emphasis" style="width: 96px">
-                    <span v-if="voiceShare(voice.id)">{{ voiceShare(voice.id) }}</span>
-                  </td>
-                  <td style="width: 120px">
-                    <v-text-field
-                      :model-value="noteFor(voice.id)" type="number" min="0" max="127"
-                      density="compact" hide-details variant="plain"
-                      @update:model-value="setNote(voice.id, $event)"
-                    />
-                  </td>
-                  <!-- The name, not just the number. A mapping that sends the
-                       rimshot to "Electric Snare" is obviously wrong the moment
-                       the words are on screen and nearly impossible to notice
-                       from the numbers -- which is exactly how it shipped. -->
-                  <td class="text-caption text-medium-emphasis">{{ gmName(noteFor(voice.id)) }}</td>
-                  <td class="text-caption text-medium-emphasis">
-                    {{ chosenKit.map[voice.id] }}
-                    <span v-if="noteFor(voice.id) !== chosenKit.map[voice.id]" class="text-warning">
-                      — changed
-                    </span>
-                  </td>
-                </tr>
-              </tbody>
-            </v-table>
-
-            <div class="d-flex align-center mt-3">
-              <span class="text-caption text-medium-emphasis">
-                <span v-if="overridden">{{ overridden }} voice{{ overridden === 1 ? '' : 's' }} changed from {{ chosenKit.name }}</span>
-                <span v-else>Unchanged from {{ chosenKit.name }}</span>
-              </span>
-              <v-spacer />
-              <v-btn v-if="overridden" size="small" variant="text" @click="resetMap">
-                Back to {{ chosenKit.name }}
-              </v-btn>
-            </div>
-          </v-window-item>
         </v-window>
       </v-card-text>
 </template>
