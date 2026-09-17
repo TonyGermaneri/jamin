@@ -82,7 +82,10 @@ import { phrasesFromMidi } from './core/midiPhrases.js'
 import { loadParts } from './core/parts.js'
 import { CHORDONOMICON } from './core/importers.js'
 import { chordonomiconToChart } from './core/importers.js'
-import { countProgressions, pageProgressions, searchProgressions, progressionFacets, clearProgressions } from './core/progressionStore.js'
+import {
+  countProgressions, pageProgressions, searchProgressions, progressionFacets, clearProgressions,
+  everyProgressionText,
+} from './core/progressionStore.js'
 import { importChordonomiconCsv, CHORDONOMICON_CSV } from './core/csvImport.js'
 import { loadChordDictionary, nameForSet } from './core/chordDictionary.js'
 import { describeChord } from './core/chordParser.js'
@@ -2659,12 +2662,12 @@ export function catalogueGraph(which, items) {
  * somebody asks and at the end of an import, and never because a view was
  * opened. The same rule as the indexes. @see buildIndexes
  */
-export async function buildDrumGraph({ onProgress = null } = {}) {
-  const counts = new Map()
+export async function buildBulkGraph(which, { onProgress = null } = {}) {
+  const walker = which === 'drums' ? everyPath : everyProgressionText
   const paths = []
   let seen = 0
 
-  await everyPath((batch, total) => {
+  await walker((batch, total) => {
     for (const path of batch) paths.push(path)
     seen = total
     if (onProgress) onProgress(total)
@@ -2693,8 +2696,7 @@ export async function buildDrumGraph({ onProgress = null } = {}) {
     builtAt: Date.now(),
   }
 
-  await writeGraph('drums', graph)
-  counts.clear()
+  await writeGraph(which, graph)
   return unpackStoredGraph(graph)
 }
 

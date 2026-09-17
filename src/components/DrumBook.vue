@@ -36,7 +36,7 @@ import {
   partsItFits,
   clearEverySlot,
   storedGraph,
-  buildDrumGraph,
+  buildBulkGraph,
   keepGraphLayout,
   aimedElsewhere,
   instanceLabel,
@@ -294,7 +294,7 @@ async function drawTheMap() {
   drawing.value = true
   drawn.value = 0
   try {
-    graph.value = await buildDrumGraph({ onProgress: (n) => { drawn.value = n } })
+    graph.value = await buildBulkGraph('drums', { onProgress: (n) => { drawn.value = n } })
     if (!graph.value) toast('Nothing imported to draw')
   } finally {
     drawing.value = false

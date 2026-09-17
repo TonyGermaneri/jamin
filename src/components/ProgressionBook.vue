@@ -25,15 +25,72 @@ import {
   CHORDONOMICON_CSV,
   toast,
   midiForProgression,
+  allProgressions,
+  catalogueGraph,
+  storedGraph,
+  buildBulkGraph,
+  keepGraphLayout,
 } from '../store.js'
 import { summarizeProgression } from '../core/progressions.js'
 import { parseScore } from '../core/score.js'
 import InfoTip from './InfoTip.vue'
+import CatalogueGraph from './CatalogueGraph.vue'
 import { vDragMidi } from '../core/dragOut.js'
 import { pcName } from '../core/chordParser.js'
 import { openOutside } from '../core/host.js'
 
 const PER_PAGE = 12
+
+/*
+ * The library as the words in it.
+ *
+ * The third catalogue, and the test of whether the first two shared properly:
+ * if this needs anything but an adapter and four lines, they did not.
+ *
+ * Progressions have no paths -- their words are the name and the tags -- which
+ * is exactly the case the adapter exists for. @see core/graphView.js ADAPTERS
+ */
+const asGraph = computed(() => state.settings.graph.progressions)
+const graph = ref(null)
+const drawing = ref(false)
+const drawn = ref(0)
+
+/*
+ * Two libraries, and only one of them fits in memory.
+ *
+ * The saved progressions are a handful and are graphed on the spot. Chordonomicon
+ * is two thirds of a million rows in the database, so it gets the same treatment
+ * as the drum catalogue: read once, built once, kept -- and asked for rather
+ * than sprung on somebody who opened a view.
+ */
+watch([asGraph, () => state.bulk.count], async ([on]) => {
+  if (!on) return
+  if (state.bulk.count > 0) {
+    graph.value = await storedGraph('progressions')
+    return
+  }
+  graph.value = catalogueGraph('progressions', allProgressions())
+}, { immediate: true })
+
+async function drawTheMap() {
+  drawing.value = true
+  drawn.value = 0
+  try {
+    graph.value = await buildBulkGraph('progressions', { onProgress: (n) => { drawn.value = n } })
+    if (!graph.value) toast('Nothing imported to draw')
+  } finally {
+    drawing.value = false
+  }
+}
+
+/** Where the words settled, kept -- so the map is the same map next time. */
+function keepLayout(positions) {
+  keepGraphLayout('progressions', positions)
+}
+
+function pickWord(word) {
+  if (word) search.value = word.tag
+}
 
 const search = ref('')
 const page = ref(1)
@@ -331,8 +388,38 @@ function runExport() {
                   </v-expansion-panel>
                 </v-expansion-panels>
 
+                <!-- The same library as the words in it. Picking a word
+                     searches for it, so everything to the right carries on
+                     working. @see components/CatalogueGraph.vue -->
+                <template v-if="asGraph">
+                  <CatalogueGraph
+                    v-if="graph"
+                    :graph="graph"
+                    class="jamin-book-scroll"
+                    @pick="pickWord"
+                    @settled="keepLayout"
+                  />
+                  <div v-else class="text-caption text-medium-emphasis pa-4">
+                    <div v-if="drawing">
+                      <v-progress-circular indeterminate size="16" width="2" class="mr-2" />
+                      Reading the library — {{ drawn.toLocaleString() }} progressions
+                    </div>
+                    <template v-else>
+                      <p class="mb-2">
+                        The map has not been drawn yet. Reading
+                        {{ state.bulk.count.toLocaleString() }} progressions takes a few seconds,
+                        and the arrangement is kept afterwards — so this happens once.
+                      </p>
+                      <v-btn size="small" variant="tonal" color="primary"
+                             prepend-icon="mdi-graph-outline" @click="drawTheMap">
+                        Draw the map
+                      </v-btn>
+                    </template>
+                  </div>
+                </template>
+
                 <v-list
-                  v-if="rows.length"
+                  v-else-if="rows.length"
                   density="compact"
                   class="py-0 jamin-book-scroll"
                   tabindex="0"

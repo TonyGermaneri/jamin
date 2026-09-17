@@ -184,3 +184,43 @@ export async function progressionFacets(sample = 20000) {
 
   return { genres: rank(genres), decades: rank(decades), scanned }
 }
+
+/**
+ * Every row's words, handed over a batch at a time.
+ *
+ * The graph wants what each progression is described by -- its name, its genre,
+ * its decade -- and nothing else about it. A cursor reads whole rows because
+ * that is what a cursor does, so the cost is the read; which is why the answer
+ * is built once and stored rather than recomputed.
+ *
+ * The same shape as drumStore's everyPath, deliberately: two catalogues, one
+ * way of walking them. @see core/drumStore.js everyPath
+ */
+export async function everyProgressionText(onBatch, batchSize = 20000) {
+  const db = await open()
+  if (!db) return 0
+
+  let batch = []
+  let seen = 0
+
+  await new Promise((resolve) => {
+    const request = db.transaction(STORE, 'readonly').objectStore(STORE).openCursor()
+    request.onsuccess = () => {
+      const cursor = request.result
+      if (!cursor) { resolve(); return }
+      const row = cursor.value
+      batch.push([row.name, row.genre, row.decade].filter(Boolean).join(' / '))
+      seen++
+      if (batch.length >= batchSize) {
+        const mine = batch
+        batch = []
+        onBatch(mine, seen)
+      }
+      cursor.continue()
+    }
+    request.onerror = () => resolve()
+  })
+
+  if (batch.length) onBatch(batch, seen)
+  return seen
+}
