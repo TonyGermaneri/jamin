@@ -75,9 +75,21 @@ const PAIR_FOR = {
 }
 
 const DB_NAME = 'jamin.drums'
-const DB_VERSION = 4
+const DB_VERSION = 5
 const SETS = 'sets'
 const GROOVES = 'grooves'
+/**
+ * A catalogue's graph, and where its words settled.
+ *
+ * One row per catalogue, holding typed arrays rather than objects: the whole
+ * point of a stored layout is that opening the view is a single `get` and an
+ * upload to the GPU, not a second of arithmetic and a second of physics.
+ *
+ * The positions are what makes it worth storing at all. A force layout settles
+ * somewhere new on every run, and the value of a map is knowing where things
+ * are -- so it settles once and then it is that map for good.
+ */
+const GRAPHS = 'graphs'
 
 let handle = null
 /**
@@ -202,6 +214,9 @@ function open() {
       const db = request.result
       if (!db.objectStoreNames.contains(SETS)) {
         db.createObjectStore(SETS, { keyPath: 'id' })
+      }
+      if (!db.objectStoreNames.contains(GRAPHS)) {
+        db.createObjectStore(GRAPHS, { keyPath: 'id' })
       }
 
       /*
@@ -1374,3 +1389,79 @@ export async function measureStore(rows = 50000) {
 }
 
 if (typeof window !== 'undefined') window.__jaminStorageProbe = measureStore
+
+
+/* ----------------------------------------------------------- the graph */
+
+/** The stored graph for one catalogue, or null. */
+export async function readGraph(which) {
+  const db = await open()
+  if (!db || !db.objectStoreNames.contains(GRAPHS)) return null
+  try {
+    return await ask(db.transaction(GRAPHS, 'readonly').objectStore(GRAPHS).get(which)) || null
+  } catch {
+    return null
+  }
+}
+
+/** Keep one. Typed arrays go in as typed arrays; IndexedDB stores them whole. */
+export async function writeGraph(which, graph) {
+  const db = await open()
+  if (!db || !db.objectStoreNames.contains(GRAPHS)) return false
+  const tx = db.transaction(GRAPHS, 'readwrite')
+  tx.objectStore(GRAPHS).put({ ...graph, id: which })
+  return done(tx)
+}
+
+/** Forget one, for when the catalogue it described has changed. */
+export async function forgetGraph(which) {
+  const db = await open()
+  if (!db || !db.objectStoreNames.contains(GRAPHS)) return false
+  const tx = db.transaction(GRAPHS, 'readwrite')
+  tx.objectStore(GRAPHS).delete(which)
+  return done(tx)
+}
+
+/**
+ * Every path in the catalogue, handed over a batch at a time.
+ *
+ * The graph needs the words in three quarters of a million paths and nothing
+ * else about them. A cursor reads whole rows because that is what a cursor
+ * does, so the cost is the read rather than the counting -- about sixteen
+ * seconds on a real collection, which is why the answer is stored rather than
+ * recomputed.
+ *
+ * Batched so the caller can report progress and the interface can breathe.
+ */
+export async function everyPath(onBatch, batchSize = 20000) {
+  const db = await open()
+  if (!db) return 0
+
+  let batch = []
+  let seen = 0
+
+  await new Promise((resolve) => {
+    const request = grooves(db).openCursor()
+    request.onsuccess = async () => {
+      const cursor = request.result
+      if (!cursor) {
+        resolve()
+        return
+      }
+      const row = cursor.value
+      batch.push(row.p || row.n || '')
+      seen++
+
+      if (batch.length >= batchSize) {
+        const mine = batch
+        batch = []
+        onBatch(mine, seen)
+      }
+      cursor.continue()
+    }
+    request.onerror = () => resolve()
+  })
+
+  if (batch.length) onBatch(batch, seen)
+  return seen
+}

@@ -54,7 +54,7 @@ const props = defineProps({
   /** Which word is picked, by index, or -1. */
   modelValue: { type: Number, default: -1 },
 })
-const emit = defineEmits(['update:modelValue', 'pick'])
+const emit = defineEmits(['update:modelValue', 'pick', 'settled'])
 
 const canvas = ref(null)
 /** Shallow: cosmos holds GPU handles and must never be made reactive. */
@@ -102,7 +102,17 @@ function build() {
     onClick: (index) => { if (index !== undefined && index !== null) choose(index) },
   })
 
-  graph.setPointPositions(ringPositions(tags.value.length))
+  /*
+   * Where the words were last time, if anybody knows.
+   *
+   * A force layout settles somewhere new on every run, and the whole value of a
+   * map is knowing where things are -- one that rearranges itself between
+   * sessions cannot be learned. So the first settling is the map, and every
+   * opening after loads it and runs no physics at all.
+   */
+  const kept = props.graph.positions
+  const known = Boolean(kept) && kept.length === tags.value.length * 2
+  graph.setPointPositions(known ? kept.slice() : ringPositions(tags.value.length))
   graph.setPointSizes(sizesFor(tags.value))
   graph.setPointColors(coloursFor(tags.value, { dark: dark.value }))
 
@@ -113,6 +123,14 @@ function build() {
   graph.setLinks(pairs)
 
   graph.render()
+
+  if (known) {
+    // Nothing to settle: it is already where it belongs.
+    engine.value = graph
+    graph.fitView?.(0)
+    return
+  }
+
   graph.start()
   settling.value = true
 
@@ -124,12 +142,24 @@ function build() {
    * seconds, and then holds still.
    */
   clearTimeout(settleTimer)
-  settleTimer = setTimeout(() => {
-    engine.value?.pause?.()
-    settling.value = false
-  }, 4000)
+  settleTimer = setTimeout(() => keepWhereItLanded(), 4000)
 
   engine.value = graph
+}
+
+/**
+ * Stop, and hand up where everything ended.
+ *
+ * This is the moment the arrangement becomes *the* arrangement -- read off the
+ * GPU and passed to whoever can store it.
+ */
+async function keepWhereItLanded() {
+  const graph = engine.value
+  if (!graph) return
+  graph.pause()
+  settling.value = false
+  const where = await graph.getPointPositions?.()
+  if (where && where.length) emit('settled', new Float32Array(where))
 }
 
 let settleTimer = null
@@ -250,14 +280,21 @@ function fit() {
   engine.value?.fitView?.(300)
 }
 
-/** Settle it again, for when the arrangement is worth another look. */
+/**
+ * Settle it again, and keep wherever it lands.
+ *
+ * The stored arrangement is the one anybody has learned, so replacing it is
+ * something to ask for rather than something that happens -- which is what this
+ * button is. Worth it after a catalogue grows, when the old map is a map of
+ * something smaller.
+ */
 function restir() {
   const graph = engine.value
   if (!graph) return
   graph.start()
   settling.value = true
   clearTimeout(settleTimer)
-  settleTimer = setTimeout(() => { graph.pause(); settling.value = false }, 4000)
+  settleTimer = setTimeout(() => keepWhereItLanded(), 4000)
 }
 
 onMounted(build)

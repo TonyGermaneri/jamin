@@ -21,6 +21,7 @@ import {
   listSets, putSet, deleteSet, putGrooves, countGrooves,
   searchGrooves, grooveFacets, getGrooves, whileUpgrading,
   buildIndexes, indexesAreCurrent,
+  readGraph, writeGraph, forgetGraph, everyPath,
 } from './core/drumStore.js'
 import {
   loadDrumBindings, saveDrumBindings, reconcileBindings, bindGroove,
@@ -2644,6 +2645,91 @@ export function catalogueGraph(which, items) {
 
   graphs.set(which, { key, graph })
   return graph
+}
+
+/**
+ * The drum catalogue's graph, read from the database or built into it.
+ *
+ * Three quarters of a million paths cannot be held in memory as a catalogue the
+ * way ten thousand phrases can, so this one is built by reading the rows once
+ * and keeping the answer -- which is also what makes the layout stay put, since
+ * where the words settled is stored beside them.
+ *
+ * About sixteen seconds on a real collection, which is why it happens when
+ * somebody asks and at the end of an import, and never because a view was
+ * opened. The same rule as the indexes. @see buildIndexes
+ */
+export async function buildDrumGraph({ onProgress = null } = {}) {
+  const counts = new Map()
+  const paths = []
+  let seen = 0
+
+  await everyPath((batch, total) => {
+    for (const path of batch) paths.push(path)
+    seen = total
+    if (onProgress) onProgress(total)
+  })
+
+  if (!paths.length) return null
+
+  const built = buildGraph(paths, { pathOf: (one) => one })
+  const edges = coOccurrence(built.clipEdges)
+
+  const pairs = new Uint32Array(edges.length * 2)
+  const weights = new Float32Array(edges.length)
+  edges.forEach(([a, b, n], at) => {
+    pairs[at * 2] = a
+    pairs[at * 2 + 1] = b
+    weights[at] = n
+  })
+
+  const graph = {
+    tags: built.tags,
+    pairs,
+    weights,
+    // Filled in the first time the view settles. @see keepGraphLayout
+    positions: null,
+    clips: seen,
+    builtAt: Date.now(),
+  }
+
+  await writeGraph('drums', graph)
+  counts.clear()
+  return unpackStoredGraph(graph)
+}
+
+/** The stored shape, as the view wants it. */
+function unpackStoredGraph(row) {
+  if (!row || !row.tags) return null
+  const edges = []
+  for (let at = 0; at < row.weights.length; at++) {
+    edges.push([row.pairs[at * 2], row.pairs[at * 2 + 1], row.weights[at]])
+  }
+  return { tags: row.tags, edges, positions: row.positions || null, clips: row.clips }
+}
+
+/** What has been built, if anything. */
+export async function storedGraph(which) {
+  return unpackStoredGraph(await readGraph(which))
+}
+
+/**
+ * Where the words ended up, kept.
+ *
+ * A force layout settles somewhere new on every run, and the whole value of a
+ * map is knowing where things are. So the first time it settles, that is the
+ * map -- and every opening after loads it rather than computing another one.
+ */
+export async function keepGraphLayout(which, positions) {
+  const row = await readGraph(which)
+  if (!row) return false
+  return writeGraph(which, { ...row, positions })
+}
+
+/** The catalogue changed, so the map of it is out of date. */
+export async function forgetCatalogueGraph(which) {
+  graphs.delete(which)
+  return forgetGraph(which)
 }
 
 /** The clips that carry one word, which is what picking a word is for. */

@@ -35,6 +35,9 @@ import {
   sectionBars,
   partsItFits,
   clearEverySlot,
+  storedGraph,
+  buildDrumGraph,
+  keepGraphLayout,
   aimedElsewhere,
   instanceLabel,
   setDrumVoiceMuted,
@@ -44,6 +47,7 @@ import {
 import { summarizeGroove } from '../core/drums.js'
 import { DRUM_VOICES, kitById, gmName, TD11_TO_VOICE } from '../core/drumKits.js'
 import InfoTip from './InfoTip.vue'
+import CatalogueGraph from './CatalogueGraph.vue'
 import { vDragMidi } from '../core/dragOut.js'
 import { everyTag } from '../core/drumTags.js'
 
@@ -268,6 +272,43 @@ function lengthsThatFit() {
     }
   }
   return [...lengths].sort((a, b) => a - b)
+}
+
+/*
+ * The catalogue as the words in it.
+ *
+ * Built by reading every path once, which is about twenty seconds over three
+ * quarters of a million -- so it is asked for and kept, never sprung on
+ * somebody who opened a view. The same rule as the filter indexes.
+ */
+const asGraph = computed(() => state.settings.graph.drums)
+const graph = ref(null)
+const drawing = ref(false)
+const drawn = ref(0)
+
+watch(asGraph, async (on) => {
+  if (on && !graph.value) graph.value = await storedGraph('drums')
+}, { immediate: true })
+
+async function drawTheMap() {
+  drawing.value = true
+  drawn.value = 0
+  try {
+    graph.value = await buildDrumGraph({ onProgress: (n) => { drawn.value = n } })
+    if (!graph.value) toast('Nothing imported to draw')
+  } finally {
+    drawing.value = false
+  }
+}
+
+/** Where the words settled, kept -- so the map is the same map next time. */
+function keepLayout(positions) {
+  keepGraphLayout('drums', positions)
+}
+
+/** Picking a word searches for it, which is what the list is already good at. */
+function pickWord(word) {
+  if (word) search.value = word.tag
 }
 
 const filterValues = () => {
@@ -866,9 +907,39 @@ const silenced = computed(() => Object.values(state.drumMutes).filter(Boolean).l
                 </div>
 
 
+                <!-- The same catalogue as the words in it. Picking a word
+                     searches for it, so everything to the right carries on
+                     working. @see components/CatalogueGraph.vue -->
+                <template v-if="asGraph">
+                  <CatalogueGraph
+                    v-if="graph"
+                    :graph="graph"
+                    class="jamin-book-scroll"
+                    @pick="pickWord"
+                    @settled="keepLayout"
+                  />
+                  <div v-else class="text-caption text-medium-emphasis pa-4">
+                    <div v-if="drawing">
+                      <v-progress-circular indeterminate size="16" width="2" class="mr-2" />
+                      Reading the catalogue — {{ drawn.toLocaleString() }} patterns
+                    </div>
+                    <template v-else>
+                      <p class="mb-2">
+                        The map has not been drawn yet. Reading three quarters of a million paths
+                        takes about twenty seconds, and the arrangement is kept afterwards — so
+                        this happens once, and every opening after it is instant.
+                      </p>
+                      <v-btn size="small" variant="tonal" color="primary"
+                             prepend-icon="mdi-graph-outline" @click="drawTheMap">
+                        Draw the map
+                      </v-btn>
+                    </template>
+                  </div>
+                </template>
+
                 <!-- No longer gives way when the filters open: they are on
                      the other side now and take nothing from the list. -->
-                <v-list v-if="list.length" ref="listEl" density="compact"
+                <v-list v-else-if="list.length" ref="listEl" density="compact"
                         class="py-0 jamin-book-scroll"
                         tabindex="0"
                         style="outline: none"
@@ -952,7 +1023,7 @@ const silenced = computed(() => Object.values(state.drumMutes).filter(Boolean).l
                   </v-list-item>
                 </v-list>
 
-                <div v-else class="text-caption text-medium-emphasis pa-4">
+                <div v-else-if="!asGraph" class="text-caption text-medium-emphasis pa-4">
                   <span v-if="state.drumReport.error">
                     The catalogue would not load — {{ state.drumReport.error }}
                   </span>
