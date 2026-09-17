@@ -30,7 +30,7 @@ import {
 import { resourceOk } from './core/fetchResource.js'
 import { rebuild, docSize } from './core/crdt.js'
 import { sameGenre } from './core/genres.js'
-import { buildGraph, coOccurrence } from './core/tagGraph.js'
+import { buildTree } from './core/pathTree.js'
 import { ADAPTERS } from './core/graphView.js'
 import { realizeChord } from './core/voicing.js'
 import { scoreOptions } from './core/compile.js'
@@ -2613,54 +2613,24 @@ async function shelveTheCorpus(list) {
 }
 
 /* ------------------------------------------------------------------ *
- * A catalogue, as a graph
+ * A catalogue, as the tree it already is
  *
- * The same words the filters read, arranged by what they turn up with. @see
- * core/tagGraph.js builds it and core/graphView.js decides what it looks like;
- * this holds the one that has been built, because building it is a second of
- * work over a large catalogue and nobody should pay that twice.
+ * Libraries, then folders, then folders, then clips. @see core/pathTree.js --
+ * and the first version of this, which joined words by how often they turned up
+ * together and was a hairball, because a collection of files is not a network.
  * ------------------------------------------------------------------ */
 
-const graphs = new Map()
-
 /**
- * The graph for one catalogue, built once.
+ * The catalogue's tree, read from the database or built into it.
  *
- * Keyed by which catalogue and by how many things are in it, so adding a
- * library or capturing a phrase rebuilds it and nothing else does.
- */
-export function catalogueGraph(which, items) {
-  const rows = items || []
-  const key = `${which}:${rows.length}`
-  const held = graphs.get(which)
-  if (held && held.key === key) return held.graph
-
-  const adapter = ADAPTERS[which]
-  if (!adapter) return { tags: [], edges: [] }
-
-  const built = buildGraph(rows, { pathOf: adapter.textOf })
-  const graph = {
-    tags: built.tags,
-    edges: coOccurrence(built.clipEdges),
-    clipEdges: built.clipEdges,
-    rows,
-  }
-
-  graphs.set(which, { key, graph })
-  return graph
-}
-
-/**
- * The drum catalogue's graph, read from the database or built into it.
+ * Three quarters of a million rows cannot be fetched every time a filter
+ * changes, so this one is built by reading the rows once and keeping the
+ * answer -- which is also what makes the arrangement stay put, since where
+ * everything settled is stored beside it.
  *
- * Three quarters of a million paths cannot be held in memory as a catalogue the
- * way ten thousand phrases can, so this one is built by reading the rows once
- * and keeping the answer -- which is also what makes the layout stay put, since
- * where the words settled is stored beside them.
- *
- * About sixteen seconds on a real collection, which is why it happens when
- * somebody asks and at the end of an import, and never because a view was
- * opened. The same rule as the indexes. @see buildIndexes
+ * About twenty seconds on a real collection, which is why it happens when
+ * somebody asks and never because a view was opened. The same rule as the
+ * filter indexes. @see buildIndexes
  */
 export async function buildBulkGraph(which, { onProgress = null } = {}) {
   const walker = which === 'drums' ? everyPath : everyProgressionText
@@ -2675,28 +2645,19 @@ export async function buildBulkGraph(which, { onProgress = null } = {}) {
 
   if (!rows.length) return null
 
-  // `[text, library]`. The library is what stops a pack that is half the
-  // collection putting its own name at the centre of the map.
-  // @see core/tagGraph.js libraryNames
-  const built = buildGraph(rows, {
-    pathOf: (one) => one[0],
-    groupOf: (one) => one[1],
-  })
-  const edges = coOccurrence(built.clipEdges)
-
-  const pairs = new Uint32Array(edges.length * 2)
-  const weights = new Float32Array(edges.length)
-  edges.forEach(([a, b, n], at) => {
-    pairs[at * 2] = a
-    pairs[at * 2 + 1] = b
-    weights[at] = n
+  const tree = buildTree(rows, {
+    // `[text, group]` from the walker. The group is the first level and the
+    // rest of the path hangs under it.
+    pathOf: (one) => (one[1] ? `${labelFor(which, one[1])}/${one[0]}` : one[0]),
   })
 
   const graph = {
-    tags: built.tags,
-    pairs,
-    weights,
-    // Filled in the first time the view settles. @see keepGraphLayout
+    nodes: tree.nodes,
+    edges: tree.edges,
+    parents: tree.parents,
+    depth: tree.depth,
+    truncated: tree.truncated,
+    // Filled the first time the view settles. @see keepGraphLayout
     positions: null,
     clips: seen,
     builtAt: Date.now(),
@@ -2708,12 +2669,23 @@ export async function buildBulkGraph(which, { onProgress = null } = {}) {
 
 /** The stored shape, as the view wants it. */
 function unpackStoredGraph(row) {
-  if (!row || !row.tags) return null
-  const edges = []
-  for (let at = 0; at < row.weights.length; at++) {
-    edges.push([row.pairs[at * 2], row.pairs[at * 2 + 1], row.weights[at]])
+  if (!row || !row.nodes) return null
+  return {
+    nodes: row.nodes,
+    edges: row.edges,
+    parents: row.parents,
+    depth: row.depth,
+    truncated: row.truncated,
+    positions: row.positions || null,
+    clips: row.clips,
   }
-  return { tags: row.tags, edges, positions: row.positions || null, clips: row.clips }
+}
+
+/** What to call the top level of the tree. */
+function labelFor(which, group) {
+  if (which !== 'drums') return group
+  const set = state.drumSets.find((one) => one.id === group)
+  return (set && set.name) || group
 }
 
 /** What has been built, if anything. */
@@ -2722,11 +2694,11 @@ export async function storedGraph(which) {
 }
 
 /**
- * Where the words ended up, kept.
+ * Where everything ended up, kept.
  *
  * A force layout settles somewhere new on every run, and the whole value of a
- * map is knowing where things are. So the first time it settles, that is the
- * map -- and every opening after loads it rather than computing another one.
+ * map is knowing where things are. So the first settling is the map, and every
+ * opening after loads it rather than computing another one.
  */
 export async function keepGraphLayout(which, positions) {
   const row = await readGraph(which)
@@ -2736,8 +2708,27 @@ export async function keepGraphLayout(which, positions) {
 
 /** The catalogue changed, so the map of it is out of date. */
 export async function forgetCatalogueGraph(which) {
-  graphs.delete(which)
   return forgetGraph(which)
+}
+
+/**
+ * A tree out of whatever is in memory, built on the spot.
+ *
+ * For the catalogues small enough to hold -- phrases, saved progressions, and
+ * any filtered set of drums -- which is most of what anybody looks at. The
+ * three-quarter-million case is the one that has to be built and stored
+ * (@see buildBulkGraph); everything else is fast enough to do every time the
+ * filters change, which is what makes the filters work on the graph at all.
+ */
+export function treeOf(which, rows, sortBy = '') {
+  const adapter = ADAPTERS[which]
+  if (!adapter || !rows || !rows.length) return null
+
+  const tree = buildTree(rows, {
+    pathOf: (one) => adapter.treePath(one),
+    facetOf: sortBy ? (one) => adapter.facet(one, sortBy) : null,
+  })
+  return { ...tree, positions: null, clips: rows.length }
 }
 
 /** The clips that carry one word, which is what picking a word is for. */

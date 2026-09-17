@@ -22,7 +22,7 @@ import {
   importMidiPhrases,
   visibleLicks,
   catalogue,
-  catalogueGraph,
+  treeOf,
   setAccentPhrase,
   midiForPhrase,
   triggerAccent,
@@ -37,6 +37,7 @@ import { keyPitchClass, phraseCategory, phraseKey, summarize } from '../core/phr
 import { describeLick } from '../core/licks.js'
 import InfoTip from './InfoTip.vue'
 import CatalogueGraph from './CatalogueGraph.vue'
+import { ADAPTERS } from '../core/graphView.js'
 import { vDragMidi } from '../core/dragOut.js'
 
 /*
@@ -48,10 +49,26 @@ import { vDragMidi } from '../core/dragOut.js'
  * -- the graph is a way of choosing what to search for, not a second catalogue.
  */
 const asGraph = computed(() => state.settings.graph.phrases)
-const graph = computed(() => (asGraph.value ? catalogueGraph('phrases', catalogue()) : null))
+const sortBy = ref('')
+const sorts = ADAPTERS.phrases.sorts
 
-function pickWord(word) {
-  if (word) search.value = word.tag
+/*
+ * Built from whatever the filters found, every time they change.
+ *
+ * Ten thousand phrases is small enough to rebuild on the spot, which is what
+ * makes the filters work *on* the graph rather than beside it.
+ */
+const graph = computed(() =>
+  (asGraph.value ? treeOf('phrases', matches.value, sortBy.value) : null))
+
+/** A phrase is chosen outright; a folder searches for its name. */
+function pickNode(node) {
+  if (!node) return
+  if (node.leaf) {
+    const found = matches.value.find((one) => one.name === node.label)
+    if (found) { pick(found); return }
+  }
+  search.value = node.label
 }
 
 const search = ref('')
@@ -472,9 +489,9 @@ const assigningTo = computed(() => {
                      right of here is unchanged. @see components/CatalogueGraph.vue -->
                 <CatalogueGraph
                   v-else-if="asGraph"
-                  :graph="graph"
+                  :tree="graph"
                   class="jamin-book-scroll"
-                  @pick="pickWord"
+                  @pick="pickNode"
                 />
 
                 <v-list

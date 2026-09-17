@@ -39,14 +39,12 @@ SUITES = [
     # Which rows a search of the catalogue reads, and how far apart. What it
     # does to a real library is measured by scripts/import_check.py.
     (["src/core/genres.js", "src/core/drumStore.js"], "tests/drumSearch.test.js"),
-    # The catalogue as a graph: which words become nodes and which clips join
-    # which. What it does to a real collection is scripts/graph_check.py.
-    (["src/core/genres.js", "src/core/tagGraph.js"], "tests/tagGraph.test.js"),
     # What the graph looks like and how the keyboard walks it -- the arithmetic
     # that decides the picture, without a GPU to decide it on.
     (["src/core/graphView.js"], "tests/graphView.test.js"),
-    # Pouring a settled layout into a shape without scrambling what it means.
-    (["src/core/shapeLayouts.js"], "tests/shapeLayouts.test.js"),
+    # The catalogue as the tree it already is, which is what replaced the
+    # co-occurrence hairball.
+    (["src/core/pathTree.js"], "tests/pathTree.test.js"),
     (["src/core/chordParser.js", "src/core/chordDetect.js"], "tests/chordDetect.test.js"),
     # Ten thousand edits to one chart. Slow on purpose -- it is measuring what a
     # day's work costs, and a day's work is what broke it.

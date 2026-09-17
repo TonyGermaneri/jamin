@@ -38,6 +38,7 @@ import {
   storedGraph,
   buildBulkGraph,
   keepGraphLayout,
+  treeOf,
   aimedElsewhere,
   instanceLabel,
   setDrumVoiceMuted,
@@ -50,6 +51,7 @@ import InfoTip from './InfoTip.vue'
 import CatalogueGraph from './CatalogueGraph.vue'
 import { vDragMidi } from '../core/dragOut.js'
 import { everyTag } from '../core/drumTags.js'
+import { ADAPTERS } from '../core/graphView.js'
 
 const search = ref('')
 const kind = ref('any')
@@ -286,9 +288,28 @@ const graph = ref(null)
 const drawing = ref(false)
 const drawn = ref(0)
 
-watch(asGraph, async (on) => {
-  if (on && !graph.value) graph.value = await storedGraph('drums')
-}, { immediate: true })
+/**
+ * How the tree is rooted.
+ *
+ * Folders by default, which is how the catalogue is actually arranged. Choose a
+ * facet and that becomes the top level instead, with the folders underneath it
+ * -- the same clips, a different tree. @see core/pathTree.js
+ */
+const sortBy = ref('')
+const sorts = computed(() => (ADAPTERS.drums.sorts || []))
+
+/**
+ * Filtered, the tree is built from what the filters found; unfiltered, from the
+ * stored one.
+ *
+ * Three quarters of a million rows cannot be fetched on every keystroke, and a
+ * few thousand can -- so the whole catalogue is built once and kept, and any
+ * narrowing of it is built on the spot out of the rows the filters returned.
+ * That is what makes the filters work on the graph rather than beside it.
+ *
+ * `filtered` is the one the list already uses -- declared further down, which
+ * is fine because this only runs when something changes.
+ */
 
 async function drawTheMap() {
   drawing.value = true
@@ -301,14 +322,24 @@ async function drawTheMap() {
   }
 }
 
-/** Where the words settled, kept -- so the map is the same map next time. */
+/** Where it settled, kept -- so the map is the same map next time. */
 function keepLayout(positions) {
-  keepGraphLayout('drums', positions)
+  if (!filtered.value && !sortBy.value) keepGraphLayout('drums', positions)
 }
 
-/** Picking a word searches for it, which is what the list is already good at. */
-function pickWord(word) {
-  if (word) search.value = word.tag
+/**
+ * Picking a place in the tree.
+ *
+ * A clip is chosen outright; a folder searches for its name, which narrows the
+ * list beside the graph to what is under it.
+ */
+function pickNode(node) {
+  if (!node) return
+  if (node.leaf) {
+    const found = state.drumHits.find((one) => one.name === node.label)
+    if (found) { selected.value = found; return }
+  }
+  search.value = node.label
 }
 
 const filterValues = () => {
@@ -823,6 +854,43 @@ const silenced = computed(() => Object.values(state.drumMutes).filter(Boolean).l
 
 
 
+/*
+ * Last in the file, deliberately.
+ *
+ * This reads refs declared all over the setup, and a `const` used before its
+ * declaration is a ReferenceError rather than an undefined -- which is a
+ * component that renders nothing and says why only in the console. Two earlier
+ * attempts put it near the top and threw exactly that.
+ */
+async function refreshTree() {
+  if (!asGraph.value) return
+  if (!filtered.value && !sortBy.value) {
+    graph.value = await storedGraph('drums')
+    return
+  }
+  graph.value = treeOf('drums', state.drumHits, sortBy.value)
+}
+
+/*
+ * Not during setup.
+ *
+ * `filtered` is declared further down, and a `const` used before its
+ * declaration is a ReferenceError rather than an undefined -- an immediate
+ * watcher here threw "Cannot access 'd' before initialization" and the book
+ * rendered nothing. The same trap the first query fell into.
+ */
+/*
+ * Getters, not the refs themselves.
+ *
+ * A watch source array is built the moment `watch` is called, so naming a ref
+ * in it *reads* that ref -- and `filtered` is declared further down. Wrapped in
+ * a function it is read when the watcher runs, which is after setup. The
+ * previous version threw "Cannot access 'd' before initialization" and rendered
+ * nothing.
+ */
+watch([asGraph, () => filtered.value, sortBy, () => state.drumHits], refreshTree)
+onMounted(refreshTree)
+
 </script>
 
 <template>
@@ -913,9 +981,10 @@ const silenced = computed(() => Object.values(state.drumMutes).filter(Boolean).l
                 <template v-if="asGraph">
                   <CatalogueGraph
                     v-if="graph"
-                    :graph="graph"
+                    :tree="graph"
+                    :positions="graph.positions"
                     class="jamin-book-scroll"
-                    @pick="pickWord"
+                    @pick="pickNode"
                     @settled="keepLayout"
                   />
                   <div v-else class="text-caption text-medium-emphasis pa-4">
@@ -1083,6 +1152,14 @@ const silenced = computed(() => Object.values(state.drumMutes).filter(Boolean).l
                                     :hint="state.drumSets.length ? '' : 'Point at a folder on the Libraries tab to add more'"
                                     :persistent-hint="!state.drumSets.length"
                                     density="compact" />
+                        </v-col>
+                        <!-- How the graph is rooted. Folders by default, which
+                             is how the catalogue is arranged; choose a facet
+                             and that becomes the top level with the folders
+                             underneath. @see core/pathTree.js -->
+                        <v-col v-if="asGraph" cols="12">
+                          <v-select v-model="sortBy" :items="sorts" label="Group the graph by"
+                                    density="compact" hide-details />
                         </v-col>
                         <v-col cols="6">
                           <v-select v-model="kind" :items="kinds" label="Kind"

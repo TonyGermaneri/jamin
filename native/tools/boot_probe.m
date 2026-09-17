@@ -147,7 +147,13 @@ int main(int argc, const char **argv) {
           @"  window.__errors.push('error: ' + m);"
           @"};"
           @"window.onunhandledrejection = (e) => { window.__errors.push('rejection: ' + (e.reason && e.reason.message || e.reason)); };"
-          @"(() => { const e = console.error; console.error = (...a) => { window.__errors.push('console.error: ' + a.join(' ')); e(...a); }; })();";
+          /* The stack as well as the message. A ReferenceError that says only
+             "Cannot access 'f' before initialization" names a minified binding
+             and nothing else; the stack names the component. */
+          @"(() => { const e = console.error; console.error = (...a) => {"
+          @"  const stack = a.map((one) => (one && one.stack) || '').filter(Boolean)[0] || '';"
+          @"  window.__errors.push('console.error: ' + a.map(String).join(' ') + (stack ? ' | ' + stack.split('\\n').slice(0, 3).join(' <- ') : ''));"
+          @"  e(...a); }; })();";
         [cfg.userContentController addUserScript:
             [[WKUserScript alloc] initWithSource:hook injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
 
@@ -514,8 +520,6 @@ int main(int argc, const char **argv) {
               @"    const said = lines[lines.length - 1];"
               @"    check('the catalogue graph draws', /points=[1-9]/.test(said));"
               @"    check('and its simulation runs', /moved=true/.test(said));"
-              @"    check('and a shape can be sampled', /shapePoints=[1-9]/.test(said));"
-              @"    check('and poured into', /poured=true/.test(said));"
               /* How big a graph this machine will draw at all. Reported rather
                  than asserted: the answer is about the GPU in the machine, and
                  a test that fails on a laptop teaches nobody anything. What is

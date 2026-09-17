@@ -7,19 +7,13 @@
  * it there meant the probe could only see a graph that was already on screen --
  * which is the one case where nobody needs telling it works.
  *
- * It cannot live in core/graphView.js: that file is pure arithmetic and is
- * tested by concatenating it into JavaScriptCore, where importing a WebGL
- * renderer would be importing a renderer into a machine with no canvas.
  * @see core/graphView.js measureGraph, native/tools/boot_probe.m
  */
 import { Graph as CosmosGraph } from '@cosmos.gl/graph'
 import { measureGraph, stressGraph } from '../core/graphView.js'
-import { SHAPES as BUILT_IN_SHAPES, pointsInShape as sampleShape, fitToShape as pourInto } from '../core/shapeLayouts.js'
 
 if (typeof window !== 'undefined') {
-  window.__jaminGraphProbe = () => measureGraph(CosmosGraph, {
-    SHAPES: BUILT_IN_SHAPES, pointsInShape: sampleShape, fitToShape: pourInto,
-  })
+  window.__jaminGraphProbe = () => measureGraph(CosmosGraph)
   window.__jaminGraphStress = (sizes) => stressGraph(CosmosGraph, sizes)
 }
 
@@ -28,76 +22,86 @@ export default {}
 
 <script setup>
 /**
- * A catalogue, drawn as the words in it.
+ * A catalogue, drawn as the tree it already is.
  *
- * One component for three collections. Everything that knows which collection
- * it is looking at lives in an adapter (@see core/graphView.js ADAPTERS); this
- * knows about nodes, edges and a canvas.
+ * The first version drew words joined by how often they turned up together, and
+ * it was a hairball -- every word related to every other, a hundred thousand
+ * hairlines, no way to tell where you were. The mistake was treating a
+ * collection of files as a network. It is not a network. It is libraries, then
+ * folders, then folders, then clips.
  *
- * The words are the nodes. Clips are not drawn here at all -- three quarters of
- * a million points is a hairball whatever the frame rate, and the structure a
- * person can actually read is the few hundred words and the thousands of edges
- * between them. Picking a word is how you reach its clips, which is what the
- * list beside it is for.
+ * So every node is a place in the tree and every node has exactly one parent.
+ * Two folders both called `Rock` in two different libraries are two nodes,
+ * because they are two folders. @see core/pathTree.js
  *
- * Drawn by cosmos.gl, which runs the force simulation in fragment shaders --
- * the only part of this that could not be written here in an afternoon, and the
- * reason the plugin's WebGL2 float-texture support was measured before any of
- * it was planned. @see native/tools/boot_probe.m
+ * One component for three collections: everything that knows which collection
+ * it is looking at lives in whoever builds the tree.
  */
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { Graph } from '@cosmos.gl/graph'
 import { state } from '../store.js'
-import {
-  ringPositions, sizesFor, coloursFor, neighboursOf, walk, relationships, find,
-} from '../core/graphView.js'
-import { SHAPES, pointsInShape, fitToShape } from '../core/shapeLayouts.js'
+import { treeSizes, treeColours, ringsByDepth, trail, childrenOf } from '../core/pathTree.js'
 
 const props = defineProps({
-  /** `{ tags, edges }` from core/tagGraph.js. */
-  graph: { type: Object, default: null },
-  /** Which word is picked, by index, or -1. */
-  modelValue: { type: Number, default: -1 },
+  /** `{ nodes, edges, parents, depth, truncated }` from core/pathTree.js. */
+  tree: { type: Object, default: null },
+  /** Where it settled last time, or null. */
+  positions: { type: Object, default: null },
 })
-const emit = defineEmits(['update:modelValue', 'pick', 'settled'])
+const emit = defineEmits(['pick', 'settled'])
 
 const canvas = ref(null)
 /** Shallow: cosmos holds GPU handles and must never be made reactive. */
 const engine = shallowRef(null)
 const settling = ref(false)
 
-const tags = computed(() => (props.graph && props.graph.tags) || [])
-const edges = computed(() => (props.graph && props.graph.edges) || [])
-const near = computed(() => neighboursOf(tags.value.length, edges.value))
+const nodes = computed(() => (props.tree && props.tree.nodes) || [])
+const at = ref(-1)
+const along = ref(0)
 
-/** Where the keyboard is: a word, where it came from, and which edge it points
-    along. @see core/graphView.js walk */
-const at = ref({ at: -1, from: -1, along: 0 })
-
-const strip = computed(() =>
-  (at.value.at >= 0 ? relationships(tags.value, near.value, at.value) : null))
+const where = computed(() => (at.value >= 0 && props.tree ? trail(props.tree, at.value) : []))
+const below = computed(() => (at.value >= 0 && props.tree ? childrenOf(props.tree, at.value) : []))
 
 const dark = computed(() => state.settings.display.theme !== 'light')
+
+/*
+ * The simulation's dials, in settings rather than in this file.
+ *
+ * What makes a tree of nine nodes readable is not what makes one of eight
+ * hundred thousand readable, and no single set of numbers is right for both.
+ * These are the ones cosmos.gl actually takes, named as it names them, so that
+ * turning one here means the same thing as turning it in its documentation.
+ */
+const physics = computed(() => state.settings.graph.physics)
+
+let settleTimer = null
 
 /* ---------------- building it ---------------------------------------- */
 
 function build() {
-  if (!canvas.value || !tags.value.length) return
+  if (!canvas.value || !nodes.value.length) return
 
   engine.value?.destroy?.()
 
   const graph = new Graph(canvas.value, {
-    spaceSize: 4096,
+    spaceSize: 8192,
     backgroundColor: 'rgba(0,0,0,0)',
-    // Enough repulsion to open the hubs out, enough friction to stop it
-    // wandering. A map that never settles cannot be learned.
-    simulationFriction: 0.85,
-    simulationGravity: 0.12,
-    simulationRepulsion: 0.9,
-    simulationLinkSpring: 0.7,
-    simulationLinkDistance: 12,
-    linkWidth: 0.6,
-    linkColor: dark.value ? 'rgba(180,190,220,0.18)' : 'rgba(40,60,110,0.16)',
+    /*
+     * A tree wants different physics from a cloud.
+     *
+     * Strong springs and low repulsion: each node is held by exactly one parent,
+     * so the springs *are* the structure, and letting repulsion dominate turns a
+     * tidy hierarchy back into the cloud this replaced. Gravity near nothing, so
+     * branches spread rather than collapsing into the middle.
+     */
+    simulationFriction: physics.value.friction,
+    simulationGravity: physics.value.gravity,
+    simulationRepulsion: physics.value.repulsion,
+    simulationLinkSpring: physics.value.spring,
+    simulationLinkDistance: physics.value.linkDistance,
+    simulationDecay: physics.value.decay,
+    linkWidth: physics.value.linkWidth,
+    linkColor: dark.value ? 'rgba(170,185,215,0.32)' : 'rgba(40,60,110,0.28)',
     curvedLinks: false,
     fitViewOnInit: true,
     enableDrag: false,
@@ -107,244 +111,230 @@ function build() {
     onClick: (index) => { if (index !== undefined && index !== null) choose(index) },
   })
 
-  /*
-   * Where the words were last time, if anybody knows.
-   *
-   * A force layout settles somewhere new on every run, and the whole value of a
-   * map is knowing where things are -- one that rearranges itself between
-   * sessions cannot be learned. So the first settling is the map, and every
-   * opening after loads it and runs no physics at all.
-   */
-  const kept = props.graph.positions
-  const known = Boolean(kept) && kept.length === tags.value.length * 2
-  graph.setPointPositions(known ? kept.slice() : ringPositions(tags.value.length))
-  graph.setPointSizes(sizesFor(tags.value))
-  graph.setPointColors(coloursFor(tags.value, { dark: dark.value }))
+  // Where it was last time, if anybody kept it. A tree that rearranges itself
+  // between sessions cannot be learned, which is the whole point of a map.
+  const kept = props.positions
+  const known = Boolean(kept) && kept.length === nodes.value.length * 2
+  graph.setPointPositions(known ? kept.slice() : ringsByDepth(nodes.value))
+  graph.setPointSizes(treeSizes(nodes.value))
+  graph.setPointColors(treeColours(nodes.value, { dark: dark.value }))
 
-  // Links as a flat pair list, which is what it wants and what tagGraph
-  // already produces.
-  const pairs = new Float32Array(edges.value.length * 2)
-  edges.value.forEach(([a, b], n) => { pairs[n * 2] = a; pairs[n * 2 + 1] = b })
+  const pairs = new Float32Array(props.tree.edges.length)
+  pairs.set(props.tree.edges)
   graph.setLinks(pairs)
 
   graph.render()
+  engine.value = graph
+
+  stopFollowing()
+  followLabels()
 
   if (known) {
-    // Nothing to settle: it is already where it belongs.
-    engine.value = graph
     graph.fitView?.(0)
     return
   }
 
   graph.start()
   settling.value = true
-
-  /*
-   * Stopped, rather than left running.
-   *
-   * A live simulation is a map that moves under the pointer, and the whole
-   * value of this view is learning where things are. It settles once, for a few
-   * seconds, and then holds still.
-   */
   clearTimeout(settleTimer)
   settleTimer = setTimeout(() => keepWhereItLanded(), 4000)
-
-  engine.value = graph
 }
 
-/**
- * Stop, and hand up where everything ended.
- *
- * This is the moment the arrangement becomes *the* arrangement -- read off the
- * GPU and passed to whoever can store it.
- */
+/** Stop, and hand up where everything ended so it can be kept. */
 async function keepWhereItLanded() {
   const graph = engine.value
   if (!graph) return
   graph.pause()
   settling.value = false
-  const where = await graph.getPointPositions?.()
-  if (where && where.length) emit('settled', new Float32Array(where))
+  const landed = await graph.getPointPositions?.()
+  if (landed && landed.length) emit('settled', new Float32Array(landed))
 }
-
-let settleTimer = null
 
 function choose(index) {
-  at.value = { at: index, from: -1, along: 0 }
-  emit('update:modelValue', index)
-  emit('pick', tags.value[index])
-  focus(index)
+  at.value = index
+  along.value = 0
+  refreshLabels()
+  emit('pick', props.tree.nodes[index], index)
+  light(index)
 }
 
-/** Light up the chosen word and whatever it is related to. */
-function focus(index) {
+/** The branch you are on: this node, the way up, and the way down. */
+function light(index) {
   const graph = engine.value
-  if (!graph) return
-  const related = (near.value[index] || []).map((one) => one.at)
+  if (!graph || !props.tree) return
+  const kin = [index,
+               ...trail(props.tree, index).map((one) => one.at),
+               ...childrenOf(props.tree, index).map((one) => one.at)]
   graph.setFocusedPointByIndex?.(index)
-  graph.selectPointsByIndices?.([index, ...related])
+  graph.selectPointsByIndices?.(kin)
 }
 
 /* ---------------- the keyboard ----------------------------------------
  *
- * Walking edges is what a graph is for and the thing a mouse does badly: a
- * word's strongest relationship can be anywhere on screen, and finding it by
- * eye in a thousand-word cloud is not finding it.
+ * A tree navigates like a tree, which is the point of it being one:
  *
- *   ← →   along this word's relationships, strongest first
+ *   ← →   between the children of wherever you are, biggest first
  *   ↓     into the one being pointed at
- *   ↑     back where you came from, onto the edge you arrived by
- */
-/*
- * Typing looks a word up.
+ *   ↑     up to the parent
  *
- * A graph of several hundred words is quick to look *around* and slow to look
- * *up*: the one you want is somewhere in a cloud, and reading labels until it
- * turns up is worse than the list this replaced. So letters narrow, enter goes
- * to the best match, and escape clears -- which makes the graph as fast as a
- * search box for the thing a search box is good at, without giving up the thing
- * it is not.
+ * No remembering where you came from, because in a tree there is nowhere else
+ * up leads -- which is what makes this easier to hold than the graph walk it
+ * replaced.
  */
-const typed = ref('')
-const found = computed(() => (typed.value ? find(tags.value, typed.value) : []))
-
-let typingTimer = null
-function keepTyping(letter) {
-  typed.value += letter
-  clearTimeout(typingTimer)
-  // Long enough to finish a word, short enough that coming back to the graph
-  // later starts fresh rather than continuing something half-typed.
-  typingTimer = setTimeout(() => { typed.value = '' }, 2500)
-}
-
 function onKey(event) {
+  const tree = props.tree
+  if (!tree) return
+
   if (event.key === 'Escape') {
     event.preventDefault()
-    if (typed.value) { typed.value = '' } else { at.value = { at: -1, from: -1, along: 0 } }
+    at.value = -1
+    engine.value?.unselectPoints?.()
+    engine.value?.fitView?.(300)
     return
   }
 
-  if (event.key === 'Enter') {
-    event.preventDefault()
-    if (found.value.length) { jump(found.value[0]); typed.value = '' }
-    return
-  }
-
-  if (event.key === 'Backspace') {
-    event.preventDefault()
-    typed.value = typed.value.slice(0, -1)
-    return
-  }
-
-  // A letter or digit, and nothing held down that would make it a shortcut.
-  if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey
-      && /[a-z0-9 -]/i.test(event.key)) {
-    event.preventDefault()
-    keepTyping(event.key.toLowerCase())
-    return
-  }
-
-  const key = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[event.key]
-  if (!key || at.value.at < 0) return
+  if (!/^Arrow/.test(event.key)) return
   event.preventDefault()
 
-  const next = walk(near.value, at.value, key)
-  const moved = next.at !== at.value.at
-  at.value = next
+  if (at.value < 0) {
+    // Nothing chosen yet: any arrow starts at the biggest library.
+    let biggest = -1
+    nodes.value.forEach((one, index) => {
+      if (one.depth !== 0) return
+      if (biggest < 0 || one.clips > nodes.value[biggest].clips) biggest = index
+    })
+    if (biggest >= 0) choose(biggest)
+    return
+  }
 
-  if (moved) {
-    emit('update:modelValue', next.at)
-    emit('pick', tags.value[next.at])
-    focus(next.at)
-    engine.value?.setZoomTransformByPointPositions?.([next.at], 400)
+  const kids = below.value
+
+  if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+    if (!kids.length) return
+    const step = event.key === 'ArrowRight' ? 1 : -1
+    along.value = (along.value + step + kids.length) % kids.length
+    return
+  }
+
+  if (event.key === 'ArrowDown') {
+    const into = kids[along.value]
+    if (into) { choose(into.at); look(into.at) }
+    return
+  }
+
+  if (event.key === 'ArrowUp') {
+    const up = tree.parents[at.value]
+    if (up >= 0) { choose(up); look(up) }
   }
 }
 
-/** Jump straight to a related word from the strip, which is the same list the
-    arrow keys walk and therefore the same thing done with a mouse. */
-watch(found, (matches) => {
+/* ---------------- labels ------------------------------------------------
+ *
+ * A graph of coloured dots is a picture of a catalogue that tells you nothing
+ * about the catalogue. The names are the content; the dots are only where the
+ * names are.
+ *
+ * Drawn as HTML over the canvas rather than into it. Text in WebGL means a
+ * glyph atlas and a shader, and the number of labels worth showing at once is
+ * about sixty -- which is nothing for the DOM and a great deal of machinery for
+ * a GPU.
+ *
+ * Which sixty is the whole question. Everything is unreadable and the top level
+ * alone is useless once you have gone into something, so: the branch you are on
+ * always, then the biggest things near the top, then whatever is left of the
+ * budget spent on the largest nodes on screen.
+ */
+const labels = ref([])
+const showLabels = computed(() => state.settings.graph.labels)
+let labelFrame = null
+
+function chooseLabelled() {
+  const tree = props.tree
+  if (!tree) return []
+
+  const wanted = new Map()
+  const budget = state.settings.graph.mostLabels || 60
+
+  // The branch you are on, always. Where you are must be readable even when
+  // everything around it is not.
+  if (at.value >= 0) {
+    for (const one of where.value) wanted.set(one.at, 2)
+    for (const one of below.value.slice(0, 12)) wanted.set(one.at, 1)
+  }
+
+  // Then the biggest, top-down. Ordered breadth-first already, so walking the
+  // front of the list is walking the top of the tree.
+  for (let index = 0; index < tree.nodes.length && wanted.size < budget; index++) {
+    if (tree.nodes[index].depth > 2) break
+    if (!wanted.has(index)) wanted.set(index, 0)
+  }
+
+  return [...wanted.keys()].slice(0, budget)
+}
+
+function refreshLabels() {
   const graph = engine.value
-  if (!graph) return
-  // What was typed, lit up where it sits -- so the shape of the answer is
-  // visible before anything is chosen. Nothing typed puts the selection back to
-  // whatever is picked.
-  if (matches.length) graph.selectPointsByIndices?.(matches)
-  else if (at.value.at >= 0) focus(at.value.at)
-  else graph.unselectPoints?.()
-})
+  const tree = props.tree
+  if (!graph || !tree || !showLabels.value) { labels.value = []; return }
+
+  const wanted = chooseLabelled()
+  if (!wanted.length) { labels.value = []; return }
+
+  graph.trackPointPositionsByIndices?.(wanted)
+  const tracked = graph.getTrackedPointPositionsMap?.()
+  if (!tracked) { labels.value = []; return }
+
+  const box = canvas.value ? canvas.value.getBoundingClientRect() : { width: 0, height: 0 }
+  const out = []
+
+  for (const index of wanted) {
+    const spot = tracked.get(index)
+    if (!spot) continue
+    const screen = graph.spaceToScreenPosition?.([spot[0], spot[1]])
+    if (!screen) continue
+    const [x, y] = screen
+    // Off screen is not worth a DOM node, and a label half off the edge reads
+    // as a different word.
+    if (x < -40 || y < -20 || x > box.width + 40 || y > box.height + 20) continue
+
+    const node = tree.nodes[index]
+    out.push({
+      at: index,
+      x: Math.round(x),
+      y: Math.round(y),
+      label: node.label,
+      clips: node.clips,
+      depth: node.depth,
+      leaf: node.leaf,
+      here: index === at.value,
+    })
+  }
+
+  labels.value = out
+}
+
+/** Follow the simulation while it is moving, and stop when it stops. */
+function followLabels() {
+  refreshLabels()
+  labelFrame = requestAnimationFrame(followLabels)
+}
+
+function stopFollowing() {
+  if (labelFrame) cancelAnimationFrame(labelFrame)
+  labelFrame = null
+}
+
+function look(index) {
+  engine.value?.setZoomTransformByPointPositions?.([index], 400)
+}
 
 function jump(index) {
-  at.value = { at: index, from: at.value.at, along: 0 }
-  emit('update:modelValue', index)
-  emit('pick', tags.value[index])
-  focus(index)
-  engine.value?.setZoomTransformByPointPositions?.([index], 400)
+  choose(index)
+  look(index)
 }
 
 function fit() {
   engine.value?.fitView?.(300)
-}
-
-/**
- * Settle it again, and keep wherever it lands.
- *
- * The stored arrangement is the one anybody has learned, so replacing it is
- * something to ask for rather than something that happens -- which is what this
- * button is. Worth it after a catalogue grows, when the old map is a map of
- * something smaller.
- */
-/*
- * The same arrangement, poured into a shape.
- *
- * A settled layout says what is near what and nothing about where, so every
- * collection looks like the same blob and a blob is hard to remember. A shape
- * is easy to remember -- you know where the wing is -- and because the words
- * are moved onto it along a space-filling curve rather than at random, what was
- * near stays near. @see core/shapeLayouts.js
- *
- * Unnamed, because naming them invites an argument about whether it really
- * looks like a heron.
- */
-const shapes = SHAPES.map((one, at) => ({ id: one.id, label: `Built-in ${at + 1}`, path: one.path }))
-const shaped = ref('')
-
-function pourInto(which) {
-  const graph = engine.value
-  if (!graph) return
-
-  shaped.value = which
-
-  if (!which) {
-    // Back to however it settled, which is the arrangement the collection
-    // actually has rather than one it was poured into.
-    const kept = props.graph.positions
-    if (kept && kept.length === tags.value.length * 2) {
-      graph.setPointPositions(kept.slice())
-      graph.render()
-      graph.fitView?.(300)
-    }
-    return
-  }
-
-  const shape = shapes.find((one) => one.id === which)
-  if (!shape) return
-
-  const cloud = pointsInShape(shape.path, Math.max(2000, tags.value.length * 3))
-  if (!cloud.length) return
-
-  // From wherever it is now, so pouring one shape into another keeps the
-  // arrangement rather than starting from the ring each time.
-  const now = props.graph.positions && props.graph.positions.length === tags.value.length * 2
-    ? props.graph.positions
-    : ringPositions(tags.value.length)
-
-  graph.setPointPositions(fitToShape(now, cloud))
-  graph.render()
-  graph.fitView?.(400)
-  // Held still: a shape the simulation is allowed to pull at stops being a
-  // shape within a second.
-  graph.pause()
-  settling.value = false
 }
 
 function restir() {
@@ -357,11 +347,12 @@ function restir() {
 }
 
 onMounted(build)
-watch(() => props.graph, build)
+watch(() => props.tree, () => { at.value = -1; along.value = 0; build() })
 watch(dark, build)
 
 onBeforeUnmount(() => {
   clearTimeout(settleTimer)
+  stopFollowing()
   engine.value?.destroy?.()
   engine.value = null
 })
@@ -369,62 +360,68 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="jamin-graph">
-    <!-- What this word is related to, strongest first. Both a readout and the
-         keyboard's menu: the same list, in the same order, as ← and → walk. -->
+    <!-- Where you are, and the way down. In a tree that is the whole of what
+         anybody needs: the levels above, and the children below -- which is
+         also exactly what the arrow keys walk. -->
     <div class="jamin-graph-strip">
-      <template v-if="strip">
-        <strong class="jamin-graph-word">{{ strip.word }}</strong>
-        <span class="jamin-graph-count">{{ strip.clips.toLocaleString() }}</span>
-        <span class="jamin-graph-with">with</span>
+      <template v-if="where.length">
         <button
-          v-for="one in strip.with" :key="one.at"
+          v-for="(one, n) in where" :key="one.at"
+          type="button"
+          class="jamin-graph-crumb"
+          :class="{ 'is-here': n === where.length - 1 }"
+          :title="`${one.clips.toLocaleString()} beneath this`"
+          @click="jump(one.at)"
+        >{{ one.label }}</button>
+
+        <span v-if="below.length" class="jamin-graph-with">›</span>
+        <button
+          v-for="(one, n) in below.slice(0, 10)" :key="`down-${one.at}`"
           type="button"
           class="jamin-graph-rel"
-          :class="{ 'is-pointed': one.pointed }"
-          :title="`${one.clips.toLocaleString()} share both — click, or press ↓`"
+          :class="{ 'is-pointed': n === along }"
+          :title="`${one.clips.toLocaleString()} beneath — click, or press ↓`"
           @click="jump(one.at)"
-        >{{ one.tag }}<i>{{ one.clips.toLocaleString() }}</i></button>
-        <span v-if="strip.more" class="jamin-graph-more">+{{ strip.more }} more</span>
+        >{{ one.label }}<i>{{ one.clips.toLocaleString() }}</i></button>
+        <span v-if="below.length > 10" class="jamin-graph-more">
+          +{{ (below.length - 10).toLocaleString() }} more
+        </span>
       </template>
       <span v-else class="jamin-graph-hint">
-        Click a word, or start typing one — then ← → to walk its relationships, ↓ to follow one, ↑ to come back
+        Click a library, or press an arrow key — then ← → between folders, ↓ to go in, ↑ to come back
       </span>
     </div>
 
-    <!-- What is being typed, and what it found. Shown over the canvas rather
-         than in a box of its own: it is a thing that appears for a second and
-         a control that is always there would say the graph needs one. -->
     <div class="jamin-graph-wrap">
-      <div v-if="typed" class="jamin-graph-typed">
-        <span class="jamin-graph-typing">{{ typed }}</span>
-        <template v-if="found.length">
-          <em>{{ tags[found[0]].tag }}</em>
-          <span v-if="found.length > 1">and {{ found.length - 1 }} more · enter</span>
-        </template>
-        <span v-else>nothing</span>
-      </div>
+      <div
+        ref="canvas"
+        class="jamin-graph-canvas"
+        tabindex="0"
+        role="application"
+        :aria-label="`${nodes.length} places in this catalogue`"
+        @keydown="onKey"
+      ></div>
 
-    <div
-      ref="canvas"
-      class="jamin-graph-canvas"
-      tabindex="0"
-      role="application"
-      :aria-label="`${tags.length} words in this catalogue`"
-      @keydown="onKey"
-    ></div>
+      <!-- The names, over the canvas. The dots say where things are and the
+           names say what they are; without these it is a picture of a
+           catalogue that tells you nothing about the catalogue. -->
+      <div class="jamin-graph-labels" aria-hidden="true">
+        <span
+          v-for="one in labels" :key="one.at"
+          class="jamin-graph-label"
+          :class="{ 'is-here': one.here, 'is-leaf': one.leaf, 'is-root': one.depth === 0 }"
+          :style="{ left: `${one.x}px`, top: `${one.y}px` }"
+        >{{ one.label }}<i v-if="!one.leaf">{{ one.clips.toLocaleString() }}</i></span>
+      </div>
     </div>
 
     <div class="jamin-graph-foot">
-      <span>{{ tags.length.toLocaleString() }} words · {{ edges.length.toLocaleString() }} relationships</span>
+      <span>
+        {{ nodes.length.toLocaleString() }} nodes · {{ tree ? tree.depth : 0 }} levels
+        <span v-if="tree && tree.truncated" class="jamin-graph-settling">· too large to draw whole</span>
+      </span>
       <span v-if="settling" class="jamin-graph-settling">settling…</span>
       <span class="jamin-graph-spacer"></span>
-      <label class="jamin-graph-layout">
-        Layout
-        <select :value="shaped" @change="pourInto($event.target.value)">
-          <option value="">Settled</option>
-          <option v-for="one in shapes" :key="one.id" :value="one.id">{{ one.label }}</option>
-        </select>
-      </label>
       <button type="button" @click="fit">Fit</button>
       <button type="button" @click="restir">Re-settle</button>
     </div>

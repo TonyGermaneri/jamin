@@ -1,13 +1,14 @@
 /**
  * What a catalogue graph looks like, and how to walk it.
  *
- * @see tagGraph.js turns a catalogue into nodes and edges. This turns those into
- * the flat arrays a renderer uploads, and answers the two questions an
- * interface asks of a graph: what is next to this, and where do the arrow keys
- * go.
+ * @see pathTree.js turns a catalogue into the tree it already is. This says
+ * where each kind of catalogue's tree comes from -- a drum groove has a path, a
+ * phrase has none and needs one made out of what it does have -- and what a
+ * "group the graph by" choice means for each.
  *
- * Still no drawing. Everything here is arithmetic on typed arrays, which is
- * what makes the parts that decide the picture testable without a GPU.
+ * Nothing here draws, and the probe at the bottom is the exception that proves
+ * it: it needs a canvas, which is why it takes the renderer as an argument
+ * rather than importing one.
  */
 
 /**
@@ -23,28 +24,66 @@
 export const ADAPTERS = {
   drums: {
     label: 'Drums',
-    textOf: (one) => one.path || one.name || '',
-    nameOf: (one) => one.name || '',
-    detail: (one) => `${one.bars} bar${one.bars === 1 ? '' : 's'} · ${one.timeSignature} · ${one.bpm}bpm`,
+    /** Library first, then the path inside it. */
+    treePath: (one) => [one.setId || 'Built in', one.path || one.name || ''].filter(Boolean).join('/'),
+    /** What a "sort by" choice means for this catalogue. */
+    facet: (one, by) => {
+      if (by === 'genre') return one.genre
+      if (by === 'bars') return one.bars ? `${one.bars} bar${one.bars === 1 ? '' : 's'}` : ''
+      if (by === 'signature') return one.timeSignature
+      if (by === 'kind') return one.kind
+      return (one.tags || {})[by] || ''
+    },
+    sorts: [
+      { title: 'Folders', value: '' },
+      { title: 'Genre', value: 'genre' },
+      { title: 'Length', value: 'bars' },
+      { title: 'Time signature', value: 'signature' },
+      { title: 'Kind', value: 'kind' },
+      { title: 'Feel', value: 'feel' },
+      { title: 'Played on', value: 'surface' },
+      { title: 'Part of a song', value: 'part' },
+      { title: 'Era', value: 'era' },
+    ],
   },
   phrases: {
     label: 'Articulations',
-    // A phrase's words are the ones it actually carries. `origin` is
-    // "POP909 #024" and the number is that song rather than a category, so the
-    // collection name is taken and the number left behind.
-    textOf: (one) => [
-      one.name, one.kind, one.category,
-      String(one.origin || '').split(' #')[0],
-      one.sourceChord,
-    ].filter(Boolean).join(' / '),
-    nameOf: (one) => one.name || '',
-    detail: (one) => `${one.kind} · ${(one.notes || []).length} notes`,
+    // A phrase has no path, so one is made of what it does have: where it came
+    // from, what kind of thing it is, and what it is called.
+    treePath: (one) => [
+      String(one.origin || 'captured here').split(' #')[0],
+      one.kind || 'phrase',
+      one.category || '',
+      one.name || '',
+    ].filter(Boolean).join('/'),
+    facet: (one, by) => {
+      if (by === 'kind') return one.kind
+      if (by === 'category') return one.category
+      if (by === 'source') return String(one.origin || 'captured here').split(' #')[0]
+      return ''
+    },
+    sorts: [
+      { title: 'Source', value: '' },
+      { title: 'Kind', value: 'kind' },
+      { title: 'Category', value: 'category' },
+    ],
   },
   progressions: {
     label: 'Progressions',
-    textOf: (one) => [one.name, ...(one.tags || [])].filter(Boolean).join(' / '),
-    nameOf: (one) => one.name || '',
-    detail: (one) => (one.tags || []).join(' · '),
+    treePath: (one) => [
+      one.genre || 'untagged',
+      one.decade || '',
+      one.name || '',
+    ].filter(Boolean).join('/'),
+    facet: (one, by) => {
+      if (by === 'genre') return one.genre
+      if (by === 'decade') return one.decade
+      return ''
+    },
+    sorts: [
+      { title: 'Genre', value: '' },
+      { title: 'Decade', value: 'decade' },
+    ],
   },
 }
 
@@ -310,7 +349,7 @@ export async function stressGraph(Graph, sizes = [1000, 10000, 100000, 500000, 1
   return said.join(' ')
 }
 
-export async function measureGraph(Graph, { SHAPES, pointsInShape, fitToShape }) {
+export async function measureGraph(Graph) {
   const box = document.createElement('div')
   box.style.cssText = 'position:fixed;left:-9999px;width:400px;height:300px'
   document.body.appendChild(box)
@@ -355,34 +394,9 @@ export async function measureGraph(Graph, { SHAPES, pointsInShape, fitToShape })
     }
     graph.pause()
 
-    /*
-     * And a shape, poured for real.
-     *
-     * The rasteriser is the one part of the shape layouts that needs a browser:
-     * the path is drawn to a canvas and the filled pixels are sampled. A canvas
-     * that will not give an image -- a context it refuses, a read it taints --
-     * returns nothing and the shape silently does not happen, which is exactly
-     * the failure the rest of this probe exists to catch.
-     */
-    let shaped = 0
-    let kept = false
-    try {
-      const cloud = pointsInShape(SHAPES[3].path, 600)   // the thinnest one
-      shaped = cloud.length / 2
-      if (shaped) {
-        const poured = fitToShape(began, cloud)
-        // Every word somewhere, and not all in the same place.
-        const places = new Set()
-        for (let at = 0; at < poured.length; at += 2) places.add(`${poured[at]},${poured[at + 1]}`)
-        kept = poured.length === began.length && places.size > tags.length / 4
-      }
-    } catch {
-      shaped = -1
-    }
-
     graph.destroy()
     return `points=${tags.length} links=${edges.length} readBack=${now ? now.length : 0}`
-         + ` moved=${Boolean(moved)} shapePoints=${shaped} poured=${kept}`
+         + ` moved=${Boolean(moved)}`
   } finally {
     box.remove()
   }

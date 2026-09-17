@@ -7,7 +7,7 @@
  * selected is shown in full on the right, converted and transposed only then --
  * doing that to every row of every page would be work thrown away.
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   state,
   saveProgression,
@@ -26,7 +26,7 @@ import {
   toast,
   midiForProgression,
   allProgressions,
-  catalogueGraph,
+  treeOf,
   storedGraph,
   buildBulkGraph,
   keepGraphLayout,
@@ -35,6 +35,7 @@ import { summarizeProgression } from '../core/progressions.js'
 import { parseScore } from '../core/score.js'
 import InfoTip from './InfoTip.vue'
 import CatalogueGraph from './CatalogueGraph.vue'
+import { ADAPTERS } from '../core/graphView.js'
 import { vDragMidi } from '../core/dragOut.js'
 import { pcName } from '../core/chordParser.js'
 import { openOutside } from '../core/host.js'
@@ -63,14 +64,17 @@ const drawn = ref(0)
  * as the drum catalogue: read once, built once, kept -- and asked for rather
  * than sprung on somebody who opened a view.
  */
-watch([asGraph, () => state.bulk.count], async ([on]) => {
-  if (!on) return
-  if (state.bulk.count > 0) {
-    graph.value = await storedGraph('progressions')
-    return
-  }
-  graph.value = catalogueGraph('progressions', allProgressions())
-}, { immediate: true })
+const sortBy = ref('')
+const sorts = ADAPTERS.progressions.sorts
+
+/*
+ * Two libraries, and only one of them fits in memory.
+ *
+ * The saved progressions are a handful and are built on the spot, which is what
+ * lets the filters work on the graph. Chordonomicon is two thirds of a million
+ * rows in the database and gets what the drum catalogue gets: read once, built
+ * once, kept.
+ */
 
 async function drawTheMap() {
   drawing.value = true
@@ -88,8 +92,10 @@ function keepLayout(positions) {
   keepGraphLayout('progressions', positions)
 }
 
-function pickWord(word) {
-  if (word) search.value = word.tag
+/** A progression is chosen outright; a group searches for its name. */
+function pickNode(node) {
+  if (!node) return
+  search.value = node.label
 }
 
 const search = ref('')
@@ -313,6 +319,33 @@ function runExport() {
     () => toast('Select the text below and copy it')
   )
 }
+/*
+ * Last in the file, deliberately.
+ *
+ * This reads refs declared all over the setup, and a `const` used before its
+ * declaration is a ReferenceError rather than an undefined -- which is a
+ * component that renders nothing and says why only in the console. Two earlier
+ * attempts put it near the top and threw exactly that.
+ */
+async function refreshTree() {
+  if (!asGraph.value) return
+  if (state.bulk.count > 0 && !sortBy.value && !rows.value.length) {
+    graph.value = await storedGraph('progressions')
+    return
+  }
+  graph.value = treeOf('progressions',
+                       rows.value.length ? rows.value : allProgressions(),
+                       sortBy.value)
+}
+
+// Not during setup: `rows` is declared below, and a const used before its
+// declaration is a ReferenceError. @see components/DrumBook.vue for the same
+// trap, fallen into twice.
+// Getters, not the refs: a watch source array is built when `watch` is called,
+// so naming `rows` in it reads a const declared further down.
+watch([asGraph, sortBy, () => state.bulk.count, () => rows.value], refreshTree)
+onMounted(refreshTree)
+
 </script>
 
 <template>
@@ -394,9 +427,10 @@ function runExport() {
                 <template v-if="asGraph">
                   <CatalogueGraph
                     v-if="graph"
-                    :graph="graph"
+                    :tree="graph"
+                    :positions="graph.positions"
                     class="jamin-book-scroll"
-                    @pick="pickWord"
+                    @pick="pickNode"
                     @settled="keepLayout"
                   />
                   <div v-else class="text-caption text-medium-emphasis pa-4">

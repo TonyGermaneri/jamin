@@ -900,21 +900,78 @@ body,
 
 .jamin-graph-typed span:last-child { opacity: 0.6; }
 
-/* Which arrangement the words are in. A shape is easier to remember than a
-   blob, and the words keep their neighbours either way.
-   @see core/shapeLayouts.js */
-.jamin-graph-layout {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
 
-.jamin-graph-layout select {
+/* Where you are, in a tree: the levels above as a trail you can click back
+   along. @see components/CatalogueGraph.vue */
+.jamin-graph-crumb {
+  border: 0;
   background: transparent;
   color: inherit;
-  border: 1px solid rgba(127, 127, 127, 0.3);
-  border-radius: 3px;
   font: inherit;
-  font-size: 0.72rem;
+  font-size: 0.8rem;
+  padding: 0 3px;
+  cursor: pointer;
+  opacity: 0.66;
+  border-radius: 3px;
+}
+
+.jamin-graph-crumb:hover { opacity: 1; background: rgba(127, 127, 127, 0.16); }
+
+.jamin-graph-crumb.is-here {
+  opacity: 1;
+  font-weight: 600;
+}
+
+.jamin-graph-crumb + .jamin-graph-crumb::before {
+  content: '/';
+  opacity: 0.4;
+  margin-right: 5px;
+}
+
+/*
+ * The names, over the canvas.
+ *
+ * HTML rather than WebGL: text in a shader means a glyph atlas, and the number
+ * of labels worth showing at once is about sixty -- nothing for the DOM and a
+ * great deal of machinery for a GPU. @see components/CatalogueGraph.vue
+ */
+.jamin-graph-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.jamin-graph-label {
+  position: absolute;
+  transform: translate(-50%, -140%);
+  white-space: nowrap;
+  font-size: 10.5px;
+  line-height: 1.2;
   padding: 1px 4px;
+  border-radius: 3px;
+  /* Over whatever the graph drew, which is any colour at all -- so the label
+     carries its own ground rather than hoping. */
+  background: rgba(var(--v-theme-surface), 0.78);
+  color: rgb(var(--v-theme-on-surface));
+  opacity: 0.82;
+}
+
+.jamin-graph-label i {
+  font-style: normal;
+  opacity: 0.55;
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A library, the thing you are on, and a clip: three weights, because the level
+   is the first thing a reader needs in a tree. */
+.jamin-graph-label.is-root { font-weight: 600; font-size: 11.5px; opacity: 0.95; }
+.jamin-graph-label.is-leaf { opacity: 0.66; }
+
+.jamin-graph-label.is-here {
+  opacity: 1;
+  font-weight: 600;
+  background: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-on-primary));
 }

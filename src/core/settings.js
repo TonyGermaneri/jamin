@@ -208,6 +208,42 @@ export function defaultSettings() {
       phrases: false,
       drums: false,
       progressions: false,
+
+      /** The names drawn over the dots. Without them it is a picture of a
+          catalogue that says nothing about the catalogue. */
+      labels: true,
+      /** How many at once. Sixty is about what a screen holds before they
+          start overlapping into illegibility. */
+      mostLabels: 60,
+
+      /**
+       * The simulation's own dials, named as cosmos.gl names them.
+       *
+       * What makes a tree of nine nodes readable is not what makes one of eight
+       * hundred thousand readable, and no single set of numbers is right for
+       * both -- so they are here rather than buried in the component.
+       *
+       * The defaults are tuned for a hierarchy rather than a cloud: strong
+       * springs, weak repulsion. Every node is held by exactly one parent, so
+       * the springs *are* the structure, and letting repulsion win turns a tidy
+       * tree back into the hairball this replaced.
+       */
+      physics: {
+        /** How quickly movement dies away. Higher settles sooner and stiffer. */
+        friction: 0.88,
+        /** Pull towards the middle. Near nothing, so branches spread. */
+        gravity: 0.02,
+        /** How hard nodes push each other apart. */
+        repulsion: 0.35,
+        /** How hard an edge pulls parent and child together. */
+        spring: 1.6,
+        /** How far apart an edge would like them. */
+        linkDistance: 8,
+        /** How fast the whole simulation cools. */
+        decay: 1000,
+        /** How heavy the lines are drawn. */
+        linkWidth: 0.7,
+      },
     },
 
     random: {
