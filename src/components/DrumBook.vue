@@ -39,6 +39,7 @@ import {
   buildBulkGraph,
   keepGraphLayout,
   treeOf,
+  drumRowsForGraph,
   aimedElsewhere,
   instanceLabel,
   setDrumVoiceMuted,
@@ -285,7 +286,10 @@ function lengthsThatFit() {
  */
 const asGraph = computed(() => state.settings.graph.drums)
 const graph = ref(null)
-const drawing = ref(false)
+/** True while the whole catalogue is being read, which happens once. */
+const building = ref(false)
+/** True while a narrowing is being fetched, which is quick. */
+const reading = ref(false)
 const drawn = ref(0)
 
 /**
@@ -312,13 +316,12 @@ const sorts = computed(() => (ADAPTERS.drums.sorts || []))
  */
 
 async function drawTheMap() {
-  drawing.value = true
+  building.value = true
   drawn.value = 0
   try {
     graph.value = await buildBulkGraph('drums', { onProgress: (n) => { drawn.value = n } })
-    if (!graph.value) toast('Nothing imported to draw')
   } finally {
-    drawing.value = false
+    building.value = false
   }
 }
 
@@ -862,13 +865,42 @@ const silenced = computed(() => Object.values(state.drumMutes).filter(Boolean).l
  * component that renders nothing and says why only in the console. Two earlier
  * attempts put it near the top and threw exactly that.
  */
+/**
+ * The tree for whatever is being looked at.
+ *
+ * Unfiltered it is the stored one, and if there is not a stored one it is drawn
+ * now rather than offered behind a button -- a view that opens onto an
+ * invitation to press something is a view that has decided not to do its job.
+ * It takes about twenty seconds once, and says so while it happens.
+ *
+ * Filtered, it is built from the rows the filters match -- all of them, asked
+ * for again rather than taken from `state.drumHits`, which is the page the list
+ * is showing. A tree of ten clips looks like a working graph and is a lie about
+ * the catalogue. @see store.drumRowsForGraph
+ */
+let drawing = 0
+
 async function refreshTree() {
   if (!asGraph.value) return
+  const mine = ++drawing
+
   if (!filtered.value && !sortBy.value) {
-    graph.value = await storedGraph('drums')
+    const kept = await storedGraph('drums')
+    if (mine !== drawing) return
+    if (kept) { graph.value = kept; return }
+    await drawTheMap()
     return
   }
-  graph.value = treeOf('drums', state.drumHits, sortBy.value)
+
+  // Everything the filters match, not the page of it on screen.
+  reading.value = true
+  try {
+    const rows = await drumRowsForGraph()
+    if (mine !== drawing) return
+    graph.value = treeOf('drums', rows, sortBy.value)
+  } finally {
+    if (mine === drawing) reading.value = false
+  }
 }
 
 /*
@@ -987,22 +1019,20 @@ onMounted(refreshTree)
                     @pick="pickNode"
                     @settled="keepLayout"
                   />
+                  <!-- Drawing, rather than offering to. A view that opens onto
+                       an invitation to press something has decided not to do
+                       its job. -->
                   <div v-else class="text-caption text-medium-emphasis pa-4">
-                    <div v-if="drawing">
+                    <div v-if="building">
                       <v-progress-circular indeterminate size="16" width="2" class="mr-2" />
-                      Reading the catalogue — {{ drawn.toLocaleString() }} patterns
+                      Reading the catalogue — {{ drawn.toLocaleString() }} patterns.
+                      This happens once; the arrangement is kept.
                     </div>
-                    <template v-else>
-                      <p class="mb-2">
-                        The map has not been drawn yet. Reading three quarters of a million paths
-                        takes about twenty seconds, and the arrangement is kept afterwards — so
-                        this happens once, and every opening after it is instant.
-                      </p>
-                      <v-btn size="small" variant="tonal" color="primary"
-                             prepend-icon="mdi-graph-outline" @click="drawTheMap">
-                        Draw the map
-                      </v-btn>
-                    </template>
+                    <div v-else-if="reading">
+                      <v-progress-circular indeterminate size="16" width="2" class="mr-2" />
+                      Drawing what the filters found
+                    </div>
+                    <span v-else>Nothing to draw.</span>
                   </div>
                 </template>
 

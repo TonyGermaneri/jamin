@@ -303,6 +303,31 @@ for (const [setId] of [...setOf].slice(0, 6)) {
                 offered: genre[1], got: hit.rows.length })
 }
 
+/*
+ * A big limit returns everything, not a page.
+ *
+ * The graph draws from this: a filtered map is built from the rows the filters
+ * match, all of them. It was built from the *page* the list was showing, which
+ * is ten rows -- a tree of ten clips that looks like a working graph and is a
+ * lie about the catalogue. So what a large limit returns has to be the whole
+ * answer, and the limit has to be what caps it rather than the page size.
+ */
+const wholeAnswers = []
+for (const name of ['genre', 'kind']) {
+  for (const [value] of (facets[plural[name]] || []).slice(0, 3)) {
+    const filters = { [name]: value }
+    const counted = await searchGrooves(filters, { limit: 1 })
+    const everything = await searchGrooves(filters, { limit: 100000 })
+    const capped = await searchGrooves(filters, { limit: 7 })
+    wholeAnswers.push({
+      what: `${name}=${value}`,
+      total: counted.total,
+      got: everything.rows.length,
+      capped: capped.rows.length,
+    })
+  }
+}
+
 // Paging reaches the end rather than stopping at a few hundred.
 const biggest = (facets.bars || []).slice().sort((a, b) => b[1] - a[1])[0]
 let paging = null
@@ -324,7 +349,7 @@ if (biggest) {
 
 process.stdout.write(JSON.stringify({
   read: n, skipped, stored, holds: facets.holds, exact: facets.exact,
-  sets: [...setOf.entries()].length, report, searched, paging, pairs, turning, perSet, scoped, upgrading,
+  sets: [...setOf.entries()].length, report, searched, paging, pairs, turning, perSet, scoped, upgrading, wholeAnswers,
   shelves: (facets.folders || []).length,
   shelfSum: (facets.folders || []).reduce((a, [, c]) => a + c, 0),
 }))
@@ -479,6 +504,19 @@ def main():
     check("a library and a facet together count exactly", not off,
           "; ".join(f"{one['set']}+{one['genre']} offered {one['offered']}"
                     f" found {one['total']} of {one['real']}" for one in off[:3]))
+
+    # A large limit returns the whole answer. The graph draws from this, and it
+    # drew from the page instead -- ten rows, which looks like a working graph.
+    short = [one for one in found.get("wholeAnswers", [])
+             if one["got"] != min(one["total"], 100000)]
+    check("a large limit returns everything the filters match", not short,
+          "; ".join(f"{one['what']} gave {one['got']} of {one['total']}" for one in short[:4]))
+
+    # And a small one is capped by the limit rather than by anything else.
+    wrong = [one for one in found.get("wholeAnswers", [])
+             if one["capped"] != min(7, one["total"])]
+    check("and a small one is capped by the limit", not wrong,
+          "; ".join(f"{one['what']} gave {one['capped']}" for one in wrong[:4]))
 
     # Turning the page, from the first to the last, resuming each time.
     turning = found.get("turning") or {}

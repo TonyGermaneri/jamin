@@ -53,7 +53,8 @@ const PER_PAGE = 12
  */
 const asGraph = computed(() => state.settings.graph.progressions)
 const graph = ref(null)
-const drawing = ref(false)
+/** True while the whole library is being read, which happens once. */
+const building = ref(false)
 const drawn = ref(0)
 
 /*
@@ -66,6 +67,10 @@ const drawn = ref(0)
  */
 const sortBy = ref('')
 const sorts = ADAPTERS.progressions.sorts
+/** True while a narrowing is being fetched for the graph. */
+const reading = ref(false)
+/** As many as a tree is worth drawing from. A narrowing is usually thousands. */
+const MOST_GRAPH_ROWS = 60000
 
 /*
  * Two libraries, and only one of them fits in memory.
@@ -77,13 +82,12 @@ const sorts = ADAPTERS.progressions.sorts
  */
 
 async function drawTheMap() {
-  drawing.value = true
+  building.value = true
   drawn.value = 0
   try {
     graph.value = await buildBulkGraph('progressions', { onProgress: (n) => { drawn.value = n } })
-    if (!graph.value) toast('Nothing imported to draw')
   } finally {
-    drawing.value = false
+    building.value = false
   }
 }
 
@@ -327,15 +331,50 @@ function runExport() {
  * component that renders nothing and says why only in the console. Two earlier
  * attempts put it near the top and threw exactly that.
  */
+/**
+ * The tree for whatever is being looked at.
+ *
+ * Unfiltered and with a bulk library imported, it is the stored one -- drawn
+ * now if there is not one yet, rather than offered behind a button.
+ *
+ * Filtered, it is built from everything the filters match, asked for again
+ * rather than taken from `rows`, which is the page the list is showing. A tree
+ * of twelve progressions looks like a working graph and is a lie about the
+ * library.
+ */
+let drawing = 0
+
 async function refreshTree() {
   if (!asGraph.value) return
-  if (state.bulk.count > 0 && !sortBy.value && !rows.value.length) {
-    graph.value = await storedGraph('progressions')
+  const mine = ++drawing
+  const narrowed = Boolean(search.value) || genre.value !== 'any' || decade.value !== 'any'
+    || onlyFitting.value
+
+  if (state.bulk.count > 0 && !narrowed && !sortBy.value) {
+    const kept = await storedGraph('progressions')
+    if (mine !== drawing) return
+    if (kept) { graph.value = kept; return }
+    await drawTheMap()
     return
   }
-  graph.value = treeOf('progressions',
-                       rows.value.length ? rows.value : allProgressions(),
-                       sortBy.value)
+
+  if (state.bulk.count > 0 && narrowed) {
+    reading.value = true
+    try {
+      // Everything the filters match, not the page of it on screen.
+      const found = await progressionPage(0, MOST_GRAPH_ROWS, search.value,
+                                          { genre: genre.value === 'any' ? '' : genre.value,
+                                            decade: decade.value === 'any' ? '' : decade.value,
+                                            fits: onlyFitting.value ? songBars.value : 0 })
+      if (mine !== drawing) return
+      graph.value = treeOf('progressions', found.rows, sortBy.value)
+    } finally {
+      if (mine === drawing) reading.value = false
+    }
+    return
+  }
+
+  graph.value = treeOf('progressions', allProgressions(), sortBy.value)
 }
 
 // Not during setup: `rows` is declared below, and a const used before its
@@ -343,7 +382,9 @@ async function refreshTree() {
 // trap, fallen into twice.
 // Getters, not the refs: a watch source array is built when `watch` is called,
 // so naming `rows` in it reads a const declared further down.
-watch([asGraph, sortBy, () => state.bulk.count, () => rows.value], refreshTree)
+watch([asGraph, sortBy, () => state.bulk.count, () => rows.value,
+       () => search.value, () => genre.value, () => decade.value, () => onlyFitting.value],
+      refreshTree)
 onMounted(refreshTree)
 
 </script>
@@ -434,21 +475,16 @@ onMounted(refreshTree)
                     @settled="keepLayout"
                   />
                   <div v-else class="text-caption text-medium-emphasis pa-4">
-                    <div v-if="drawing">
+                    <div v-if="building">
                       <v-progress-circular indeterminate size="16" width="2" class="mr-2" />
-                      Reading the library — {{ drawn.toLocaleString() }} progressions
+                      Reading the library — {{ drawn.toLocaleString() }} progressions.
+                      This happens once; the arrangement is kept.
                     </div>
-                    <template v-else>
-                      <p class="mb-2">
-                        The map has not been drawn yet. Reading
-                        {{ state.bulk.count.toLocaleString() }} progressions takes a few seconds,
-                        and the arrangement is kept afterwards — so this happens once.
-                      </p>
-                      <v-btn size="small" variant="tonal" color="primary"
-                             prepend-icon="mdi-graph-outline" @click="drawTheMap">
-                        Draw the map
-                      </v-btn>
-                    </template>
+                    <div v-else-if="reading">
+                      <v-progress-circular indeterminate size="16" width="2" class="mr-2" />
+                      Drawing what the filters found
+                    </div>
+                    <span v-else>Nothing to draw.</span>
                   </div>
                 </template>
 

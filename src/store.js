@@ -2712,6 +2712,23 @@ export async function forgetCatalogueGraph(which) {
 }
 
 /**
+ * The rows a filtered graph is drawn from.
+ *
+ * Not `state.drumHits`, which is the page the list is showing -- ten rows. A
+ * tree built from those is a tree of ten clips, which looks like a working
+ * graph and is a lie about the catalogue.
+ *
+ * So the filters are asked again for everything they match, up to a ceiling.
+ * A narrowing is usually thousands and always far less than the whole, which is
+ * the entire reason a filtered map can be built on the spot where the unfiltered
+ * one has to be built once and kept.
+ */
+export async function drumRowsForGraph(mostRows = 60000) {
+  const found = await searchGrooves(state.drumFilters, { limit: mostRows, offset: 0 })
+  return found.rows.map(unpackGroove)
+}
+
+/**
  * A tree out of whatever is in memory, built on the spot.
  *
  * For the catalogues small enough to hold -- phrases, saved progressions, and
