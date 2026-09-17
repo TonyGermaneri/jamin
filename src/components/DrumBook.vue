@@ -37,7 +37,6 @@ import {
   clearEverySlot,
   storedGraph,
   buildBulkGraph,
-  keepGraphLayout,
   treeOf,
   drumRowsForGraph,
   aimedElsewhere,
@@ -325,10 +324,6 @@ async function drawTheMap() {
   }
 }
 
-/** Where it settled, kept -- so the map is the same map next time. */
-function keepLayout(positions) {
-  if (!filtered.value && !sortBy.value) keepGraphLayout('drums', positions)
-}
 
 /**
  * Picking a place in the tree.
@@ -1014,10 +1009,8 @@ onMounted(refreshTree)
                   <CatalogueGraph
                     v-if="graph"
                     :tree="graph"
-                    :positions="graph.positions"
                     class="jamin-book-scroll"
                     @pick="pickNode"
-                    @settled="keepLayout"
                   />
                   <!-- Drawing, rather than offering to. A view that opens onto
                        an invitation to press something has decided not to do

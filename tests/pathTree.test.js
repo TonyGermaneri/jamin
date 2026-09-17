@@ -222,4 +222,105 @@ check('nothing at all is survivable', buildTree([]).nodes.length, 0)
 check('and produces no edges', buildTree([]).edges.length, 0)
 check('a clip with no path is skipped', buildTree([{ path: '' }]).nodes.length, 0)
 
+/* ---------------- only what was asked for ------------------------------- */
+/*
+ * Opening eight hundred thousand nodes at once is a wall of dots whatever the
+ * layout. The top two levels of a real catalogue are about nine hundred nodes,
+ * which is a picture; everything below is detail nobody has asked for yet.
+ */
+const shallow = visibleSlice(tree)
+check('the roots and one level down', shallow.nodes.length, 5)
+check('which is the libraries and their folders',
+      shallow.nodes.map((one) => one.label).sort(),
+      ['Jazz', 'Punk Rock', 'Rock', 'Studio Drummer', 'Vintage Drummer'])
+check('and it is still a tree', shallow.edges.length / 2, shallow.nodes.length - 2)
+
+// A folder whose children are folded up is drawn as an end, and says how many
+// are inside it.
+const folded = shallow.nodes.find((one) => one.label === 'Punk Rock')
+check('a folded folder reads as an end', folded.leaf, true)
+check('and says how many are inside', folded.hidden, 2)
+
+// Open it and its children appear -- and only its.
+const punk = tree.nodes.findIndex((one) => one.label === 'Punk Rock')
+const opened = visibleSlice(tree, new Set([punk]))
+check('opening one shows its children', opened.nodes.length, 7)
+check('including them by name', opened.nodes.some((one) => one.label === 'fast.mid'), true)
+check('but not another folder\'s', opened.nodes.some((one) => one.label === 'swing.mid'), false)
+check('and the opened one is no longer an end',
+      opened.nodes.find((one) => one.label === 'Punk Rock').leaf, false)
+
+// Carried back to the whole tree, so a selection means something outside the
+// slice it was made in.
+check('every visible node knows where it came from',
+      opened.origin.length, opened.nodes.length)
+check('and points at the same thing',
+      tree.nodes[opened.origin[0]].label, opened.nodes[0].label)
+
+check('nothing is survivable', visibleSlice(null).nodes.length, 0)
+
+/* ---------------- where everything goes -------------------------------- */
+/*
+ * The equal-angle algorithm (Felsenstein, 1989): every subtree gets a wedge of
+ * the circle in proportion to the leaves under it, and each node sits at the
+ * middle of its own wedge one ring further out than its parent.
+ *
+ * The property worth testing is the one a force simulation cannot give: a
+ * subtree's wedge belongs to that subtree and nothing else is ever placed in
+ * it, so branches cannot cross.
+ */
+const spots = radialPositions(tree, { ringGap: 100 })
+check('two numbers per node', spots.length, tree.nodes.length * 2)
+
+const radius = (at) => Math.hypot(spots[at * 2], spots[at * 2 + 1])
+// In 0..2pi rather than -pi..pi. Wedges are handed out from zero going round,
+// so comparing them in atan2's range puts the second half of the circle below
+// the first and makes every comparison wrong at the seam.
+const angle = (at) =>
+  (Math.atan2(spots[at * 2 + 1], spots[at * 2]) + Math.PI * 2) % (Math.PI * 2)
+
+// Depth is the ring, so a child is always one ring further out than its parent.
+tree.parents.forEach((parent, child) => {
+  if (parent < 0) return
+  const right = Math.abs(radius(child) - radius(parent) - 100) < 1
+  if (!right) { failed++; console.log(`FAIL ${tree.nodes[child].label} is not one ring out`) }
+})
+
+/*
+ * The wedges do not overlap, which is what stops branches crossing.
+ *
+ * Studio Drummer holds three clips and Vintage Drummer one, so they get three
+ * quarters and one quarter of the circle -- and everything under each stays
+ * inside its own share.
+ */
+const studioAt = tree.nodes.findIndex((one) => one.label === 'Studio Drummer')
+const vintageAt = tree.nodes.findIndex((one) => one.label === 'Vintage Drummer')
+const under = (root) => {
+  const out = []
+  tree.nodes.forEach((one, at) => {
+    let here = at
+    while (here >= 0) { if (here === root) { out.push(at); break } here = tree.parents[here] }
+  })
+  return out
+}
+const studioAngles = under(studioAt).filter((at) => at !== studioAt).map(angle)
+const vintageAngles = under(vintageAt).filter((at) => at !== vintageAt).map(angle)
+check('one library\'s branch does not reach into the other\'s',
+      Math.max(...studioAngles) < Math.min(...vintageAngles), true)
+
+// A bigger subtree gets a bigger wedge, which is the whole idea.
+check('three clips take more of the circle than one',
+      (Math.max(...studioAngles) - Math.min(...studioAngles))
+      > (Math.max(...vintageAngles) - Math.min(...vintageAngles) || 0), true)
+
+// Deterministic: the same tree is the same picture, every time.
+check('the same tree twice', [...radialPositions(tree, { ringGap: 100 })], [...spots])
+
+// A single root sits in the middle rather than out on the first ring.
+const oneRoot = buildTree([{ path: 'A/x.mid' }, { path: 'A/y.mid' }])
+const alone = radialPositions(oneRoot, { ringGap: 100 })
+check('a lone root is at the centre', Math.hypot(alone[0], alone[1]) < 1, true)
+
+check('no nodes is no positions', radialPositions(buildTree([])).length, 0)
+
 console.log(failed ? `path-tree: ${failed} FAILED` : 'path-tree: all checks passed')

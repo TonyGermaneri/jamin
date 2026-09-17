@@ -29,7 +29,6 @@ import {
   treeOf,
   storedGraph,
   buildBulkGraph,
-  keepGraphLayout,
 } from '../store.js'
 import { summarizeProgression } from '../core/progressions.js'
 import { parseScore } from '../core/score.js'
@@ -91,10 +90,6 @@ async function drawTheMap() {
   }
 }
 
-/** Where the words settled, kept -- so the map is the same map next time. */
-function keepLayout(positions) {
-  keepGraphLayout('progressions', positions)
-}
 
 /** A progression is chosen outright; a group searches for its name. */
 function pickNode(node) {
@@ -469,10 +464,8 @@ onMounted(refreshTree)
                   <CatalogueGraph
                     v-if="graph"
                     :tree="graph"
-                    :positions="graph.positions"
                     class="jamin-book-scroll"
                     @pick="pickNode"
-                    @settled="keepLayout"
                   />
                   <div v-else class="text-caption text-medium-emphasis pa-4">
                     <div v-if="building">

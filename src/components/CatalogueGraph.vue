@@ -40,7 +40,9 @@ export default {}
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { Graph } from '@cosmos.gl/graph'
 import { state } from '../store.js'
-import { treeSizes, treeColours, ringsByDepth, trail, childrenOf, rgba } from '../core/pathTree.js'
+import {
+  treeSizes, treeColours, trail, childrenOf, rgba, visibleSlice, radialPositions,
+} from '../core/pathTree.js'
 
 const props = defineProps({
   /** `{ nodes, edges, parents, depth, truncated }` from core/pathTree.js. */
@@ -48,19 +50,32 @@ const props = defineProps({
   /** Where it settled last time, or null. */
   positions: { type: Object, default: null },
 })
-const emit = defineEmits(['pick', 'settled'])
+const emit = defineEmits(['pick'])
 
 const canvas = ref(null)
 /** Shallow: cosmos holds GPU handles and must never be made reactive. */
 const engine = shallowRef(null)
-const settling = ref(false)
 
-const nodes = computed(() => (props.tree && props.tree.nodes) || [])
+/*
+ * Which folders are open.
+ *
+ * The view starts at the libraries and one level down -- about nine hundred
+ * nodes on a real catalogue, which is a picture. Eight hundred thousand at once
+ * is a wall of dots whatever the layout, so the rest arrives when it is asked
+ * for: double-click a node and it unfolds. @see core/pathTree.js visibleSlice
+ */
+const opened = ref(new Set())
+
+/** What is actually drawn: the tree, cut down to what is open. */
+const shown = computed(() =>
+  (props.tree ? visibleSlice(props.tree, opened.value) : null))
+
+const nodes = computed(() => (shown.value && shown.value.nodes) || [])
 const at = ref(-1)
 const along = ref(0)
 
-const where = computed(() => (at.value >= 0 && props.tree ? trail(props.tree, at.value) : []))
-const below = computed(() => (at.value >= 0 && props.tree ? childrenOf(props.tree, at.value) : []))
+const where = computed(() => (at.value >= 0 && shown.value ? trail(shown.value, at.value) : []))
+const below = computed(() => (at.value >= 0 && shown.value ? childrenOf(shown.value, at.value) : []))
 
 /**
  * The theme's own colours, which the graph is drawn in.
@@ -82,7 +97,6 @@ const theme = computed(() => state.settings.theme)
  */
 const physics = computed(() => state.settings.graph.physics)
 
-let settleTimer = null
 
 /* ---------------- building it ---------------------------------------- */
 
@@ -118,14 +132,37 @@ function build() {
     renderHoveredPointRing: true,
     hoveredPointRingColor: theme.value.accentAlt,
     focusedPointRingColor: theme.value.error,
-    onClick: (index) => { if (index !== undefined && index !== null) choose(index) },
+    onClick: (index) => {
+      if (index === undefined || index === null) return
+      /*
+       * One click picks, two opens.
+       *
+       * cosmos.gl reports clicks and not double-clicks, so the second one is
+       * spotted here: the same node again, soon enough to have been a pair.
+       */
+      const now = Date.now()
+      const again = index === lastClick.at && now - lastClick.when < 380
+      lastClick = { at: index, when: now }
+      if (again) unfold(index)
+      else choose(index)
+    },
   })
 
-  // Where it was last time, if anybody kept it. A tree that rearranges itself
-  // between sessions cannot be learned, which is the whole point of a map.
-  const kept = props.positions
-  const known = Boolean(kept) && kept.length === nodes.value.length * 2
-  graph.setPointPositions(known ? kept.slice() : ringsByDepth(nodes.value))
+  /*
+   * Worked out rather than settled into.
+   *
+   * The equal-angle algorithm (Felsenstein, 1989) is the textbook layout for a
+   * rooted tree: every subtree gets a wedge of the circle in proportion to the
+   * leaves under it. Linear, deterministic, and -- the part that matters --
+   * incapable of crossing itself, because a subtree's wedge belongs to that
+   * subtree and nothing else is ever placed in it.
+   *
+   * A force simulation on a tree spends its first seconds untangling something
+   * that was never tangled, settles somewhere different every run, and leaves
+   * branches crossing. There is nothing here for it to improve.
+   * @see core/pathTree.js radialPositions
+   */
+  graph.setPointPositions(radialPositions(shown.value, { ringGap: 420 }))
   graph.setPointSizes(treeSizes(nodes.value))
   graph.setPointColors(treeColours(nodes.value, {
     from: theme.value.accent, to: theme.value.accentAlt, dim: theme.value.dim,
@@ -136,30 +173,32 @@ function build() {
   graph.setLinks(pairs)
 
   graph.render()
+  graph.fitView?.(0)
   engine.value = graph
 
   stopFollowing()
   followLabels()
-
-  if (known) {
-    graph.fitView?.(0)
-    return
-  }
-
-  graph.start()
-  settling.value = true
-  clearTimeout(settleTimer)
-  settleTimer = setTimeout(() => keepWhereItLanded(), 4000)
 }
 
-/** Stop, and hand up where everything ended so it can be kept. */
-async function keepWhereItLanded() {
-  const graph = engine.value
-  if (!graph) return
-  graph.pause()
-  settling.value = false
-  const landed = await graph.getPointPositions?.()
-  if (landed && landed.length) emit('settled', new Float32Array(landed))
+let lastClick = { at: -1, when: 0 }
+
+/**
+ * Open a folder, or close it again.
+ *
+ * Indices are into the visible slice, and the open set is in terms of the whole
+ * tree -- so it is translated through `origin` before being remembered, or the
+ * set would mean something different every time the slice changed.
+ */
+function unfold(index) {
+  const slice = shown.value
+  if (!slice || !props.tree) return
+  const real = slice.origin[index]
+  if (real === undefined) return
+
+  const next = new Set(opened.value)
+  if (next.has(real)) next.delete(real)
+  else next.add(real)
+  opened.value = next
 }
 
 function choose(index) {
@@ -345,26 +384,39 @@ function jump(index) {
   look(index)
 }
 
+/** Everything one level deeper, for looking around rather than looking for. */
+function openAll() {
+  const tree = props.tree
+  if (!tree) return
+  const next = new Set(opened.value)
+  for (const was of shown.value.origin) {
+    if (tree.childAt[was + 1] > tree.childAt[was]) next.add(was)
+  }
+  opened.value = next
+}
+
+function closeAll() {
+  opened.value = new Set()
+  at.value = -1
+}
+
 function fit() {
   engine.value?.fitView?.(300)
 }
 
-function restir() {
-  const graph = engine.value
-  if (!graph) return
-  graph.start()
-  settling.value = true
-  clearTimeout(settleTimer)
-  settleTimer = setTimeout(() => keepWhereItLanded(), 4000)
-}
-
 onMounted(build)
-watch(() => props.tree, () => { at.value = -1; along.value = 0; build() })
+watch(() => props.tree, () => {
+  at.value = -1
+  along.value = 0
+  opened.value = new Set()
+  build()
+})
+// A folder opening or closing is a different tree to draw.
+watch(shown, build)
 // Re-drawn when the theme changes, because every colour in it came from there.
 watch(() => JSON.stringify(theme.value), build)
 
 onBeforeUnmount(() => {
-  clearTimeout(settleTimer)
   stopFollowing()
   engine.value?.destroy?.()
   engine.value = null
@@ -433,10 +485,10 @@ onBeforeUnmount(() => {
         {{ nodes.length.toLocaleString() }} nodes · {{ tree ? tree.depth : 0 }} levels
         <span v-if="tree && tree.truncated" class="jamin-graph-settling">· too large to draw whole</span>
       </span>
-      <span v-if="settling" class="jamin-graph-settling">settling…</span>
       <span class="jamin-graph-spacer"></span>
+      <button type="button" @click="openAll">Open one more level</button>
+      <button type="button" @click="closeAll">Collapse</button>
       <button type="button" @click="fit">Fit</button>
-      <button type="button" @click="restir">Re-settle</button>
     </div>
   </div>
 </template>

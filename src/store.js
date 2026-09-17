@@ -2657,8 +2657,6 @@ export async function buildBulkGraph(which, { onProgress = null } = {}) {
     parents: tree.parents,
     depth: tree.depth,
     truncated: tree.truncated,
-    // Filled the first time the view settles. @see keepGraphLayout
-    positions: null,
     clips: seen,
     builtAt: Date.now(),
   }
@@ -2676,7 +2674,6 @@ function unpackStoredGraph(row) {
     parents: row.parents,
     depth: row.depth,
     truncated: row.truncated,
-    positions: row.positions || null,
     clips: row.clips,
   }
 }
@@ -2693,18 +2690,6 @@ export async function storedGraph(which) {
   return unpackStoredGraph(await readGraph(which))
 }
 
-/**
- * Where everything ended up, kept.
- *
- * A force layout settles somewhere new on every run, and the whole value of a
- * map is knowing where things are. So the first settling is the map, and every
- * opening after loads it rather than computing another one.
- */
-export async function keepGraphLayout(which, positions) {
-  const row = await readGraph(which)
-  if (!row) return false
-  return writeGraph(which, { ...row, positions })
-}
 
 /** The catalogue changed, so the map of it is out of date. */
 export async function forgetCatalogueGraph(which) {
@@ -2745,7 +2730,7 @@ export function treeOf(which, rows, sortBy = '') {
     pathOf: (one) => adapter.treePath(one),
     facetOf: sortBy ? (one) => adapter.facet(one, sortBy) : null,
   })
-  return { ...tree, positions: null, clips: rows.length }
+  return { ...tree, clips: rows.length }
 }
 
 /** The clips that carry one word, which is what picking a word is for. */
