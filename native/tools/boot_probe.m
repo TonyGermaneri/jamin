@@ -132,7 +132,20 @@ int main(int argc, const char **argv) {
         // Installed before any of the page's own script, so nothing is missed.
         NSString *hook =
           @"window.__errors = [];"
-          @"window.onerror = (m, s, l) => { window.__errors.push('error: ' + m); };"
+          /* One message the browser raises that is not a fault: a ResizeObserver
+             whose callback resizes what it observes gets "loop completed with
+             undelivered notifications", the browser delivers what it can and
+             carries on, and every layout with a flexible box in it produces
+             one. Counting it would put errors=1 on every run and hide the next
+             real error behind it. Matched exactly, so anything else mentioning
+             ResizeObserver still counts. @see store.js NOT_REALLY_WRONG */
+          @"window.__notReallyWrong = ["
+          @"  'ResizeObserver loop completed with undelivered notifications.',"
+          @"  'ResizeObserver loop limit exceeded'];"
+          @"window.onerror = (m, s, l) => {"
+          @"  if (window.__notReallyWrong.includes(String(m).trim())) return;"
+          @"  window.__errors.push('error: ' + m);"
+          @"};"
           @"window.onunhandledrejection = (e) => { window.__errors.push('rejection: ' + (e.reason && e.reason.message || e.reason)); };"
           @"(() => { const e = console.error; console.error = (...a) => { window.__errors.push('console.error: ' + a.join(' ')); e(...a); }; })();";
         [cfg.userContentController addUserScript:
@@ -487,6 +500,18 @@ int main(int argc, const char **argv) {
               @"  if (window.__jaminStorageProbe) {"
               @"    try { lines.push('idb: ' + await window.__jaminStorageProbe(20000)); }"
               @"    catch (e) { lines.push('idb: threw ' + e.name + ' ' + e.message); }"
+              @"  }"
+              /* And the graph, actually drawn.
+                 cosmos.gl runs its force simulation in fragment shaders, and
+                 whether that works is a fact about this WebKit rather than
+                 about the library. A canvas that fails to get a context fails
+                 silently -- the page renders, the box stays empty -- which is
+                 exactly the shape of bug nobody notices until somebody turns
+                 the setting on. */
+              @"  if (window.__jaminGraphProbe) {"
+              @"    try { lines.push('graph: ' + await window.__jaminGraphProbe()); }"
+              @"    catch (e) { lines.push('graph: threw ' + e.name + ' ' + e.message); }"
+              @"    check('the catalogue graph draws', /points=[1-9]/.test(lines[lines.length - 1]));"
               @"  }"
               @"  lines.push('netOps=' + ((window.__netOps || []).length));"
               @"  check('the plugin joined the network', (window.__netOps || []).length > 0);"

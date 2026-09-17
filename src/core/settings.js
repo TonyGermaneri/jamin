@@ -196,6 +196,20 @@ export function defaultSettings() {
      * collection: somebody with one drum library wants the die to use it,
      * somebody with fifty wants it to stay in a genre. @see store.rollSong
      */
+    /**
+     * Which catalogues are browsed as a graph rather than as a list.
+     *
+     * Per catalogue, because they are not the same problem: ten thousand
+     * phrases make a map worth looking at where a list is a scroll, and a
+     * progression is often a thing you already know the name of. A list is
+     * simply the right answer sometimes, so it stays.
+     */
+    graph: {
+      phrases: false,
+      drums: false,
+      progressions: false,
+    },
+
     random: {
       /** How many grooves a genre needs before the die will pick it. One
           groove in a genre makes a song where every section is the same bar. */

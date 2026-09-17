@@ -29,6 +29,8 @@ import {
 import { resourceOk } from './core/fetchResource.js'
 import { rebuild, docSize } from './core/crdt.js'
 import { sameGenre } from './core/genres.js'
+import { buildGraph, coOccurrence } from './core/tagGraph.js'
+import { ADAPTERS } from './core/graphView.js'
 import { realizeChord } from './core/voicing.js'
 import { scoreOptions } from './core/compile.js'
 import { Player } from './core/player.js'
@@ -933,9 +935,28 @@ function adoptRosterJson(json) {
 
 const MOST_ERRORS = 200
 
+/**
+ * Things the browser says that are not things that went wrong.
+ *
+ * One entry, and it has to earn its place: "ResizeObserver loop completed with
+ * undelivered notifications" is raised when an observed element is resized
+ * inside the observation callback. The browser delivers what it can, warns, and
+ * carries on -- the specification treats it as a notification rather than a
+ * failure, and every layout that observes a flexible box produces it.
+ *
+ * It is filtered because an error log full of one harmless line is a log nobody
+ * reads, which costs more than the line is worth. Matched exactly, so a real
+ * error that happens to mention ResizeObserver still lands.
+ */
+const NOT_REALLY_WRONG = [
+  'ResizeObserver loop completed with undelivered notifications.',
+  'ResizeObserver loop limit exceeded',
+]
+
 /** One thing that went wrong, with enough about it to chase. */
 export function noteError(what, where = '', detail = '') {
   const message = String((what && what.message) || what || 'something went wrong')
+  if (NOT_REALLY_WRONG.includes(message.trim())) return
   const stack = String((what && what.stack) || detail || '')
   const now = Date.now()
 
@@ -2585,6 +2606,54 @@ async function shelveTheCorpus(list) {
     addedAt: 0,
   })
   await refreshDrumSets()
+}
+
+/* ------------------------------------------------------------------ *
+ * A catalogue, as a graph
+ *
+ * The same words the filters read, arranged by what they turn up with. @see
+ * core/tagGraph.js builds it and core/graphView.js decides what it looks like;
+ * this holds the one that has been built, because building it is a second of
+ * work over a large catalogue and nobody should pay that twice.
+ * ------------------------------------------------------------------ */
+
+const graphs = new Map()
+
+/**
+ * The graph for one catalogue, built once.
+ *
+ * Keyed by which catalogue and by how many things are in it, so adding a
+ * library or capturing a phrase rebuilds it and nothing else does.
+ */
+export function catalogueGraph(which, items) {
+  const rows = items || []
+  const key = `${which}:${rows.length}`
+  const held = graphs.get(which)
+  if (held && held.key === key) return held.graph
+
+  const adapter = ADAPTERS[which]
+  if (!adapter) return { tags: [], edges: [] }
+
+  const built = buildGraph(rows, { pathOf: adapter.textOf })
+  const graph = {
+    tags: built.tags,
+    edges: coOccurrence(built.clipEdges),
+    clipEdges: built.clipEdges,
+    rows,
+  }
+
+  graphs.set(which, { key, graph })
+  return graph
+}
+
+/** The clips that carry one word, which is what picking a word is for. */
+export function clipsWithTag(graph, at) {
+  if (!graph || at < 0) return []
+  const out = []
+  for (let i = 0; i < graph.clipEdges.length; i += 2) {
+    if (graph.clipEdges[i + 1] === at) out.push(graph.rows[graph.clipEdges[i]])
+  }
+  return out.filter(Boolean)
 }
 
 export { buildIndexes, indexesAreCurrent }

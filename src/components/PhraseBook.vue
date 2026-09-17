@@ -22,6 +22,7 @@ import {
   importMidiPhrases,
   visibleLicks,
   catalogue,
+  catalogueGraph,
   setAccentPhrase,
   midiForPhrase,
   triggerAccent,
@@ -35,7 +36,23 @@ import {
 import { keyPitchClass, phraseCategory, phraseKey, summarize } from '../core/phrases.js'
 import { describeLick } from '../core/licks.js'
 import InfoTip from './InfoTip.vue'
+import CatalogueGraph from './CatalogueGraph.vue'
 import { vDragMidi } from '../core/dragOut.js'
+
+/*
+ * A map of the catalogue instead of a list of it.
+ *
+ * Ten thousand phrases is a scroll; the few hundred words they are described by
+ * is a picture. Picking a word puts it in the search box, which means the list,
+ * the detail pane and the piano roll all carry on working exactly as they did
+ * -- the graph is a way of choosing what to search for, not a second catalogue.
+ */
+const asGraph = computed(() => state.settings.graph.phrases)
+const graph = computed(() => (asGraph.value ? catalogueGraph('phrases', catalogue()) : null))
+
+function pickWord(word) {
+  if (word) search.value = word.tag
+}
 
 const search = ref('')
 const name = ref('')
@@ -449,6 +466,16 @@ const assigningTo = computed(() => {
                     <v-btn size="x-small" variant="text" @click="clearFilters">Clear the filters</v-btn>
                   </div>
                 </div>
+
+                <!-- The same catalogue, as the words in it. Picking a word
+                     narrows the list to what carries it, so everything to the
+                     right of here is unchanged. @see components/CatalogueGraph.vue -->
+                <CatalogueGraph
+                  v-else-if="asGraph"
+                  :graph="graph"
+                  class="jamin-book-scroll"
+                  @pick="pickWord"
+                />
 
                 <v-list
                   v-else

@@ -451,6 +451,34 @@ async function retryMidi() {
           <!-- Display ---------------------------------------------------- -->
           <v-window-item value="display">
             <v-row dense>
+              <!-- A catalogue as the words in it rather than as a list of it.
+                   Per catalogue, because they are not the same problem. -->
+              <v-col cols="12">
+                <div class="text-caption mb-1 d-flex align-center">
+                  Browse as a graph
+                  <InfoTip>
+                    Draws the catalogue as the words its clips are described by — genres, feels,
+                    instruments, whatever the names actually say — joined by how often they turn
+                    up together. Picking a word searches for it, so the list and the detail beside
+                    it carry on working as they do now.
+                    <br /><br />
+                    Arrow keys walk the relationships rather than the rows: ← and → along what a
+                    word is related to, ↓ to follow one, ↑ to come back. That is the thing a graph
+                    does that a list cannot, and the thing a mouse does badly.
+                    <br /><br />
+                    A list is simply the right answer sometimes, which is why this is per
+                    catalogue and off by default.
+                  </InfoTip>
+                </div>
+                <div class="d-flex flex-wrap" style="gap: 18px">
+                  <v-switch v-model="state.settings.graph.phrases" density="compact" hide-details
+                            color="primary" label="Articulations" />
+                  <v-switch v-model="state.settings.graph.drums" density="compact" hide-details
+                            color="primary" label="Drums" />
+                  <v-switch v-model="state.settings.graph.progressions" density="compact" hide-details
+                            color="primary" label="Progressions" />
+                </div>
+              </v-col>
               <v-col cols="12">
                 <v-select v-model="state.settings.display.font" :items="fonts" label="Font" />
               </v-col>

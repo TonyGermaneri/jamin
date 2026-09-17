@@ -750,3 +750,113 @@ body,
 .jamin-book-chrome .jamin-instance-tabs {
   min-width: 0;
 }
+
+/*
+ * The catalogue as a graph.
+ *
+ * Three regions: the relationship strip, which is both a readout and the
+ * keyboard's menu; the canvas, which takes everything left; and a foot that
+ * says how big the graph is. @see components/CatalogueGraph.vue
+ */
+.jamin-graph {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  gap: 6px;
+}
+
+.jamin-graph-strip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 26px;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.jamin-graph-word {
+  font-size: 0.92rem;
+  letter-spacing: 0.01em;
+}
+
+.jamin-graph-count,
+.jamin-graph-with,
+.jamin-graph-more,
+.jamin-graph-hint {
+  opacity: 0.6;
+}
+
+/* Each relationship is a button, because it is one: clicking it and pressing
+   the down arrow do the same thing. */
+.jamin-graph-rel {
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 11px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.jamin-graph-rel:hover {
+  background: rgba(127, 127, 127, 0.16);
+}
+
+/* Where the keyboard is pointing. The strip is the menu, so this is the cursor. */
+.jamin-graph-rel.is-pointed {
+  border-color: rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), 0.14);
+}
+
+.jamin-graph-rel i {
+  font-style: normal;
+  opacity: 0.5;
+  margin-left: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.jamin-graph-canvas {
+  flex: 1 1 auto;
+  min-height: 220px;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.06);
+  outline: none;
+  position: relative;
+  overflow: hidden;
+}
+
+/* It takes the arrow keys, so it has to be visibly the thing that has them. */
+.jamin-graph-canvas:focus-visible {
+  box-shadow: inset 0 0 0 2px rgb(var(--v-theme-primary));
+}
+
+.jamin-graph-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.72rem;
+  opacity: 0.65;
+}
+
+.jamin-graph-spacer { flex: 1 1 auto; }
+
+.jamin-graph-foot button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.jamin-graph-foot button:hover { background: rgba(127, 127, 127, 0.18); }
+
+.jamin-graph-settling { color: rgb(var(--v-theme-primary)); opacity: 1; }

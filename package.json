@@ -19,6 +19,7 @@
     "lint": "eslint src"
   },
   "dependencies": {
+    "@cosmos.gl/graph": "^3.4.1",
     "@mdi/font": "^7.4.47",
     "vue": "^3.5.42",
     "vuetify": "^3.13.4",
