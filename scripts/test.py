@@ -39,6 +39,9 @@ SUITES = [
     # Which rows a search of the catalogue reads, and how far apart. What it
     # does to a real library is measured by scripts/import_check.py.
     (["src/core/genres.js", "src/core/drumStore.js"], "tests/drumSearch.test.js"),
+    # The catalogue as a graph: which words become nodes and which clips join
+    # which. What it does to a real collection is scripts/graph_check.py.
+    (["src/core/genres.js", "src/core/tagGraph.js"], "tests/tagGraph.test.js"),
     (["src/core/chordParser.js", "src/core/chordDetect.js"], "tests/chordDetect.test.js"),
     # Ten thousand edits to one chart. Slow on purpose -- it is measuring what a
     # day's work costs, and a day's work is what broke it.
