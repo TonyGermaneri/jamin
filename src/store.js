@@ -142,6 +142,14 @@ export const state = reactive({
   drumMutes: {},
   /** Every error the page has seen, newest first. @see noteError */
   errors: [],
+  /**
+   * What this window has asked *other* tracks to silence, by instance id.
+   *
+   * Remembered because the roster carries the request and not the state: the
+   * track that was asked knows what it is playing, and this is what the window
+   * that asked needs in order to draw the keys it just pressed.
+   */
+  remoteMutes: {},
   // True while the browser is rebuilding the catalogue's indexes, which it does
   // once after an update and silently. @see core/drumStore.js whileUpgrading
   drumUpgrading: false,
@@ -1030,26 +1038,69 @@ function watchForErrors() {
 const VOICE_ORDER = DRUM_VOICES.map((voice) => voice.id)
 
 export function drumVoiceMuted(voice) {
-  return Boolean(state.drumMutes[voice])
+  return Boolean(drumMutesFor()[voice])
 }
 
-/** Silence one drum, or bring it back. */
+/**
+ * Silence one drum, or bring it back.
+ *
+ * On whichever track the book is pointed at. A mute is something done to a
+ * *track*, and the window it is done from is whichever one happens to be open
+ * -- so muting the hi-hat while looking at the drum track from the piano
+ * track's window has to reach the drum track, not silence a piano's
+ * nonexistent hi-hat. It went to the local processor whatever was on screen.
+ *
+ * Sent as a whole mask rather than one voice, for the same reason a binding is
+ * sent whole: two requests arriving close together cannot then be applied in
+ * the wrong order.
+ */
 export function setDrumVoiceMuted(voice, muted) {
   const at = VOICE_ORDER.indexOf(voice)
   if (at < 0) return
+
+  const name = (DRUM_VOICES.find((one) => one.id === voice) || {}).name || voice
+  const when = state.settings.drums.muteQuantize || 'bar'
+  const soon = when === 'instant' ? '' : ` on the next ${when}`
+
+  if (aimedElsewhere()) {
+    const mask = maskOf({ ...drumMutesFor(), [voice]: Boolean(muted) })
+    callHost('jaminRequestMutes', state.ui.targetInstance, mask).catch(() => {})
+    state.remoteMutes = { ...state.remoteMutes, [state.ui.targetInstance]: mask }
+    toast(`${name} ${muted ? 'out' : 'back'} on ${instanceLabel(state.ui.targetInstance)}${soon}`)
+    return
+  }
 
   state.drumMutes = { ...state.drumMutes, [voice]: Boolean(muted) }
   player.mutedNotes = mutedNoteSet()
   if (hosted()) callHost('jaminMuteVoice', at, !muted).catch(() => {})
 
-  const name = (DRUM_VOICES.find((one) => one.id === voice) || {}).name || voice
-  const when = state.settings.drums.muteQuantize || 'bar'
-  const soon = when === 'instant' ? '' : ` on the next ${when}`
   toast(muted ? `${name} out${soon}` : `${name} back${soon}`)
 }
 
-/** Everything sounding again. */
+/** Which drums are out on whichever track the book is pointed at. */
+export function drumMutesFor() {
+  if (!aimedElsewhere()) return state.drumMutes
+  const mask = state.remoteMutes[state.ui.targetInstance] || 0
+  const out = {}
+  VOICE_ORDER.forEach((voice, at) => { if (mask & (1 << at)) out[voice] = true })
+  return out
+}
+
+/** Fourteen booleans as a bitmask, in the order the parameters are in. */
+function maskOf(mutes) {
+  let mask = 0
+  VOICE_ORDER.forEach((voice, at) => { if (mutes[voice]) mask |= (1 << at) })
+  return mask
+}
+
+/** Everything sounding again, on whichever track is being looked at. */
 export function unmuteEveryDrumVoice() {
+  if (aimedElsewhere()) {
+    callHost('jaminRequestMutes', state.ui.targetInstance, 0).catch(() => {})
+    state.remoteMutes = { ...state.remoteMutes, [state.ui.targetInstance]: 0 }
+    return
+  }
+
   state.drumMutes = {}
   player.mutedNotes = new Set()
   if (!hosted()) return

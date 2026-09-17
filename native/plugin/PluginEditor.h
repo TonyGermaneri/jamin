@@ -34,6 +34,7 @@ private:
     uint64_t lastRoster { 0 };
     uint64_t lastPhraseRequest { 0 };
     uint64_t lastDrumsRequest { 0 };
+    uint64_t lastMutesRequest { 0 };
     /// Which drums are silenced, as a bitmask, so the page hears about a switch
     /// thrown in the DAW and nothing is sent when nothing moved.
     uint32_t lastVoiceMutes { 0 };

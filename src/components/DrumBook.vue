@@ -43,6 +43,7 @@ import {
   instanceLabel,
   setDrumVoiceMuted,
   drumVoiceMuted,
+  drumMutesFor,
   unmuteEveryDrumVoice,
 } from '../store.js'
 import { summarizeGroove } from '../core/drums.js'
@@ -844,7 +845,7 @@ function onKeyClick(event, voice) {
 }
 
 /** How many drums are out, for the button that brings them all back. */
-const silenced = computed(() => Object.values(state.drumMutes).filter(Boolean).length)
+const silenced = computed(() => Object.values(drumMutesFor()).filter(Boolean).length)
 
 
 

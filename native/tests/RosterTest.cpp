@@ -182,6 +182,46 @@ void rosterTests()
     check ("a drum request is not a phrase request",
            ! roster.takePhraseRequest (two, wanted, seenByTwo));
 
+    /* ---------------- and asking one to silence a drum ----------------
+     *
+     * A mute is a thing somebody does to a *track*, and the window they do it
+     * from is whichever one happens to be open -- so muting the hi-hat on the
+     * drum track from the piano track's window has to reach the drum track.
+     * Fourteen booleans as a bitmask, in the order the vocabulary is written.
+     */
+    uint64_t mutesSeenByTwo = 0;
+    uint32_t wantedMutes = 0;
+    check ("no mute request yet",
+           ! roster.takeVoiceMutesRequest (two, wantedMutes, mutesSeenByTwo));
+
+    roster.requestVoiceMutes ("inst-2", 0b1010u);
+    check ("the mute request arrives", roster.takeVoiceMutesRequest (two, wantedMutes, mutesSeenByTwo));
+    check ("and carries which drums", (int) wantedMutes, 10);
+    check ("and is not delivered twice",
+           ! roster.takeVoiceMutesRequest (two, wantedMutes, mutesSeenByTwo));
+
+    // Nothing muted is a request too: bringing every drum back is as much an
+    // instruction as taking one out, and a zero that was swallowed would leave
+    // a track silent with nothing on screen to say why.
+    roster.requestVoiceMutes ("inst-2", 0u);
+    check ("unmuting everything is still a request",
+           roster.takeVoiceMutesRequest (two, wantedMutes, mutesSeenByTwo));
+    check ("and says nothing is muted", (int) wantedMutes, 0);
+
+    /*
+     * The channels do not collide -- with the drums channel drained first.
+     *
+     * Asserting it without draining tests nothing about collision: there is a
+     * real drum request still pending from further up this test, and it comes
+     * back whether or not the mute channel touched anything.
+     */
+    while (roster.takeDrumsRequest (two, wantedDrums, drumsSeenByTwo)) { }
+    roster.requestVoiceMutes ("inst-2", 0b11u);
+    check ("a mute request is not a drum request",
+           ! roster.takeDrumsRequest (two, wantedDrums, drumsSeenByTwo));
+    check ("and the mute one is still there",
+           roster.takeVoiceMutesRequest (two, wantedMutes, mutesSeenByTwo));
+
     // The same phrase asked for again is a second request, not a repeat to be
     // swallowed: pressing the same button twice means it twice.
     roster.requestPhrase ("inst-2", "F# pad 3");

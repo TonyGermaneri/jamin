@@ -128,6 +128,17 @@ function build() {
     linkColor: rgba(theme.value.dim, 0.38),
     curvedLinks: false,
     fitViewOnInit: true,
+    /*
+     * And the simulation never runs.
+     *
+     * The positions are worked out (@see core/pathTree.js radialPositions), so
+     * there is nothing for a simulation to improve -- but cosmos runs one
+     * during every zoom transition by default, and every pan, zoom and
+     * selection is a zoom transition. The graph drifted off towards the corner
+     * while somebody was trying to read it, and chasing it is exactly what a
+     * computed layout is supposed to make impossible.
+     */
+    enableSimulationDuringZoom: false,
     enableDrag: false,
     renderHoveredPointRing: true,
     hoveredPointRingColor: theme.value.accentAlt,
@@ -173,7 +184,12 @@ function build() {
   graph.setLinks(pairs)
 
   graph.render()
-  graph.fitView?.(0)
+  // Belt as well as braces: the config says not to simulate during a zoom, and
+  // this says not to simulate at all. Nothing here needs it.
+  graph.pause?.()
+  // The last argument is "run the simulation during the transition", and it
+  // defaults to true.
+  graph.fitView?.(0, undefined, false)
   engine.value = graph
 
   stopFollowing()
@@ -240,7 +256,7 @@ function onKey(event) {
     event.preventDefault()
     at.value = -1
     engine.value?.unselectPoints?.()
-    engine.value?.fitView?.(300)
+    engine.value?.fitView?.(300, undefined, false)
     return
   }
 
@@ -376,7 +392,9 @@ function stopFollowing() {
 }
 
 function look(index) {
-  engine.value?.setZoomTransformByPointPositions?.([index], 400)
+  // Positions, a duration, a scale, padding, and *do not simulate*. Without the
+  // last one the graph slides away while you are looking at it.
+  engine.value?.zoomToPointByIndex?.(index, 400, undefined, true, false)
 }
 
 function jump(index) {
@@ -401,7 +419,7 @@ function closeAll() {
 }
 
 function fit() {
-  engine.value?.fitView?.(300)
+  engine.value?.fitView?.(300, undefined, false)
 }
 
 onMounted(build)

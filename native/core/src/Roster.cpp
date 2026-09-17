@@ -206,6 +206,33 @@ bool Roster::takeDrumsRequest (const Handle& slot, std::string& json, uint64_t& 
     return true;
 }
 
+void Roster::requestVoiceMutes (const std::string& id, uint32_t mask)
+{
+    const std::lock_guard<std::mutex> guard (lock);
+    for (const auto& slot : slots)
+        if (slot->id == id)
+        {
+            slot->wantMutes = mask;
+            slot->wantMutesRevision += 1;
+            version.fetch_add (1, std::memory_order_release);
+            return;
+        }
+}
+
+bool Roster::takeVoiceMutesRequest (const Handle& slot, uint32_t& mask, uint64_t& seen) const
+{
+    if (slot == nullptr)
+        return false;
+
+    const std::lock_guard<std::mutex> guard (lock);
+    if (slot->wantMutesRevision == seen)
+        return false;
+
+    seen = slot->wantMutesRevision;
+    mask = slot->wantMutes;
+    return true;
+}
+
 bool Roster::anySoloed() const
 {
     const std::lock_guard<std::mutex> guard (lock);

@@ -245,6 +245,17 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                            }
                            complete (juce::var (true));
                        })
+                   .withNativeFunction ("jaminRequestMutes",
+                       [] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // Silence some of another track's drums. A mute is a
+                           // thing done to a track, and the window it is done
+                           // from is whichever one happens to be open.
+                           if (args.size() > 1)
+                               jamin::Roster::instance().requestVoiceMutes (
+                                   args[0].toString().toStdString(), (uint32_t) (int) args[1]);
+                           complete (juce::var (true));
+                       })
                    .withNativeFunction ("jaminRequestDrums",
                        [this] (const juce::Array<juce::var>& args, auto complete)
                        {
@@ -667,6 +678,16 @@ void JaminEditor::timerCallback()
             auto* object = new juce::DynamicObject();
             object->setProperty ("drums", juce::JSON::parse (juce::String (wantedDrums)));
             browser.emitEventIfBrowserIsVisible ("jaminSetDrums", juce::var (object));
+        }
+    }
+
+    // Another window has asked this instance to silence some of its drums.
+    {
+        uint32_t wanted = 0;
+        if (jamin::Roster::instance().takeVoiceMutesRequest (plugin.seat, wanted, lastMutesRequest))
+        {
+            for (int at = 0; at < JaminProcessor::numVoices; ++at)
+                plugin.setVoiceSounding (at, (wanted & (1u << at)) == 0, plugin.nextBoundaryPpq());
         }
     }
 

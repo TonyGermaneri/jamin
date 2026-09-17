@@ -98,6 +98,12 @@ public:
         /// when two requests arrive close together.
         std::string wantDrums;
         uint64_t wantDrumsRevision { 0 };
+
+        /// And which drums another window has asked this one to silence, as a
+        /// bit per voice. A mute is a thing somebody does to a *track*, and the
+        /// window they do it from is whichever one happens to be open.
+        uint32_t wantMutes { 0 };
+        uint64_t wantMutesRevision { 0 };
     };
 
     using Handle = std::shared_ptr<Slot>;
@@ -156,6 +162,18 @@ public:
 
     /** What this instance has been asked to bind since it last looked. */
     bool takeDrumsRequest (const Handle& slot, std::string& json, uint64_t& seen) const;
+
+    /** Ask an instance to silence some of its drums. A bit per voice, in the
+        order the vocabulary is written in.
+
+        Unlike a binding this needs nothing from the owner's catalogue -- it is
+        fourteen booleans -- but it still has to be a request, because a page
+        cannot reach into another page and the processor that plays the notes is
+        the one that has to stop playing them. */
+    void requestVoiceMutes (const std::string& id, uint32_t mask);
+
+    /** What this instance has been asked to silence since it last looked. */
+    bool takeVoiceMutesRequest (const Handle& slot, uint32_t& mask, uint64_t& seen) const;
 
     /** Solo is a question about everybody, so it has to be asked of everybody. */
     bool anySoloed() const;
