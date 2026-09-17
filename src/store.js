@@ -2664,18 +2664,24 @@ export function catalogueGraph(which, items) {
  */
 export async function buildBulkGraph(which, { onProgress = null } = {}) {
   const walker = which === 'drums' ? everyPath : everyProgressionText
-  const paths = []
+  const rows = []
   let seen = 0
 
   await walker((batch, total) => {
-    for (const path of batch) paths.push(path)
+    for (const one of batch) rows.push(one)
     seen = total
     if (onProgress) onProgress(total)
   })
 
-  if (!paths.length) return null
+  if (!rows.length) return null
 
-  const built = buildGraph(paths, { pathOf: (one) => one })
+  // `[text, library]`. The library is what stops a pack that is half the
+  // collection putting its own name at the centre of the map.
+  // @see core/tagGraph.js libraryNames
+  const built = buildGraph(rows, {
+    pathOf: (one) => one[0],
+    groupOf: (one) => one[1],
+  })
   const edges = coOccurrence(built.clipEdges)
 
   const pairs = new Uint32Array(edges.length * 2)

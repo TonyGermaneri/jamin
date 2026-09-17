@@ -13,13 +13,14 @@
  * @see core/graphView.js measureGraph, native/tools/boot_probe.m
  */
 import { Graph as CosmosGraph } from '@cosmos.gl/graph'
-import { measureGraph } from '../core/graphView.js'
+import { measureGraph, stressGraph } from '../core/graphView.js'
 import { SHAPES as BUILT_IN_SHAPES, pointsInShape as sampleShape, fitToShape as pourInto } from '../core/shapeLayouts.js'
 
 if (typeof window !== 'undefined') {
   window.__jaminGraphProbe = () => measureGraph(CosmosGraph, {
     SHAPES: BUILT_IN_SHAPES, pointsInShape: sampleShape, fitToShape: pourInto,
   })
+  window.__jaminGraphStress = (sizes) => stressGraph(CosmosGraph, sizes)
 }
 
 export default {}

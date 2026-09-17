@@ -40,6 +40,17 @@ const EVERYWHERE = new Set([
   // a tempo to every other; `170bpm` is kept whole and joins the ones that
   // share that tempo, which is a relationship.
   'bpm',
+  /*
+   * And what vendors call their products.
+   *
+   * `drummer` is on 59% of the real collection -- Superior Drummer, Studio
+   * Drummer, Modern Drummer, Vintage Drummer, and one per decade -- which makes
+   * it the largest word in the catalogue and the least informative. It is not a
+   * library's name, so the exclusivity rule rightly leaves it alone
+   * (@see libraryNames); it is a product noun, which is what this list is for
+   * and where `kit`, `pack` and `loops` already are.
+   */
+  'drummer', 'edition', 'expansion', 'library', 'volume', 'vol',
 ])
 
 /** The shortest run of letters that can be a word rather than a catalogue id. */
@@ -225,10 +236,17 @@ export function usefulTags({ counts, clips, singular }, { least = LEAST_CLIPS, m
  * its words, and four million hairlines is a grey wash. What gets drawn is
  * @see coOccurrence, which is thousands.
  */
-export function buildGraph(items, { least = LEAST_CLIPS, most = MOST_SHARE, pathOf = (one) => one.path } = {}) {
+export function buildGraph(items, {
+  least = LEAST_CLIPS, most = MOST_SHARE,
+  pathOf = (one) => one.path,
+  groupOf = null,
+} = {}) {
   const rows = [...items]
-  const tally = countTags(rows.map(pathOf))
+  const paths = rows.map(pathOf)
+  const tally = countTags(paths)
+  const labels = groupOf ? libraryNames(paths, rows.map(groupOf), tally) : new Set()
   const kept = usefulTags(tally, { least, most })
+    .filter((one) => !labels.has(one.tag))
 
   const index = new Map()
   kept.forEach((one, at) => index.set(one.tag, at))
@@ -269,6 +287,82 @@ export function buildGraph(items, { least = LEAST_CLIPS, most = MOST_SHARE, path
   }
 
   return { tags: kept, index, clipEdges, clips: rows.length, everyTag: tally.counts.size }
+}
+
+/**
+ * Words that are a library's name rather than a thing.
+ *
+ * Measured on the real collection this was the single worst feature of the map.
+ * `Superior Drummer 2 Drum Midi [425,000 files]` is one pack of four hundred and
+ * twenty-five thousand files -- fifty-five per cent of the whole catalogue --
+ * and its name is on every path inside it. So `superior` and `drummer` came out
+ * as the two largest words in the collection, and the three strongest
+ * relationships in the entire graph were `drummer·superior`,
+ * `drummer·variation` and `superior·variation`.
+ *
+ * None of which is about music. It is one vendor's folder naming, drawn as the
+ * dominant structure of the map, and it survived the share ceiling honestly:
+ * fifty-five per cent is well under it, because the word really is on that much
+ * of the catalogue.
+ *
+ * The thing that tells a library's name from a real word is *where else it
+ * appears*. `blues` turns up in the blues pack and in a dozen others; `superior`
+ * turns up in the Superior pack and nowhere at all. So a word is a label when it
+ * covers nearly all of one library and nearly nothing outside it -- which the
+ * library filter already handles, and which a map has no use for.
+ */
+export function libraryNames(paths, groups, tally, { covers = 0.8, concentrated = 0.9 } = {}) {
+  const inGroup = new Map()      // word -> group -> count
+  const groupSize = new Map()
+
+  paths.forEach((path, at) => {
+    const group = groups[at]
+    if (!group) return
+    groupSize.set(group, (groupSize.get(group) || 0) + 1)
+    for (const tag of tagsFrom(path)) {
+      const folded = (tally.singular && tally.singular.get(tag)) || tag
+      let per = inGroup.get(folded)
+      if (!per) { per = new Map(); inGroup.set(folded, per) }
+      per.set(group, (per.get(group) || 0) + 1)
+    }
+  })
+
+  const labels = new Set()
+  for (const [word, per] of inGroup) {
+    let biggest = null
+    let total = 0
+    for (const [group, n] of per) {
+      total += n
+      if (!biggest || n > biggest.n) biggest = { group, n }
+    }
+    if (!biggest) continue
+
+    const ofTheLibrary = biggest.n / Math.max(1, groupSize.get(biggest.group) || 1)
+    const ofTheWord = biggest.n / Math.max(1, total)
+
+    /*
+     * On nearly every clip of one library, and nearly nowhere else.
+     *
+     * Both numbers were measured on the real collection rather than picked, and
+     * the first does most of the work. Of the twelve commonest words, only
+     * `superior` is on more than 80% of any one library:
+     *
+     *     superior   ofLib 1.000   ofWord 0.949   (a pack name)
+     *     variation  ofLib 0.733   ofWord 0.999
+     *     straight   ofLib 0.677   ofWord 0.882
+     *     hat        ofLib 0.579   ofWord 0.941
+     *     rock       ofLib 0.205   ofWord 0.786
+     *
+     * The second exists to protect a word that *is* most of one small library
+     * but lives elsewhere too. It sat at 0.95 first, which put `superior` --
+     * measured at 0.949 -- on the wrong side of it by a thousandth, and a
+     * threshold that decides the shape of the map on the third decimal place is
+     * not a threshold, it is a coincidence. At 0.9 both cases clear it
+     * comfortably in opposite directions.
+     */
+    if (ofTheLibrary >= covers && ofTheWord >= concentrated) labels.add(word)
+  }
+  return labels
 }
 
 /**

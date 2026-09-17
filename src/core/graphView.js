@@ -241,6 +241,75 @@ export function relationships(tags, near, { at, along = 0 }, limit = 12) {
  * So the probe builds one, runs the simulation, reads the positions back, and
  * checks they moved. @see native/tools/boot_probe.m
  */
+/**
+ * How big a graph this machine will actually draw.
+ *
+ * The catalogue's own map is a few hundred words, which is nothing -- but the
+ * plan said a million nodes should be reachable and that claim was made from
+ * reading rather than from measuring. So this builds progressively larger
+ * graphs until one takes too long or throws, and reports where that was.
+ *
+ * Upload and first frame, not steady-state frame rate: the thing that fails at
+ * scale is the texture allocation and the link buffer, and a graph that cannot
+ * be uploaded never gets to be slow.
+ */
+export async function stressGraph(Graph, sizes = [1000, 10000, 100000, 500000, 1000000]) {
+  const box = document.createElement('div')
+  box.style.cssText = 'position:fixed;left:-9999px;width:600px;height:400px'
+  document.body.appendChild(box)
+
+  const said = []
+  try {
+    for (const count of sizes) {
+      const began = performance.now()
+      let graph = null
+      try {
+        graph = new Graph(box, { spaceSize: 8192, simulationFriction: 0.9 })
+
+        const points = new Float32Array(count * 2)
+        for (let at = 0; at < count; at++) {
+          points[at * 2] = (Math.random() - 0.5) * 8000
+          points[at * 2 + 1] = (Math.random() - 0.5) * 8000
+        }
+        const sizes2 = new Float32Array(count).fill(2)
+        const colours = new Float32Array(count * 4).fill(0.6)
+
+        // Two links per point, which is the shape a bipartite catalogue graph
+        // has and a good deal denser than the tag skeleton this actually draws.
+        const links = new Float32Array(count * 4)
+        for (let at = 0; at < count; at++) {
+          links[at * 4] = at
+          links[at * 4 + 1] = (at + 1) % count
+          links[at * 4 + 2] = at
+          links[at * 4 + 3] = (at + 7) % count
+        }
+
+        graph.setPointPositions(points)
+        graph.setPointSizes(sizes2)
+        graph.setPointColors(colours)
+        graph.setLinks(links)
+        graph.render()
+        graph.start()
+        await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))
+        graph.pause()
+
+        said.push(`${count}=${Math.round(performance.now() - began)}ms`)
+      } catch (trouble) {
+        said.push(`${count}=threw:${trouble.name}`)
+        break
+      } finally {
+        try { graph?.destroy() } catch { /* a graph that threw may not destroy */ }
+      }
+
+      // Past ten seconds to get one frame up, nothing larger is worth asking.
+      if (performance.now() - began > 10000) { said.push(`${count}=too slow, stopping`); break }
+    }
+  } finally {
+    box.remove()
+  }
+  return said.join(' ')
+}
+
 export async function measureGraph(Graph, { SHAPES, pointsInShape, fitToShape }) {
   const box = document.createElement('div')
   box.style.cssText = 'position:fixed;left:-9999px;width:400px;height:300px'

@@ -516,6 +516,16 @@ int main(int argc, const char **argv) {
               @"    check('and its simulation runs', /moved=true/.test(said));"
               @"    check('and a shape can be sampled', /shapePoints=[1-9]/.test(said));"
               @"    check('and poured into', /poured=true/.test(said));"
+              /* How big a graph this machine will draw at all. Reported rather
+                 than asserted: the answer is about the GPU in the machine, and
+                 a test that fails on a laptop teaches nobody anything. What is
+                 asserted is only that the size the catalogue actually needs --
+                 a few thousand -- is reachable. */
+              @"    if (window.__jaminGraphStress) {"
+              @"      try { lines.push('stress: ' + await window.__jaminGraphStress()); }"
+              @"      catch (e) { lines.push('stress: threw ' + e.name); }"
+              @"      check('a catalogue-sized graph draws', !/^stress: 1000=threw/.test(lines[lines.length - 1]));"
+              @"    }"
               @"  }"
               @"  lines.push('netOps=' + ((window.__netOps || []).length));"
               @"  check('the plugin joined the network', (window.__netOps || []).length > 0);"

@@ -22,7 +22,19 @@ const punk = 'Studio Drummer MIDI Files/11 Punk Rock/04 Straight HiHat Fill 170B
  * `hats` node and a separate `hihats` node.
  */
 check('a path becomes its words', tagsFrom(punk),
-      ['studio', 'drummer', 'punk', 'rock', 'straight', 'hat', 'fill', '170bpm'])
+      ['studio', 'punk', 'rock', 'straight', 'hat', 'fill', '170bpm'])
+
+/*
+ * `drummer` is not among them, and it is the most instructive omission here.
+ *
+ * It is on 59% of the real collection -- Superior Drummer, Studio Drummer,
+ * Modern Drummer, Vintage Drummer, one per decade -- which made it the largest
+ * word in the catalogue and the least informative thing in it. It is not any
+ * one library's name, so the exclusivity rule rightly leaves it alone; it is
+ * what vendors call their products, which is what the everywhere list is for.
+ */
+check('what a vendor calls its product is not a word',
+      tagsFrom('Superior Drummer 2/Rock/x.mid'), ['superior', 'rock'])
 
 // `midi` and `files` are in nine hundred folder names and separate nothing.
 check('words that are everywhere are not words', tagsFrom(punk).includes('midi'), false)
@@ -242,5 +254,45 @@ check('and they line up', packed.weight[0], together[0][2])
 
 check('nothing at all is survivable', buildGraph([]).tags.length, 0)
 check('and produces no edges', coOccurrence(new Uint32Array(0)).length, 0)
+
+/* ---------------- a library's name is not a word ------------------------ */
+/*
+ * The single worst feature of the map, measured on the real collection.
+ *
+ * `Superior Drummer 2 Drum Midi [425,000 files]` is one pack of four hundred
+ * and twenty-five thousand files -- fifty-five per cent of the whole catalogue
+ * -- and its name is on every path inside it. So `superior` and `drummer` came
+ * out as the two largest words in the collection, and the three strongest
+ * relationships in the entire graph were `drummer·superior`,
+ * `drummer·variation` and `superior·variation`: one vendor's folder naming,
+ * drawn as the dominant structure of the map.
+ *
+ * It survived the share ceiling honestly. Fifty-five per cent is well under it,
+ * because the word really is on that much of the catalogue.
+ *
+ * What tells a library's name from a real word is where *else* it appears.
+ */
+const twoPacks = [
+  // A big pack whose name is on every path in it.
+  ...Array.from({ length: 200 }, (_, n) => ({ path: `Superior/Superior Rock/x${n}.mid`, lib: 'superior' })),
+  // And a small one, where `rock` also lives -- so `rock` is a word and
+  // `superior` is a label.
+  ...Array.from({ length: 30 }, (_, n) => ({ path: `Indie Pack/Rock/y${n}.mid`, lib: 'indie' })),
+  ...Array.from({ length: 30 }, (_, n) => ({ path: `Indie Pack/Jazz/z${n}.mid`, lib: 'indie' })),
+]
+const named = buildGraph(twoPacks, {
+  least: 4, most: 0.9, groupOf: (one) => one.lib,
+}).tags.map((one) => one.tag)
+
+check('a library name is not a node', named.includes('superior'), false)
+// `rock` is on most of the big pack too -- but it is also in the other one, so
+// it is a word about music rather than a label on a folder.
+check('but a word that lives in more than one library is', named.includes('rock'), true)
+check('and so is one that lives in a small corner', named.includes('jazz'), true)
+
+// Without knowing which library a clip is in, there is nothing to tell them
+// apart, and the label comes back.
+const blind = buildGraph(twoPacks, { least: 4, most: 0.9 }).tags.map((one) => one.tag)
+check('with no library to compare against, the label stays', blind.includes('superior'), true)
 
 console.log(failed ? `tag-graph: ${failed} FAILED` : 'tag-graph: all checks passed')

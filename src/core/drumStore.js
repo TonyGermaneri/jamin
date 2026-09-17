@@ -1449,7 +1449,10 @@ export async function everyPath(onBatch, batchSize = 20000) {
         return
       }
       const row = cursor.value
-      batch.push(row.p || row.n || '')
+      // The path and the library it is in. Without the second, a pack that is
+      // half the collection puts its own name at the centre of the map.
+      // @see core/tagGraph.js libraryNames
+      batch.push([row.p || row.n || '', row.s || ''])
       seen++
 
       if (batch.length >= batchSize) {

@@ -209,7 +209,10 @@ export async function everyProgressionText(onBatch, batchSize = 20000) {
       const cursor = request.result
       if (!cursor) { resolve(); return }
       const row = cursor.value
-      batch.push([row.name, row.genre, row.decade].filter(Boolean).join(' / '))
+      // Text, and the group it belongs to -- the genre here, which is the
+      // nearest thing Chordonomicon has to a library. @see tagGraph.libraryNames
+      batch.push([[row.name, row.genre, row.decade].filter(Boolean).join(' / '),
+                  row.genre || ''])
       seen++
       if (batch.length >= batchSize) {
         const mine = batch

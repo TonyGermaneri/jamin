@@ -59,7 +59,10 @@ const floors = [2, 4, 8, 16, 32, 64].map((least) => ({
 }))
 
 const built = Date.now()
-const graph = buildGraph(files.map((p) => ({ path: p })))
+// The library each clip is in, which is the top folder. Without it a pack that
+// is half the collection puts its own name at the centre of the map.
+const graph = buildGraph(files.map((p) => ({ path: p })),
+                         { groupOf: (one) => one.path.split('/')[0] })
 const builtMs = Date.now() - built
 
 const together = Date.now()
@@ -101,7 +104,8 @@ for (let i = 0; i < graph.clipEdges.length; i += 2) joined.add(graph.clipEdges[i
 // Built twice, identical. A layout is computed once and stored; if the table it
 // was computed against renumbers itself, every stored position points at the
 // wrong word.
-const again = buildGraph(files.map((p) => ({ path: p })))
+const again = buildGraph(files.map((p) => ({ path: p })),
+                         { groupOf: (one) => one.path.split('/')[0] })
 const stable = again.tags.length === graph.tags.length
   && again.tags.every((one, at) => one.tag === graph.tags[at].tag && one.clips === graph.tags[at].clips)
   && again.clipEdges.length === graph.clipEdges.length
