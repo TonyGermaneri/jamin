@@ -117,6 +117,25 @@ const library = tree.nodes.findIndex((one) => one.label === 'Studio Drummer')
 check('the children are the folders, biggest first',
       childrenOf(tree, library).map((one) => one.label), ['Punk Rock', 'Jazz'])
 check('and a leaf has none', childrenOf(tree, deep), [])
+check('and nothing is a child of nowhere', childrenOf(tree, -1), [])
+
+/*
+ * Found by index rather than by looking.
+ *
+ * Scanning every node's parent is fine for nine nodes and quadratic for eight
+ * hundred thousand -- and the label pass asks this twice a frame, so at full
+ * scale it was two scans of the whole tree sixty times a second. A check script
+ * doing it once per node never finished.
+ */
+check('every node has a slice of the child list',
+      tree.childAt.length, tree.nodes.length + 1)
+check('and the slices cover every node that has a parent',
+      tree.childList.length, tree.nodes.length - 2)
+check('the offsets never go backwards',
+      [...tree.childAt].every((one, at) => at === 0 || one >= tree.childAt[at - 1]), true)
+// Every child appears under exactly one parent, which is what a tree means.
+check('and every child is listed once',
+      new Set(tree.childList).size, tree.childList.length)
 
 /* ---------------- what a renderer takes --------------------------------- */
 // A library holding four hundred thousand and a clip holding one are the ends.

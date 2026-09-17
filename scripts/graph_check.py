@@ -31,7 +31,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DRIVER = r"""
 import fs from 'node:fs'
 import path from 'node:path'
-import { buildTree, trail, childrenOf, treeSizes } from 'SRC/core/pathTree.js'
+import { buildTree, trail, treeSizes } from 'SRC/core/pathTree.js'
 
 const ROOT = process.argv[2]
 const WANT = Number(process.argv[3] || 100000)
@@ -122,8 +122,11 @@ process.stdout.write(JSON.stringify({
   bytes: { edges: tree.edges.byteLength },
   perDepth: [...perDepth.entries()].sort((a, b) => a[0] - b[0]),
   biggest: biggest.map((one) => [one.label.slice(0, 40), one.clips]),
+  // From the child index rather than by asking childrenOf per node: the second
+  // is a scan of the whole tree each time, and doing that eight hundred
+  // thousand times is a script that never finishes. It did not.
   branchiest: tree.nodes
-    .map((one, at) => ({ label: one.label, kids: childrenOf(tree, at).length }))
+    .map((one, at) => ({ label: one.label, kids: tree.childAt[at + 1] - tree.childAt[at] }))
     .sort((a, b) => b.kids - a.kids).slice(0, 4).map((one) => [one.label.slice(0, 30), one.kids]),
   sample: (() => {
     const leaf = tree.nodes.findIndex((one) => one.leaf)
