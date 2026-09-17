@@ -860,3 +860,42 @@ body,
 .jamin-graph-foot button:hover { background: rgba(127, 127, 127, 0.18); }
 
 .jamin-graph-settling { color: rgb(var(--v-theme-primary)); opacity: 1; }
+
+/* The canvas and whatever is drawn over it. */
+.jamin-graph-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+/* What is being typed. Over the canvas rather than in a box of its own: it
+   appears for a second, and a control that is always there would say the graph
+   needs one. */
+.jamin-graph-typed {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  z-index: 2;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  background: rgba(var(--v-theme-surface), 0.92);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
+.jamin-graph-typing {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.04em;
+}
+
+.jamin-graph-typed em {
+  font-style: normal;
+  color: rgb(var(--v-theme-primary));
+}
+
+.jamin-graph-typed span:last-child { opacity: 0.6; }

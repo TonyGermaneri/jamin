@@ -45,7 +45,7 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vu
 import { Graph } from '@cosmos.gl/graph'
 import { state } from '../store.js'
 import {
-  ringPositions, sizesFor, coloursFor, neighboursOf, walk, relationships,
+  ringPositions, sizesFor, coloursFor, neighboursOf, walk, relationships, find,
 } from '../core/graphView.js'
 
 const props = defineProps({
@@ -160,7 +160,55 @@ function focus(index) {
  *   ↓     into the one being pointed at
  *   ↑     back where you came from, onto the edge you arrived by
  */
+/*
+ * Typing looks a word up.
+ *
+ * A graph of several hundred words is quick to look *around* and slow to look
+ * *up*: the one you want is somewhere in a cloud, and reading labels until it
+ * turns up is worse than the list this replaced. So letters narrow, enter goes
+ * to the best match, and escape clears -- which makes the graph as fast as a
+ * search box for the thing a search box is good at, without giving up the thing
+ * it is not.
+ */
+const typed = ref('')
+const found = computed(() => (typed.value ? find(tags.value, typed.value) : []))
+
+let typingTimer = null
+function keepTyping(letter) {
+  typed.value += letter
+  clearTimeout(typingTimer)
+  // Long enough to finish a word, short enough that coming back to the graph
+  // later starts fresh rather than continuing something half-typed.
+  typingTimer = setTimeout(() => { typed.value = '' }, 2500)
+}
+
 function onKey(event) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    if (typed.value) { typed.value = '' } else { at.value = { at: -1, from: -1, along: 0 } }
+    return
+  }
+
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    if (found.value.length) { jump(found.value[0]); typed.value = '' }
+    return
+  }
+
+  if (event.key === 'Backspace') {
+    event.preventDefault()
+    typed.value = typed.value.slice(0, -1)
+    return
+  }
+
+  // A letter or digit, and nothing held down that would make it a shortcut.
+  if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey
+      && /[a-z0-9 -]/i.test(event.key)) {
+    event.preventDefault()
+    keepTyping(event.key.toLowerCase())
+    return
+  }
+
   const key = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[event.key]
   if (!key || at.value.at < 0) return
   event.preventDefault()
@@ -179,6 +227,17 @@ function onKey(event) {
 
 /** Jump straight to a related word from the strip, which is the same list the
     arrow keys walk and therefore the same thing done with a mouse. */
+watch(found, (matches) => {
+  const graph = engine.value
+  if (!graph) return
+  // What was typed, lit up where it sits -- so the shape of the answer is
+  // visible before anything is chosen. Nothing typed puts the selection back to
+  // whatever is picked.
+  if (matches.length) graph.selectPointsByIndices?.(matches)
+  else if (at.value.at >= 0) focus(at.value.at)
+  else graph.unselectPoints?.()
+})
+
 function jump(index) {
   at.value = { at: index, from: at.value.at, along: 0 }
   emit('update:modelValue', index)
@@ -232,9 +291,22 @@ onBeforeUnmount(() => {
         <span v-if="strip.more" class="jamin-graph-more">+{{ strip.more }} more</span>
       </template>
       <span v-else class="jamin-graph-hint">
-        Click a word to see what it is related to — then ← → to walk its relationships, ↓ to follow one, ↑ to come back
+        Click a word, or start typing one — then ← → to walk its relationships, ↓ to follow one, ↑ to come back
       </span>
     </div>
+
+    <!-- What is being typed, and what it found. Shown over the canvas rather
+         than in a box of its own: it is a thing that appears for a second and
+         a control that is always there would say the graph needs one. -->
+    <div class="jamin-graph-wrap">
+      <div v-if="typed" class="jamin-graph-typed">
+        <span class="jamin-graph-typing">{{ typed }}</span>
+        <template v-if="found.length">
+          <em>{{ tags[found[0]].tag }}</em>
+          <span v-if="found.length > 1">and {{ found.length - 1 }} more · enter</span>
+        </template>
+        <span v-else>nothing</span>
+      </div>
 
     <div
       ref="canvas"
@@ -244,6 +316,7 @@ onBeforeUnmount(() => {
       :aria-label="`${tags.length} words in this catalogue`"
       @keydown="onKey"
     ></div>
+    </div>
 
     <div class="jamin-graph-foot">
       <span>{{ tags.length.toLocaleString() }} words · {{ edges.length.toLocaleString() }} relationships</span>

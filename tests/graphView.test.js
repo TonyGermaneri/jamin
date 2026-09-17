@@ -161,4 +161,29 @@ const short = relationships(table, neighbours, { at: 0, along: 0 }, 1)
 check('a long list is cut', short.with.length, 1)
 check('and says how many were left', short.more, 1)
 
+/* ---------------- finding a word by typing it --------------------------- */
+/*
+ * A graph of several hundred words is quick to look around and slow to look
+ * *up*. The ranking is the one that matches how people type: what they typed is
+ * usually the start of the word, occasionally inside it, and the commonest word
+ * wins a tie because it is the one more likely meant.
+ */
+const vocabulary = [
+  { tag: 'shuffle', clips: 5000 },
+  { tag: 'shuffled', clips: 40 },
+  { tag: 'half-shuffle', clips: 200 },
+  { tag: 'swing', clips: 3000 },
+]
+const named = (query, n) => find(vocabulary, query, n).map((at) => vocabulary[at].tag)
+
+check('an exact word comes first', named('shuffle')[0], 'shuffle')
+check('then what starts with it', named('shuf'), ['shuffle', 'shuffled', 'half-shuffle'])
+check('what merely contains it comes last', named('shuffle').indexOf('half-shuffle'), 2)
+check('and a tie goes to the commoner word', named('s')[0], 'shuffle')
+check('nothing typed is nothing found', find(vocabulary, ''), [])
+check('nor is whitespace', find(vocabulary, '   '), [])
+check('and a word nobody has', find(vocabulary, 'bagpipe'), [])
+check('case does not matter', named('SHUF')[0], 'shuffle')
+check('a long list is cut', named('s', 2).length, 2)
+
 console.log(failed ? `graph-view: ${failed} FAILED` : 'graph-view: all checks passed')

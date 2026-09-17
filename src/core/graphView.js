@@ -292,3 +292,31 @@ export async function measureGraph(Graph) {
     box.remove()
   }
 }
+
+/**
+ * Finding a word by typing it.
+ *
+ * A graph of several hundred words is quick to look around and slow to look
+ * *up*: the word you want is somewhere in a cloud and reading labels until you
+ * find it is worse than a list. So typing narrows, and the ranking is the one
+ * that matches how people type -- what they typed is usually the start of the
+ * word, occasionally inside it, and the commonest word wins a tie because it is
+ * the one more likely meant.
+ *
+ * Returns node indices, best first.
+ */
+export function find(tags, query, limit = 12) {
+  const needle = String(query || '').trim().toLowerCase()
+  if (!needle) return []
+
+  const scored = []
+  tags.forEach((one, at) => {
+    const word = one.tag
+    if (word === needle) scored.push({ at, rank: 0, clips: one.clips })
+    else if (word.startsWith(needle)) scored.push({ at, rank: 1, clips: one.clips })
+    else if (word.includes(needle)) scored.push({ at, rank: 2, clips: one.clips })
+  })
+
+  scored.sort((a, b) => a.rank - b.rank || b.clips - a.clips)
+  return scored.slice(0, limit).map((one) => one.at)
+}
