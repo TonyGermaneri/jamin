@@ -899,3 +899,22 @@ body,
 }
 
 .jamin-graph-typed span:last-child { opacity: 0.6; }
+
+/* Which arrangement the words are in. A shape is easier to remember than a
+   blob, and the words keep their neighbours either way.
+   @see core/shapeLayouts.js */
+.jamin-graph-layout {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.jamin-graph-layout select {
+  background: transparent;
+  color: inherit;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-radius: 3px;
+  font: inherit;
+  font-size: 0.72rem;
+  padding: 1px 4px;
+}

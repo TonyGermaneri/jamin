@@ -241,7 +241,7 @@ export function relationships(tags, near, { at, along = 0 }, limit = 12) {
  * So the probe builds one, runs the simulation, reads the positions back, and
  * checks they moved. @see native/tools/boot_probe.m
  */
-export async function measureGraph(Graph) {
+export async function measureGraph(Graph, { SHAPES, pointsInShape, fitToShape }) {
   const box = document.createElement('div')
   box.style.cssText = 'position:fixed;left:-9999px;width:400px;height:300px'
   document.body.appendChild(box)
@@ -286,8 +286,34 @@ export async function measureGraph(Graph) {
     }
     graph.pause()
 
+    /*
+     * And a shape, poured for real.
+     *
+     * The rasteriser is the one part of the shape layouts that needs a browser:
+     * the path is drawn to a canvas and the filled pixels are sampled. A canvas
+     * that will not give an image -- a context it refuses, a read it taints --
+     * returns nothing and the shape silently does not happen, which is exactly
+     * the failure the rest of this probe exists to catch.
+     */
+    let shaped = 0
+    let kept = false
+    try {
+      const cloud = pointsInShape(SHAPES[3].path, 600)   // the thinnest one
+      shaped = cloud.length / 2
+      if (shaped) {
+        const poured = fitToShape(began, cloud)
+        // Every word somewhere, and not all in the same place.
+        const places = new Set()
+        for (let at = 0; at < poured.length; at += 2) places.add(`${poured[at]},${poured[at + 1]}`)
+        kept = poured.length === began.length && places.size > tags.length / 4
+      }
+    } catch {
+      shaped = -1
+    }
+
     graph.destroy()
-    return `points=${tags.length} links=${edges.length} readBack=${now ? now.length : 0} moved=${Boolean(moved)}`
+    return `points=${tags.length} links=${edges.length} readBack=${now ? now.length : 0}`
+         + ` moved=${Boolean(moved)} shapePoints=${shaped} poured=${kept}`
   } finally {
     box.remove()
   }

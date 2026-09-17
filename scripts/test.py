@@ -45,6 +45,8 @@ SUITES = [
     # What the graph looks like and how the keyboard walks it -- the arithmetic
     # that decides the picture, without a GPU to decide it on.
     (["src/core/graphView.js"], "tests/graphView.test.js"),
+    # Pouring a settled layout into a shape without scrambling what it means.
+    (["src/core/shapeLayouts.js"], "tests/shapeLayouts.test.js"),
     (["src/core/chordParser.js", "src/core/chordDetect.js"], "tests/chordDetect.test.js"),
     # Ten thousand edits to one chart. Slow on purpose -- it is measuring what a
     # day's work costs, and a day's work is what broke it.

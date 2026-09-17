@@ -14,9 +14,12 @@
  */
 import { Graph as CosmosGraph } from '@cosmos.gl/graph'
 import { measureGraph } from '../core/graphView.js'
+import { SHAPES as BUILT_IN_SHAPES, pointsInShape as sampleShape, fitToShape as pourInto } from '../core/shapeLayouts.js'
 
 if (typeof window !== 'undefined') {
-  window.__jaminGraphProbe = () => measureGraph(CosmosGraph)
+  window.__jaminGraphProbe = () => measureGraph(CosmosGraph, {
+    SHAPES: BUILT_IN_SHAPES, pointsInShape: sampleShape, fitToShape: pourInto,
+  })
 }
 
 export default {}
@@ -47,6 +50,7 @@ import { state } from '../store.js'
 import {
   ringPositions, sizesFor, coloursFor, neighboursOf, walk, relationships, find,
 } from '../core/graphView.js'
+import { SHAPES, pointsInShape, fitToShape } from '../core/shapeLayouts.js'
 
 const props = defineProps({
   /** `{ tags, edges }` from core/tagGraph.js. */
@@ -288,6 +292,60 @@ function fit() {
  * button is. Worth it after a catalogue grows, when the old map is a map of
  * something smaller.
  */
+/*
+ * The same arrangement, poured into a shape.
+ *
+ * A settled layout says what is near what and nothing about where, so every
+ * collection looks like the same blob and a blob is hard to remember. A shape
+ * is easy to remember -- you know where the wing is -- and because the words
+ * are moved onto it along a space-filling curve rather than at random, what was
+ * near stays near. @see core/shapeLayouts.js
+ *
+ * Unnamed, because naming them invites an argument about whether it really
+ * looks like a heron.
+ */
+const shapes = SHAPES.map((one, at) => ({ id: one.id, label: `Built-in ${at + 1}`, path: one.path }))
+const shaped = ref('')
+
+function pourInto(which) {
+  const graph = engine.value
+  if (!graph) return
+
+  shaped.value = which
+
+  if (!which) {
+    // Back to however it settled, which is the arrangement the collection
+    // actually has rather than one it was poured into.
+    const kept = props.graph.positions
+    if (kept && kept.length === tags.value.length * 2) {
+      graph.setPointPositions(kept.slice())
+      graph.render()
+      graph.fitView?.(300)
+    }
+    return
+  }
+
+  const shape = shapes.find((one) => one.id === which)
+  if (!shape) return
+
+  const cloud = pointsInShape(shape.path, Math.max(2000, tags.value.length * 3))
+  if (!cloud.length) return
+
+  // From wherever it is now, so pouring one shape into another keeps the
+  // arrangement rather than starting from the ring each time.
+  const now = props.graph.positions && props.graph.positions.length === tags.value.length * 2
+    ? props.graph.positions
+    : ringPositions(tags.value.length)
+
+  graph.setPointPositions(fitToShape(now, cloud))
+  graph.render()
+  graph.fitView?.(400)
+  // Held still: a shape the simulation is allowed to pull at stops being a
+  // shape within a second.
+  graph.pause()
+  settling.value = false
+}
+
 function restir() {
   const graph = engine.value
   if (!graph) return
@@ -359,6 +417,13 @@ onBeforeUnmount(() => {
       <span>{{ tags.length.toLocaleString() }} words · {{ edges.length.toLocaleString() }} relationships</span>
       <span v-if="settling" class="jamin-graph-settling">settling…</span>
       <span class="jamin-graph-spacer"></span>
+      <label class="jamin-graph-layout">
+        Layout
+        <select :value="shaped" @change="pourInto($event.target.value)">
+          <option value="">Settled</option>
+          <option v-for="one in shapes" :key="one.id" :value="one.id">{{ one.label }}</option>
+        </select>
+      </label>
       <button type="button" @click="fit">Fit</button>
       <button type="button" @click="restir">Re-settle</button>
     </div>
