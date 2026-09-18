@@ -30,7 +30,7 @@ const props = defineProps({
   height: { type: Number, default: 0 },
 })
 
-const emit = defineEmits(['act'])
+const emit = defineEmits(['act', 'keep', 'let-go'])
 
 /**
  * What can be done to this thing.
@@ -120,6 +120,8 @@ const showing = computed(() => Boolean(where.value && actions.value.length))
     :class="{ 'is-below': where.flipped }"
     :style="{ left: where.left, top: where.top, '--jamin-tool-scale': scale }"
     @mousedown.stop.prevent
+    @mouseenter="emit('keep')"
+    @mouseleave="emit('let-go')"
   >
     <button
       v-for="one in actions"

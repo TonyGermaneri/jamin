@@ -87,6 +87,8 @@ def main():
         page.wait_for_timeout(1200)
         ready(page)
 
+        print(f"\n  {reachTools(page)}\n")
+
         for name, prepare in VIEWS:
             if wanted and name not in wanted:
                 continue
@@ -186,6 +188,48 @@ def big(page, which, book, seconds=180):
     said = page.evaluate("() => window.__jaminBigTree || null")
     if said:
         print(f"      {said['clips']:,} clips -> {said['nodes']:,} nodes")
+
+
+def reachTools(page):
+    """Can the pointer actually get to the icons?
+
+    The bug this exists for: the icons appear above the chord, reaching them
+    means leaving the chord, and leaving the chord used to take them away
+    before the pointer arrived -- so they could not be clicked at all. A
+    screenshot cannot see that. Only moving a real mouse can.
+    """
+    page.evaluate("""() => {
+      const app = window.__jaminApp
+      app.state.ui.book = null
+      app.state.ui.progressions = false
+      app.setText('| Dmi7 G7 | Cmaj7 Ami7 |')
+    }""")
+    page.wait_for_timeout(600)
+
+    spot = page.evaluate("() => window.__jaminChartProbe('where')")
+    page.mouse.move(spot["x"], spot["y"])
+    page.wait_for_timeout(250)
+    if page.locator(".jamin-token-tools").count() == 0:
+        return "FAIL the icons never appeared over the chord"
+
+    box = page.locator(".jamin-token-tools").bounding_box()
+    if not box:
+        return "FAIL the icons have no box to aim at"
+
+    # Straight from the chord to the icons, through the gap between them.
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, steps=12)
+    page.wait_for_timeout(320)
+    if page.locator(".jamin-token-tools").count() == 0:
+        return "FAIL the icons vanished while the pointer was on its way"
+
+    # And they take a click, which is the whole point of reaching them.
+    before = page.evaluate("() => window.__jaminApp.state.text")
+    page.locator(".jamin-token-tool").first.click()
+    page.wait_for_timeout(300)
+    after = page.evaluate("() => window.__jaminApp.state.text")
+    if after == before:
+        return "FAIL clicking the first icon changed nothing"
+    return f"ok   pointer reaches the icons, and delete works ({before!r} -> {after!r})"
 
 
 def onChart(page, what, small=False):

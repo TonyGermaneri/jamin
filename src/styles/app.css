@@ -1447,6 +1447,23 @@ body,
   animation: jamin-tools-in 110ms ease-out;
 }
 
+/* The few pixels between the icons and the chord they belong to are part of
+   the icons as far as the pointer is concerned. Without this the gap is a
+   dead zone, and crossing it is how you reach them. */
+.jamin-token-tools::after {
+  content: '';
+  position: absolute;
+  left: -6px;
+  right: -6px;
+  top: 100%;
+  height: 10px;
+}
+
+.jamin-token-tools.is-below::after {
+  top: auto;
+  bottom: 100%;
+}
+
 @keyframes jamin-tools-in {
   from { opacity: 0; transform: translateX(-50%) translateY(3px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }

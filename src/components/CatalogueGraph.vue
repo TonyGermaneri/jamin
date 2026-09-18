@@ -522,28 +522,55 @@ const labels = ref([])
 const showLabels = computed(() => state.settings.graph.labels)
 let labelFrame = null
 
+/*
+ * Which nodes are worth naming, most worth it first.
+ *
+ * Biggest first, by what is under them, rather than shallowest first. The old
+ * order walked the breadth-first list and stopped dead at the third level --
+ * so on a real catalogue every name belonged to a library or a top shelf and
+ * the whole of the picture below that was unlabelled dots. Most of a map with
+ * no text on it is a pretty picture of nothing.
+ *
+ * Sorted once per slice rather than once per frame: the label pass runs on
+ * every frame and sorting nine hundred nodes sixty times a second to get the
+ * same answer would be silly.
+ */
+const nameable = computed(() => {
+  const tree = shown.value
+  if (!tree || !tree.nodes.length) return []
+  const order = tree.nodes.map((one, at) => at)
+  order.sort((a, b) => (tree.nodes[b].clips - tree.nodes[a].clips)
+    || (tree.nodes[a].depth - tree.nodes[b].depth))
+  return order
+})
+
+/**
+ * The candidates, in the order they get to claim room.
+ *
+ * More of them than can possibly be drawn, on purpose. Which labels fit is a
+ * question about where the dots ended up on screen, and only the pass that
+ * places them knows that -- so this offers plenty and lets collision decide,
+ * rather than choosing sixty in advance and watching most of them be thrown
+ * away for overlapping. @see refreshLabels
+ */
 function chooseLabelled() {
   const tree = shown.value
   if (!tree || !tree.nodes.length) return []
 
-  const wanted = new Map()
-  const budget = state.settings.graph.mostLabels || 60
+  const wanted = new Set()
 
-  // The branch you are on, always. Where you are must be readable even when
-  // everything around it is not.
+  // The branch you are on, always and first. Where you are must be readable
+  // even when everything around it is not.
   if (at.value >= 0) {
-    for (const one of where.value) wanted.set(one.at, 2)
-    for (const one of below.value.slice(0, 12)) wanted.set(one.at, 1)
+    for (const one of where.value) wanted.add(one.at)
+    for (const one of below.value.slice(0, 12)) wanted.add(one.at)
   }
 
-  // Then the biggest, top-down. Ordered breadth-first already, so walking the
-  // front of the list is walking the top of the tree.
-  for (let index = 0; index < tree.nodes.length && wanted.size < budget; index++) {
-    if (tree.nodes[index].depth > 2) break
-    if (!wanted.has(index)) wanted.set(index, 0)
-  }
+  const budget = state.settings.graph.mostLabels || 120
+  const offer = Math.min(nameable.value.length, budget * 6)
+  for (let n = 0; n < offer; n++) wanted.add(nameable.value[n])
 
-  return [...wanted.keys()].slice(0, budget)
+  return [...wanted]
 }
 
 function refreshLabels() {
@@ -560,8 +587,13 @@ function refreshLabels() {
 
   const box = canvas.value ? canvas.value.getBoundingClientRect() : { width: 0, height: 0 }
   const out = []
+  // Counted in labels actually drawn. Spending it on candidates instead meant
+  // asking for sixty and getting a dozen, because most of them overlapped
+  // something already placed.
+  const budget = state.settings.graph.mostLabels || 120
 
   for (const index of wanted) {
+    if (out.length >= budget) break
     const spot = tracked.get(index)
     if (!spot) continue
     const screen = graph.spaceToScreenPosition?.([spot[0], spot[1]])

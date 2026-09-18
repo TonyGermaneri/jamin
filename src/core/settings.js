@@ -212,9 +212,10 @@ export function defaultSettings() {
       /** The names drawn over the dots. Without them it is a picture of a
           catalogue that says nothing about the catalogue. */
       labels: true,
-      /** How many at once. Sixty is about what a screen holds before they
-          start overlapping into illegibility. */
-      mostLabels: 60,
+      /** How many at once, counted in labels actually drawn -- they are placed
+          in order of what is under them and one that would land on another is
+          skipped, so this is a ceiling rather than a quota. */
+      mostLabels: 140,
 
       /**
        * The simulation's own dials, named as cosmos.gl names them.

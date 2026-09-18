@@ -4313,5 +4313,6 @@ if (typeof window !== 'undefined') {
     // path. @see scripts/shots.py
     writeGraph,
     storedGraph,
+    setText,
   }
 }

@@ -88,6 +88,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  clearTimeout(letGo)
+  clearTimeout(pressTimer)
   cancelAnimationFrame(frameHandle)
   if (observer) observer.disconnect()
   window.removeEventListener('mousemove', onDragMove)
@@ -397,15 +399,47 @@ function tokenAt(event) {
   )
 }
 
+/*
+ * Letting go of a hover, slowly.
+ *
+ * The icons appear above the chord, and reaching them means leaving the chord
+ * -- which used to clear the hover and take the icons away before the pointer
+ * arrived. They cannot be reached at all that way. Worse, they sit over the
+ * `<textarea>`, so entering them fires its `mouseleave` and the icons remove
+ * themselves from under the very pointer that is landing on them.
+ *
+ * So letting go waits a moment, and anything that wants to keep the icons --
+ * the pointer arriving on them, or going back to the chord -- cancels the
+ * wait. Long enough to cross a few pixels of gap, short enough that the icons
+ * are gone by the time you have looked somewhere else.
+ */
+const LINGER = 260
+let letGo = null
+
+function keepHover() {
+  clearTimeout(letGo)
+  letGo = null
+}
+
+function dropHover() {
+  clearTimeout(letGo)
+  letGo = setTimeout(() => { hover.value = -1; letGo = null }, LINGER)
+}
+
 function onMouseMove(event) {
   // While a picker is open the hover is frozen: the icons underneath it are
   // not what somebody is pointing at.
   if (picker.value) return
-  hover.value = tokenAt(event)
+  const found = tokenAt(event)
+  // Off the tokens but still over the chart: the icons stay for a moment, in
+  // case the pointer is on its way to them.
+  if (found < 0) { dropHover(); return }
+  keepHover()
+  hover.value = found
 }
 
 function onMouseLeave() {
-  if (!picker.value) hover.value = -1
+  if (!picker.value) dropHover()
 }
 
 /** A long press where there is no mouse to hover with. */
@@ -477,6 +511,10 @@ if (typeof window !== 'undefined') {
     const rect = rectForToken(layout, chordIndex) || { x: 60, y: 40, h: 20 }
     const box = root.value ? root.value.getBoundingClientRect() : { left: 0, top: 0 }
 
+    // Where that chord is on screen, so a test can put a real pointer on it.
+    if (what === 'where') {
+      return { x: box.left + rect.x + rect.w / 2, y: box.top + rect.y - scroll + rect.h / 2 }
+    }
     if (what === 'tools') { picker.value = null; hover.value = chordIndex; return }
     if (what === 'picker' || what === 'colours') {
       hover.value = chordIndex
@@ -878,6 +916,8 @@ defineExpose({ focus: () => input.value && input.value.focus() })
       :scroll="scroll"
       :height="height"
       @act="onToolAct"
+      @keep="keepHover"
+      @let-go="dropHover"
     />
 
     <!-- Choosing a chord by pointing at one. -->
