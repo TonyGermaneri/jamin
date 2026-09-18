@@ -547,7 +547,7 @@ async function adoptHost() {
   onHost('jaminDrumMutes', (message) => {
     const mask = Number(message && message.muted) || 0
     const next = {}
-    VOICE_ORDER.forEach((voice, at) => { if (mask & (1 << at)) next[voice] = true })
+    VOICE_ORDER.forEach((voice, at) => { if (bitSet(mask, at)) next[voice] = true })
     state.drumMutes = next
     player.mutedNotes = mutedNoteSet()
   })
@@ -1100,15 +1100,35 @@ export function drumMutesFor() {
   if (!aimedElsewhere()) return state.drumMutes
   const mask = state.remoteMutes[state.ui.targetInstance] || 0
   const out = {}
-  VOICE_ORDER.forEach((voice, at) => { if (mask & (1 << at)) out[voice] = true })
+  VOICE_ORDER.forEach((voice, at) => { if (bitSet(mask, at)) out[voice] = true })
   return out
 }
 
-/** Fourteen booleans as a bitmask, in the order the parameters are in. */
+/*
+ * The voices as a bitmask, in the order the parameters are in.
+ *
+ * Arithmetic rather than `<<` and `|`. JavaScript's bitwise operators work on
+ * 32-bit integers, so with more than thirty-one voices `1 << 32` wraps round
+ * to 1 and muting the thirty-second drum silenced the kick instead. There are
+ * forty voices now that General MIDI's percussion has somewhere to go.
+ *
+ * A double holds whole numbers exactly to 2^53, which is fifty-three voices --
+ * room enough that this is not a ceiling anybody will meet. The other end
+ * carries it as a `uint64_t`. @see native/core/include/jamin/Roster.h
+ */
+function bitAt(at) {
+  return 2 ** at
+}
+
 function maskOf(mutes) {
   let mask = 0
-  VOICE_ORDER.forEach((voice, at) => { if (mutes[voice]) mask |= (1 << at) })
+  VOICE_ORDER.forEach((voice, at) => { if (mutes[voice]) mask += bitAt(at) })
   return mask
+}
+
+/** Whether one voice's bit is set, without narrowing the mask to 32 bits. */
+function bitSet(mask, at) {
+  return Math.floor(mask / bitAt(at)) % 2 === 1
 }
 
 /** Everything sounding again, on whichever track is being looked at. */

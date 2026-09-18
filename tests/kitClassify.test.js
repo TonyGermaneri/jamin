@@ -44,34 +44,32 @@ check('hat edges alone are not a Roland kit', classifyKit(edgesButGmToms).kit, '
 
 /* ---------------- hand percussion --------------------------------------- */
 /*
- * No kit really fits: congas, bongos, agogo, living between 60 and 81.
+ * Congas, bongos and agogo, living between 60 and 81 -- and General MIDI reads
+ * every one of them.
  *
- * Two faults in a row here, and the test has asserted both of them. It used to
- * come back "General MIDI" with a coverage of nothing -- measured on the real
- * collection, `Africa`, `Asia` and `Europe` have *every single note* outside
- * anything General MIDI can read, and each was filed as General MIDI and silent
- * on playback.
+ * This test has asserted three different states of the world. First that a
+ * percussion pack came back "General MIDI" with a coverage of nothing, which
+ * was true and useless. Then that it came back with a poor coverage honestly
+ * reported, which was the best that could be done while the vocabulary had
+ * fourteen drum-kit voices and no conga.
  *
- * The fix was to refuse, and a refusal made the library follow whatever the Kit
- * tab said, which is not an answer either: which numbering a library's files
- * are written in is a fact about the files and does not change because somebody
- * picked a different drum instrument for the track.
- *
- * So a kit is always named, the coverage says how well it fits, and a poor fit
- * is visible and changeable rather than deferred.
+ * Now the vocabulary carries the whole of General MIDI percussion, so the
+ * answer is simply right: these files are General MIDI, all of it is readable,
+ * and the classifier can say so without hedging. Counted over the real
+ * collection, this is 14.6% of every note that used to be dropped in silence.
+ * @see core/drumKits.js DRUM_VOICES
  */
 const congas = { 61: 300, 62: 200, 63: 180, 64: 150, 67: 90, 68: 60 }
-check('hand percussion still gets a map', Boolean(classifyKit(congas).kit), true)
-check('and the coverage says how badly it fits', classifyKit(congas).coverage < 0.6, true)
-check('and the reason names what reads the most of it',
-      /reads/.test(classifyKit(congas).reason), true)
-check('and it is not confident about it', classifyKit(congas).confidence, 0)
+check('hand percussion is General MIDI', classifyKit(congas).kit, 'gm')
+check('and every note of it can be played', classifyKit(congas).coverage, 1)
+check('and it says so without hedging', classifyKit(congas).confidence, 1)
+check('and gives the reason', /percussion/.test(classifyKit(congas).reason), true)
 
 // A kit that mostly can be read is still named. Most drum MIDI really is
 // General MIDI, and saying so is not the same fault in reverse.
 const mostlyGm = { 36: 400, 38: 380, 42: 600, 46: 90, 50: 40, 47: 30, 43: 25, 61: 20 }
 check('a pack General MIDI can read is General MIDI', classifyKit(mostlyGm).kit, 'gm')
-check('with nowhere for it to go', classifyKit(congas).coverage, 0)
+check('all of which it can play', classifyKit(mostlyGm).coverage, 1)
 
 /* ---------------- and things it will not name --------------------------- */
 // A pad map with nothing where a kit belongs. Still given one, because a

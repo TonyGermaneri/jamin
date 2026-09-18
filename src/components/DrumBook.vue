@@ -29,6 +29,7 @@ import {
   tapDrum,
   notesFor,
   inboundKitFor,
+  inboundMapFor,
   midiForGroove,
   searchDrums,
   drumFacetsFor,
@@ -599,6 +600,19 @@ function choose(groove) {
  * is a wall; four rows is a beat you can read.
  */
 const STEPS_PER_BAR = 16
+
+/*
+ * The kit, top to bottom as it sits behind a drummer, and always drawn.
+ *
+ * Every one of these gets a row whether the pattern uses it or not: the thing
+ * most worth knowing about a beat is often that there is *no* ride in it, and
+ * a row that comes and goes cannot say that.
+ *
+ * The percussion cannot work that way. There are twenty-six more voices since
+ * General MIDI's percussion was given somewhere to go, and forty rows of
+ * mostly nothing is the wall this arrangement exists to avoid -- so those are
+ * drawn only where they are played. @see core/drumKits.js KIT_VOICES
+ */
 const VOICE_ORDER = [
   'crash1', 'crash2', 'ride', 'rideBell', 'hatOpen', 'hatClosed', 'hatPedal',
   'tomHigh', 'tomMid', 'tomFloor', 'snare', 'snareRim', 'sideStick', 'kick',
@@ -647,8 +661,19 @@ const preview = computed(() => {
   const perStep = groove.lengthPulses / steps
   const used = new Map()
 
+  /*
+   * Read with the library's own map, not with the corpus's.
+   *
+   * This looked every note up in the Roland table whatever library it came
+   * from, which is the table the *shipped* corpus was played on. An imported
+   * General MIDI pack's tambourine is note 54, which the Roland kit does not
+   * have -- so it was not drawn, and the roll quietly disagreed with what the
+   * player would sound. @see store.js inboundMapFor
+   */
+  const reading = inboundMapFor(groove) || TD11_TO_VOICE
+
   for (const note of groove.notes || []) {
-    const voice = TD11_TO_VOICE[note.note]
+    const voice = reading[note.note]
     if (!voice) continue
     if (!used.has(voice)) used.set(voice, new Array(steps).fill(0))
     const step = Math.min(steps - 1, Math.floor(note.at / perStep))
@@ -658,7 +683,12 @@ const preview = computed(() => {
   }
 
   const empty = new Array(steps).fill(0)
-  const rows = VOICE_ORDER.map((id) => ({
+  // The kit always, then whatever percussion this pattern actually plays, in
+  // the order the vocabulary names it.
+  const percussion = DRUM_VOICES
+    .map((one) => one.id)
+    .filter((id) => !VOICE_ORDER.includes(id) && used.has(id))
+  const rows = [...VOICE_ORDER, ...percussion].map((id) => ({
     id,
     name: (DRUM_VOICES.find((voice) => voice.id === id) || {}).name || id,
     cells: used.get(id) || empty,

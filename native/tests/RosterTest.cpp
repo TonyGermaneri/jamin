@@ -187,10 +187,10 @@ void rosterTests()
      * A mute is a thing somebody does to a *track*, and the window they do it
      * from is whichever one happens to be open -- so muting the hi-hat on the
      * drum track from the piano track's window has to reach the drum track.
-     * Fourteen booleans as a bitmask, in the order the vocabulary is written.
+     * One bit per voice, in the order the vocabulary is written.
      */
     uint64_t mutesSeenByTwo = 0;
-    uint32_t wantedMutes = 0;
+    uint64_t wantedMutes = 0;
     check ("no mute request yet",
            ! roster.takeVoiceMutesRequest (two, wantedMutes, mutesSeenByTwo));
 
@@ -207,6 +207,24 @@ void rosterTests()
     check ("unmuting everything is still a request",
            roster.takeVoiceMutesRequest (two, wantedMutes, mutesSeenByTwo));
     check ("and says nothing is muted", (int) wantedMutes, 0);
+
+    /*
+     * A mask wider than thirty-two bits survives the journey.
+     *
+     * There are forty voices now that General MIDI's percussion has somewhere
+     * to go, and the mask was a `uint32_t` at both ends and an `int` in the
+     * bridge. Bit 39 -- the open triangle -- landed on bit 7 or on nothing,
+     * so silencing a triangle silenced a closed hi-hat. The page has the same
+     * trap in the other direction: JavaScript's `<<` is 32-bit, so the mask is
+     * built with arithmetic there. @see src/store.js maskOf
+     */
+    const uint64_t high = 1ull << 39;
+    roster.requestVoiceMutes ("inst-2", high | 1ull);
+    check ("a forty-voice mask arrives whole",
+           roster.takeVoiceMutesRequest (two, wantedMutes, mutesSeenByTwo));
+    check ("the top voice is still set", (wantedMutes & high) != 0);
+    check ("and the bottom one too", (wantedMutes & 1ull) != 0);
+    check ("and nothing in between was invented", wantedMutes == (high | 1ull));
 
     /*
      * The channels do not collide -- with the drums channel drained first.

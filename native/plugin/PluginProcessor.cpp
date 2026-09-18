@@ -137,6 +137,20 @@ JaminProcessor::JaminProcessor()
         "High tom", "Mid tom", "Floor tom",
         "Closed hi-hat", "Open hi-hat", "Pedal hi-hat",
         "Crash 1", "Crash 2", "Ride", "Ride bell",
+        // General MIDI's percussion, appended so the fourteen above keep the
+        // indices a DAW has already automated.
+        "Hand clap", "Tambourine", "Cowbell", "Vibraslap",
+        "High bongo", "Low bongo",
+        "Muted conga", "High conga", "Low conga",
+        "High timbale", "Low timbale",
+        "High agogo", "Low agogo",
+        "Cabasa", "Maracas",
+        "Short whistle", "Long whistle",
+        "Short guiro", "Long guiro",
+        "Claves",
+        "High wood block", "Low wood block",
+        "Muted cuica", "Open cuica",
+        "Muted triangle", "Open triangle",
     };
     /*
         On means silent, and off is the default -- the same sense as the track's
@@ -146,8 +160,8 @@ JaminProcessor::JaminProcessor()
         that is two conventions for one word in one plugin: a DAW showing both
         would have Mute lit to silence a track and Kick lit to sound a drum.
         Pressing a button to mute is also what somebody means by muting, and it
-        leaves all fourteen at rest in their off state rather than publishing
-        fourteen parameters that sit at 1 forever.
+        leaves them all at rest in their off state rather than publishing forty
+        parameters that sit at 1 forever.
     */
     for (int at = 0; at < numVoices; ++at)
         addParameter (voices[at].param = new juce::AudioParameterBool (

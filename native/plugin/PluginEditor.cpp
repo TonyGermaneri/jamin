@@ -251,9 +251,14 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                            // Silence some of another track's drums. A mute is a
                            // thing done to a track, and the window it is done
                            // from is whichever one happens to be open.
+                           // Through `double`, not `int`. A var carrying a
+                           // mask of forty voices does not fit in 32 bits, and
+                           // `(int)` would quietly take the low half of it --
+                           // silencing the wrong drums rather than none.
                            if (args.size() > 1)
                                jamin::Roster::instance().requestVoiceMutes (
-                                   args[0].toString().toStdString(), (uint32_t) (int) args[1]);
+                                   args[0].toString().toStdString(),
+                                   (uint64_t) (double) args[1]);
                            complete (juce::var (true));
                        })
                    .withNativeFunction ("jaminRequestDrums",
@@ -683,11 +688,11 @@ void JaminEditor::timerCallback()
 
     // Another window has asked this instance to silence some of its drums.
     {
-        uint32_t wanted = 0;
+        uint64_t wanted = 0;
         if (jamin::Roster::instance().takeVoiceMutesRequest (plugin.seat, wanted, lastMutesRequest))
         {
             for (int at = 0; at < JaminProcessor::numVoices; ++at)
-                plugin.setVoiceSounding (at, (wanted & (1u << at)) == 0, plugin.nextBoundaryPpq());
+                plugin.setVoiceSounding (at, (wanted & (1ull << at)) == 0, plugin.nextBoundaryPpq());
         }
     }
 

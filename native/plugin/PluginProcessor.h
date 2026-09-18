@@ -156,7 +156,12 @@ public:
         juce::AudioParameterBool* param { nullptr };
     };
 
-    static constexpr int numVoices = 14;
+    /*
+        One per voice in the vocabulary, and they only ever grow at the end:
+        a DAW remembers automation by parameter index.
+        @see src/core/drumKits.js DRUM_VOICES
+    */
+    static constexpr int numVoices = 40;
     Voice voices[numVoices];
 
     /// The channel the drums are on, zero-based, from the last compile.

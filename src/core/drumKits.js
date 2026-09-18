@@ -39,7 +39,66 @@ export const DRUM_VOICES = [
   { id: 'crash2', name: 'Crash 2' },
   { id: 'ride', name: 'Ride' },
   { id: 'rideBell', name: 'Ride bell' },
+
+  /*
+   * And the rest of General MIDI percussion.
+   *
+   * Appended, never inserted. A DAW remembers automation by parameter index
+   * and the plugin publishes one mute switch per voice in this order, so the
+   * fourteen above keep their places and their automation for ever.
+   * @see native/plugin/PluginProcessor.cpp
+   *
+   * These exist because without them a sixth of the collection is silent.
+   * Counted over all 774,268 files: 14.6% of every note played is a General
+   * MIDI percussion instrument this vocabulary had no voice for, so it was
+   * read, filed, drawn in the list -- and dropped on the way to the
+   * synthesiser. Tambourine alone is 2.24% of the corpus, congas 2.45%,
+   * maracas 1.67%. Four libraries are more than half percussion; `Africa` is
+   * 77% and played nothing at all.
+   *
+   * One voice per instrument the standard names, rather than a judgement
+   * about which are alike enough to fold. Folding is how a vocabulary comes
+   * to disagree with the thing it is describing, and the standard is not
+   * ambiguous about these.
+   */
+  { id: 'clap', name: 'Hand clap' },
+  { id: 'tambourine', name: 'Tambourine' },
+  { id: 'cowbell', name: 'Cowbell' },
+  { id: 'vibraslap', name: 'Vibraslap' },
+  { id: 'bongoHigh', name: 'High bongo' },
+  { id: 'bongoLow', name: 'Low bongo' },
+  { id: 'congaMute', name: 'Muted conga' },
+  { id: 'congaHigh', name: 'High conga' },
+  { id: 'congaLow', name: 'Low conga' },
+  { id: 'timbaleHigh', name: 'High timbale' },
+  { id: 'timbaleLow', name: 'Low timbale' },
+  { id: 'agogoHigh', name: 'High agogo' },
+  { id: 'agogoLow', name: 'Low agogo' },
+  { id: 'cabasa', name: 'Cabasa' },
+  { id: 'maracas', name: 'Maracas' },
+  { id: 'whistleShort', name: 'Short whistle' },
+  { id: 'whistleLong', name: 'Long whistle' },
+  { id: 'guiroShort', name: 'Short guiro' },
+  { id: 'guiroLong', name: 'Long guiro' },
+  { id: 'claves', name: 'Claves' },
+  { id: 'woodBlockHigh', name: 'High wood block' },
+  { id: 'woodBlockLow', name: 'Low wood block' },
+  { id: 'cuicaMute', name: 'Muted cuica' },
+  { id: 'cuicaOpen', name: 'Open cuica' },
+  { id: 'triangleMute', name: 'Muted triangle' },
+  { id: 'triangleOpen', name: 'Open triangle' },
 ]
+
+/**
+ * The fourteen a drum kit has, as against the percussion around it.
+ *
+ * The piano roll draws every one of these whether the pattern uses it or not
+ * -- the thing most worth knowing about a beat is often that there is *no*
+ * ride in it, and a row that comes and goes cannot say that. It cannot do the
+ * same for forty voices, so the percussion is drawn only where it is played.
+ * @see components/DrumBook.vue
+ */
+export const KIT_VOICES = DRUM_VOICES.slice(0, 14).map((one) => one.id)
 
 const VOICE_IDS = new Set(DRUM_VOICES.map((voice) => voice.id))
 
@@ -103,6 +162,34 @@ export const GENERAL_MIDI = {
   crash2: 57,
   ride: 51,
   rideBell: 53,
+
+  // The percussion, at the numbers the standard gives them.
+  clap: 39,
+  tambourine: 54,
+  cowbell: 56,
+  vibraslap: 58,
+  bongoHigh: 60,
+  bongoLow: 61,
+  congaMute: 62,
+  congaHigh: 63,
+  congaLow: 64,
+  timbaleHigh: 65,
+  timbaleLow: 66,
+  agogoHigh: 67,
+  agogoLow: 68,
+  cabasa: 69,
+  maracas: 70,
+  whistleShort: 71,
+  whistleLong: 72,
+  guiroShort: 73,
+  guiroLong: 74,
+  claves: 75,
+  woodBlockHigh: 76,
+  woodBlockLow: 77,
+  cuicaMute: 78,
+  cuicaOpen: 79,
+  triangleMute: 80,
+  triangleOpen: 81,
 }
 
 /**
@@ -130,6 +217,30 @@ export const GENERAL_MIDI_IN = {
   49: 'crash1', 55: 'crash1',
   52: 'crash2', 57: 'crash2',
   51: 'ride', 59: 'ride', 53: 'rideBell',
+
+  /*
+   * And the percussion, 39 to 81, which this table used to stop short of.
+   *
+   * It read twenty-one of the standard's forty-seven instruments. The other
+   * twenty-six are every hand percussion General MIDI defines, and they are
+   * 14.6% of every note in the collection -- read in, filed, listed, and
+   * dropped in silence on the way out. A pack of congas was a pack of nothing.
+   */
+  39: 'clap',
+  54: 'tambourine',
+  56: 'cowbell',
+  58: 'vibraslap',
+  60: 'bongoHigh', 61: 'bongoLow',
+  62: 'congaMute', 63: 'congaHigh', 64: 'congaLow',
+  65: 'timbaleHigh', 66: 'timbaleLow',
+  67: 'agogoHigh', 68: 'agogoLow',
+  69: 'cabasa', 70: 'maracas',
+  71: 'whistleShort', 72: 'whistleLong',
+  73: 'guiroShort', 74: 'guiroLong',
+  75: 'claves',
+  76: 'woodBlockHigh', 77: 'woodBlockLow',
+  78: 'cuicaMute', 79: 'cuicaOpen',
+  80: 'triangleMute', 81: 'triangleOpen',
 }
 
 /**
@@ -204,9 +315,33 @@ export const DRUM_KITS = [
       tomHigh: 48, tomMid: 45, tomFloor: 43,
       hatClosed: 42, hatOpen: 46, hatPedal: 44,
       crash1: 49, crash2: 57, ride: 51, rideBell: 53,
+
+      /*
+       * And the percussion, at General MIDI's numbers.
+       *
+       * A TD-11 has no congas: there is no pad to hit and no Roland number to
+       * send. But a voice with no note at all is a drum that silently never
+       * sounds, and a conga in an imported library is a real note that has to
+       * go somewhere -- so it goes to the number the standard gives it, which
+       * is what whatever is listening downstream is most likely to understand.
+       * The alternative is dropping it, which is what used to happen.
+       */
+      clap: 39, tambourine: 54, cowbell: 56, vibraslap: 58,
+      bongoHigh: 60, bongoLow: 61,
+      congaMute: 62, congaHigh: 63, congaLow: 64,
+      timbaleHigh: 65, timbaleLow: 66,
+      agogoHigh: 67, agogoLow: 68,
+      cabasa: 69, maracas: 70,
+      whistleShort: 71, whistleLong: 72,
+      guiroShort: 73, guiroLong: 74,
+      claves: 75,
+      woodBlockHigh: 76, woodBlockLow: 77,
+      cuicaMute: 78, cuicaOpen: 79,
+      triangleMute: 80, triangleOpen: 81,
     },
     notes: 'The kit the corpus was played on, so the grooves go back out exactly '
-         + 'as they came in.',
+         + 'as they came in. It has no percussion pads, so those voices are sent '
+         + 'at their General MIDI numbers rather than dropped.',
   },
 ]
 

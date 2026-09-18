@@ -98,13 +98,29 @@ for (const [pitch, hit] of Object.entries(TD11)) {
 }
 
 /* ---------------- and nothing is dropped on the floor -------------------- */
-// A voice with no corpus pitch would be a row in the Kit tab that never sounds;
-// a corpus pitch with no voice would be a drum silently thrown away.
-const reached = new Set(Object.values(TD11_TO_VOICE))
+/*
+ * A corpus pitch with no voice is a drum silently thrown away, and a voice
+ * nothing can reach is a row in the Kit tab that never sounds.
+ *
+ * "Reachable" used to mean reachable from the *corpus's* kit, which was right
+ * while the vocabulary was exactly the kit the corpus was played on. It is not
+ * any more: the vocabulary carries General MIDI's percussion so that imported
+ * libraries can be heard, and the Groove MIDI Dataset was played on a Roland
+ * TD-11, which has no congas and no cuica. Requiring the corpus to reach them
+ * would be requiring the TD-11 to have hardware it does not have.
+ *
+ * So the invariant is that every voice is reachable from *some* kit -- there
+ * is a way to play each of them -- and separately that every pitch the corpus
+ * uses reaches one.
+ */
+const reached = new Set()
+for (const kit of DRUM_KITS) {
+  for (const voice of Object.values(kit.in || {})) reached.add(voice)
+}
 for (const voice of Object.keys(GENERAL_MIDI)) {
   if (!reached.has(voice)) {
     failed++
-    console.log(`FAIL the voice "${voice}" is in the kit maps but nothing in the corpus reaches it`)
+    console.log(`FAIL the voice "${voice}" is in the kit maps but no kit can reach it`)
   }
 }
 for (const pitch of Object.keys(TD11)) {

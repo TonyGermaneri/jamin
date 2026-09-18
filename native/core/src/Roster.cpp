@@ -206,7 +206,7 @@ bool Roster::takeDrumsRequest (const Handle& slot, std::string& json, uint64_t& 
     return true;
 }
 
-void Roster::requestVoiceMutes (const std::string& id, uint32_t mask)
+void Roster::requestVoiceMutes (const std::string& id, uint64_t mask)
 {
     const std::lock_guard<std::mutex> guard (lock);
     for (const auto& slot : slots)
@@ -219,7 +219,7 @@ void Roster::requestVoiceMutes (const std::string& id, uint32_t mask)
         }
 }
 
-bool Roster::takeVoiceMutesRequest (const Handle& slot, uint32_t& mask, uint64_t& seen) const
+bool Roster::takeVoiceMutesRequest (const Handle& slot, uint64_t& mask, uint64_t& seen) const
 {
     if (slot == nullptr)
         return false;
