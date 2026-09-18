@@ -32,13 +32,16 @@ import {
   instanceLabel,
   setInstancePhrase,
   setPhrasePool,
+  placePick,
 } from '../store.js'
 import { keyPitchClass, phraseCategory, phraseKey, summarize } from '../core/phrases.js'
 import { describeLick } from '../core/licks.js'
 import InfoTip from './InfoTip.vue'
-import CatalogueGraph from './CatalogueGraph.vue'
+import CatalogueMap from './CatalogueMap.vue'
+import PhraseDetail from './PhraseDetail.vue'
 import { ADAPTERS } from '../core/graphView.js'
 import { vDragMidi } from '../core/dragOut.js'
+import { useRowsThatFit } from '../core/fitRows.js'
 
 /*
  * A map of the catalogue instead of a list of it.
@@ -103,7 +106,20 @@ const kind = ref('any')
 const source = ref('any')
 const length = ref('any')
 /** Which expansion panel is open; undefined is folded. */
-const filtersOpen = ref(undefined)
+/*
+ * Open already, when there is room for them.
+ *
+ * Folded away is right in the plugin's own editor, where five selects is most
+ * of a 480px window and the list is what somebody came for. Full screen it is
+ * the wrong default twice over: the filters are the fastest way into a
+ * catalogue of this size, and folded they leave a column of nothing beside a
+ * list that has plenty of room already.
+ *
+ * Measured once, on the width the window opens at. Dragging a plugin window
+ * about should not fold and unfold a panel somebody is using.
+ */
+const filtersOpen = ref(
+  typeof window !== 'undefined' && window.innerWidth >= 1280 ? 0 : undefined)
 const onlyFavourites = ref(false)
 
 /**
@@ -215,7 +231,13 @@ const lengths = computed(() => {
   ]
 })
 
-const PER_PAGE = 12
+/*
+ * As many as fit, rather than twelve.
+ *
+ * Forty-six pixels is what a row measures: two lines of type and the padding
+ * either side. @see core/fitRows.js for why this is measured rather than set.
+ */
+const { box: listBox, rows: perPage } = useRowsThatFit(46, { least: 6, most: 40 })
 const page = ref(1)
 const selected = ref(null)
 
@@ -283,8 +305,8 @@ function clearFilters() {
   state.ui.lickTexture = 'any'
 }
 const total = computed(() => catalogue().length)
-const pageCount = computed(() => Math.max(1, Math.ceil(matches.value.length / PER_PAGE)))
-const list = computed(() => matches.value.slice((page.value - 1) * PER_PAGE, page.value * PER_PAGE))
+const pageCount = computed(() => Math.max(1, Math.ceil(matches.value.length / perPage.value)))
+const list = computed(() => matches.value.slice((page.value - 1) * perPage.value, page.value * perPage.value))
 
 watch([search, category, kind, source, length, onlyFavourites, () => state.ui.lickTexture],
   () => { page.value = 1 })
@@ -310,7 +332,7 @@ function step(delta) {
   if (next === at && selected.value) return
 
   selected.value = all[next]
-  page.value = Math.floor(next / PER_PAGE) + 1
+  page.value = Math.floor(next / perPage.value) + 1
 
   // Using a phrase reparses the chart and writes to storage, so stepping fast
   // waits for the spinning to stop rather than doing that fifty times a second.
@@ -332,6 +354,13 @@ function onWheel(event) {
 function pick(entry) {
   selected.value = entry
   clearTimeout(useTimer)
+
+  // Opened to put one into the chart: picking writes it there and the book has
+  // done its job. @see store.js placePick
+  if (placePick('phrases', entry.name)) {
+    state.ui.book = null
+    return
+  }
 
   // Opened by right-clicking a chord: picking assigns to that chord and the
   // book has done its job. Otherwise picking is auditioning, and the book
@@ -468,11 +497,48 @@ const assigningTo = computed(() => {
         <v-window v-model="state.ui.phrasesTab">
           <!-- Catalogue: list on the left, the one you picked on the right -->
           <v-window-item value="catalogue">
-            <v-row class="jamin-book-row">
+            <!--
+              The map, when that is what is being looked at.
+
+              Not a panel in a column of it: the canvas is the page and the
+              filters, the chrome and whatever is chosen float over the top.
+              @see components/CatalogueMap.vue
+            -->
+            <CatalogueMap
+              v-if="asGraph"
+              :tree="graph"
+              :busy="state.licksLoading"
+              :found="matches.length"
+              label="phrases"
+              @pick="pickNode"
+            >
+              <template #filters>
+                <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify"
+                              clearable density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="sortBy" :items="sorts"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="category" :items="categories"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="musicalKey" :items="keys"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="source" :items="sources"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="kind" :items="kinds"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="length" :items="lengths"
+                          density="compact" variant="solo-filled" flat hide-details />
+              </template>
+
+              <template #detail>
+                <PhraseDetail :phrase="selected" :per-chord="perChord" :target="target" />
+              </template>
+            </CatalogueMap>
+
+            <v-row v-else class="jamin-book-row">
               <!-- The list gets the room. Everything you set rather than read
                    lives on the right, so the only thing competing for height is
                    the thing there are ten thousand of. -->
-              <v-col cols="12" md="7" class="jamin-book-col">
+              <v-col cols="12" md="8" lg="9" class="jamin-book-col">
 
                 <div v-if="state.licksLoading && !list.length" class="text-caption text-medium-emphasis py-8 text-center">
                   Loading the catalogue…
@@ -484,26 +550,17 @@ const assigningTo = computed(() => {
                   </div>
                 </div>
 
-                <!-- The same catalogue, as the words in it. Picking a word
-                     narrows the list to what carries it, so everything to the
-                     right of here is unchanged. @see components/CatalogueGraph.vue -->
-                <CatalogueGraph
-                  v-else-if="asGraph"
-                  :tree="graph"
-                  class="jamin-book-scroll"
-                  @pick="pickNode"
-                />
-
                 <v-list
                   v-else
+                  ref="listBox"
                   density="compact"
                   class="py-0 jamin-book-scroll"
                   tabindex="0"
                   style="outline: none"
                   @keydown.down.prevent="step(1)"
                   @keydown.up.prevent="step(-1)"
-                  @keydown.page-down.prevent="step(PER_PAGE)"
-                  @keydown.page-up.prevent="step(-PER_PAGE)"
+                  @keydown.page-down.prevent="step(perPage)"
+                  @keydown.page-up.prevent="step(-perPage)"
                   @keydown.home.prevent="step(-matches.length)"
                   @keydown.end.prevent="step(matches.length)"
                   @wheel="onWheel"
@@ -536,25 +593,59 @@ const assigningTo = computed(() => {
                     <v-list-item-subtitle v-if="entry.id" class="text-caption jamin-mono">
                       {{ '{' + entry.id + '}' }}
                     </v-list-item-subtitle>
+                    <!--
+                      What it is, in columns, because there is room for it.
+
+                      A name and a beat count across fourteen hundred pixels is
+                      two facts and a great deal of nothing; the collection
+                      knows what kind of line this is, what it was played over
+                      and where it came from, and those are what somebody is
+                      choosing between. They fall away as the window narrows --
+                      inside the plugin's own editor the name is all that fits.
+                    -->
                     <template #append>
-                      <v-icon v-if="isAccent(entry)" size="14" color="secondary" class="mr-2">mdi-flash-outline</v-icon>
-                      <v-icon v-if="playing === entry.id" size="14" color="primary" class="mr-2">mdi-play</v-icon>
-                      <span class="text-caption text-medium-emphasis">{{ beatsOf(entry) }} beats</span>
+                      <div class="jamin-row-facts">
+                        <span class="jamin-row-fact d-none d-lg-flex">
+                          {{ categoryOf(entry) || entry.kind }}
+                        </span>
+                        <span class="jamin-row-fact d-none d-xl-flex">
+                          {{ entry.sourceChord }}
+                        </span>
+                        <span class="jamin-row-fact jamin-row-fact-wide d-none d-xl-flex">
+                          {{ sourceOf(entry) }}
+                        </span>
+                        <v-icon v-if="isAccent(entry)" size="14" color="secondary">mdi-flash-outline</v-icon>
+                        <v-icon v-if="playing === entry.id" size="14" color="primary">mdi-play</v-icon>
+                        <span class="jamin-row-fact jamin-row-fact-last">
+                          {{ beatsOf(entry) }} beats
+                        </span>
+                      </div>
                     </template>
                   </v-list-item>
                 </v-list>
 
-                <v-pagination v-model="page" :length="pageCount" :total-visible="6" density="comfortable" class="mt-2" />
-                <div class="text-caption text-medium-emphasis text-center">
-                  {{ matches.length.toLocaleString() }} of {{ total.toLocaleString() }}
-                  <template v-if="filtered">· <a href="#" @click.prevent="clearFilters">clear filters</a></template> ·
-                  click the list, then arrow or scroll to hear your way through it ·
-                  right-click one to make it the accent
+                <!-- The foot of the list, attached to it rather than floating
+                     in the space under it. @see styles/app.css -->
+                <div class="jamin-book-foot d-flex align-center flex-wrap" style="gap: 12px">
+                  <span class="text-caption text-medium-emphasis">
+                    <strong>{{ matches.length.toLocaleString() }}</strong> of
+                    {{ total.toLocaleString() }}
+                    <template v-if="filtered">
+                      · <a href="#" @click.prevent="clearFilters">clear filters</a>
+                    </template>
+                  </span>
+                  <v-spacer />
+                  <v-pagination v-model="page" :length="pageCount" :total-visible="7"
+                                density="comfortable" class="flex-grow-0" />
+                  <v-spacer />
+                  <span class="text-caption text-medium-emphasis d-none d-xl-block">
+                    arrow or scroll to hear your way through · right-click to make it the accent
+                  </span>
                 </div>
               </v-col>
 
               <!-- Everything you set, and then what you picked -->
-              <v-col cols="12" md="5" class="jamin-book-col"
+              <v-col cols="12" md="4" lg="3" class="jamin-book-col"
                      :class="{ 'jamin-filters-open': filtersOpen !== undefined }">
                 <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable
                               density="compact" hide-details class="mb-2 flex-grow-0" />
@@ -627,88 +718,8 @@ const assigningTo = computed(() => {
                 </v-expansion-panels>
 
 
-                <div v-if="!selected" class="text-caption text-medium-emphasis py-8 text-center jamin-book-detail">
-                  Pick one from the list.
-                </div>
-                <div v-else class="jamin-book-scroll jamin-book-detail">
-                  <div class="text-body-1 mb-1">{{ selected.name }}</div>
-                  <div class="text-caption text-medium-emphasis mb-3">{{ describe(selected) }}</div>
-
-                  <svg
-                    :width="300"
-                    :height="120"
-                    class="mb-3"
-                    style="background: rgba(255,255,255,0.04); border-radius: 6px; max-width: 100%"
-                  >
-                    <rect
-                      v-for="(note, index) in roll(selected, 300, 120)"
-                      :key="index"
-                      :x="note.x"
-                      :y="note.y"
-                      :width="note.w"
-                      :height="note.h"
-                      :opacity="note.o"
-                      fill="currentColor"
-                      rx="1"
-                    />
-                  </svg>
-
-                  <div class="text-caption text-medium-emphasis mb-3">
-                    Played over {{ selected.sourceChord }}, stored as degrees from its root, and
-                    re-pointed at whatever chord it lands on — so it fits every chord in the chart.
-                    <span v-if="selected.origin">From {{ selected.origin }}.</span>
-                  </div>
-
-                  <div class="d-flex align-center flex-wrap" style="gap: 8px">
-                    <v-btn
-                      size="small"
-                      :color="playing === selected.id ? 'primary' : undefined"
-                      :variant="playing === selected.id ? 'flat' : 'tonal'"
-                      @click="usePhrase(selected)"
-                    >
-                      {{ playing === selected.id ? 'Playing' : 'Use' }}
-                    </v-btn>
-                    <v-btn v-if="playing" size="small" variant="text" @click="bindPhrase(null)">Play no phrase</v-btn>
-                    <v-btn
-                      size="small"
-                      variant="text"
-                      prepend-icon="mdi-flash-outline"
-                      :color="isAccent(selected) ? 'secondary' : undefined"
-                      @click="setAccentPhrase(isAccent(selected) ? null : selected.id || selected.name)"
-                    >
-                      {{ isAccent(selected) ? 'Is the accent' : 'Make it the accent' }}
-                    </v-btn>
-                    <v-btn
-                      v-if="!selected.builtin"
-                      icon="mdi-rename-outline"
-                      size="x-small"
-                      variant="text"
-                      @click="renaming = selected.id; renameTo = selected.name"
-                    />
-                    <v-btn
-                      v-if="!selected.builtin"
-                      icon="mdi-delete-outline"
-                      size="x-small"
-                      variant="text"
-                      @click="deletePhrase(selected.name)"
-                    />
-                  </div>
-
-                  <v-text-field
-                    v-if="renaming === selected.id"
-                    v-model="renameTo"
-                    density="compact"
-                    autofocus
-                    class="mt-3"
-                    label="Name"
-                    @keydown.enter="commitRename(selected)"
-                    @blur="commitRename(selected)"
-                  />
-
-                  <div class="text-caption text-medium-emphasis mt-3">
-                    <span v-if="perChord">Using one binds it to {{ target ? target.body : 'the chord at the cursor' }}.</span>
-                    <span v-else>Using one plays it over the whole song.</span>
-                  </div>
+                <div class="jamin-book-scroll jamin-book-detail">
+                  <PhraseDetail :phrase="selected" :per-chord="perChord" :target="target" />
                 </div>
               </v-col>
             </v-row>

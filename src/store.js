@@ -8,7 +8,7 @@
  * refreshed a few times a second for the readout and the dialogs.
  */
 
-import { reactive, watch } from 'vue'
+import { reactive, watch, toRaw } from 'vue'
 import { MidiEngine } from './core/midi.js'
 import { hosted, hostData, callHost, callHostSlowly, onHost, HostClock } from './core/host.js'
 import { nodeAvailable, Session, httpTransport, hostTransport, localTransport } from './core/net.js'
@@ -18,7 +18,7 @@ import {
   readGrooveFile, describeSet, packGroove, unpackGroove, spread, planPacks, slashes, reservoir, walkLibrary,
 } from './core/drumImport.js'
 import {
-  listSets, putSet, deleteSet, putGrooves, countGrooves,
+  listSets, putSet, deleteSet, putGrooves, countGrooves, forgetCachedFacets,
   searchGrooves, grooveFacets, getGrooves, whileUpgrading,
   buildIndexes, indexesAreCurrent,
   readGraph, writeGraph, forgetGraph, everyPath,
@@ -30,7 +30,8 @@ import {
 import { resourceOk } from './core/fetchResource.js'
 import { rebuild, docSize } from './core/crdt.js'
 import { sameGenre } from './core/genres.js'
-import { buildTree } from './core/pathTree.js'
+import { buildTree, withChildren } from './core/pathTree.js'
+import { applyEdit, insertAt, setDrumPattern } from './core/chartEdit.js'
 import { ADAPTERS } from './core/graphView.js'
 import { realizeChord } from './core/voicing.js'
 import { scoreOptions } from './core/compile.js'
@@ -131,6 +132,8 @@ export const state = reactive({
   // What the database says each library holds, as against what its row claims.
   // @see countEachDrumSet
   drumCounts: {},
+  // Whether a page of the catalogue is being fetched. @see searchDrums
+  drumBusy: false,
   /**
    * Drums somebody has taken out, by voice id.
    *
@@ -267,6 +270,18 @@ export const state = reactive({
     /** The chord the phrase book is picking for, when it was opened by
         right-clicking one. -1 means it was opened for the song. */
     assignTo: -1,
+    /*
+     * Where a book's next pick is going, when it was opened to put something
+     * into the chart rather than to browse.
+     *
+     * A character offset rather than a token index, because there is no token
+     * at an empty space -- which is exactly where "insert" is aimed. -1 is
+     * "nowhere; this book was opened to look at". @see components/ChordCanvas.vue
+     */
+    insertPhraseAt: -1,
+    insertDrumAt: -1,
+    /** The drum mark the drum book is changing, as a token index. */
+    assignDrumTo: -1,
     learningAccent: false,
     fetching: false,
     fetchProgress: '',
@@ -2135,13 +2150,31 @@ function hashOf(text) {
   return hash >>> 0
 }
 
+/**
+ * Returns the groove, or a reason it could not be had.
+ *
+ * The reason matters. All three failures used to come back as `null`, which
+ * `notesFor` turned into a groove with an empty note list -- indistinguishable,
+ * everywhere downstream, from a pattern that genuinely has no notes in it. A
+ * library on a drive that is not plugged in drew as eight hundred thousand
+ * empty piano rolls and said nothing at all.
+ */
 async function readByReference(root, path) {
-  const encoded = await callHost('jaminReadFile', root, path).catch(() => null)
-  if (typeof encoded !== 'string' || !encoded) return null
+  let encoded = null
   try {
-    return readGrooveFile(base64Bytes(encoded), path)
-  } catch {
-    return null
+    encoded = await callHost('jaminReadFile', root, path)
+  } catch (error) {
+    return { why: `the plugin could not be asked for it (${(error && error.message) || error})` }
+  }
+  if (typeof encoded !== 'string' || !encoded) {
+    return { why: 'the file is not where the library says it is — is the drive connected?' }
+  }
+  try {
+    const groove = readGrooveFile(base64Bytes(encoded), path)
+    if (!groove) return { why: 'the file is there but no longer reads as MIDI' }
+    return { groove }
+  } catch (error) {
+    return { why: `the file would not parse (${(error && error.message) || error})` }
   }
 }
 
@@ -2170,15 +2203,31 @@ export async function notesFor(groove) {
   if (cached) return cached
 
   const set = state.drumSets.find((row) => row.id === groove.setId)
-  if (!set || !set.root) return groove
+  const why = !set ? 'the library it came from is no longer in the catalogue'
+    : !set.root ? 'the library has no folder recorded to read it from'
+      : ''
+  if (why) return unreadable(groove, why)
 
   const read = await readByReference(set.root, groove.path)
-  if (!read) return groove
+  if (read.why) return unreadable(groove, read.why)
 
-  const whole = { ...groove, notes: read.notes, byReference: false }
+  const whole = { ...groove, notes: read.groove.notes, byReference: false, unreadable: '' }
   if (referenced.size > 64) referenced.clear()
   referenced.set(groove.id, whole)
   return whole
+}
+
+/**
+ * A pattern whose notes could not be fetched, saying so.
+ *
+ * Not cached: the commonest cause is a disconnected drive, and that is a
+ * condition somebody fixes while the program is open. `noteError` folds a
+ * repeat into a count, so a list of four hundred unreadable rows is one line in
+ * the error log rather than four hundred.
+ */
+function unreadable(groove, why) {
+  noteError(`${groove.name || groove.path}: ${why}`, 'reading a pattern from its library')
+  return { ...groove, notes: [], unreadable: why }
 }
 
 /** The commonest verdict per shelf, and the library's own. @see classifyKit */
@@ -2425,12 +2474,43 @@ export async function forgetDrumSet(id) {
   toast(`${name} removed`)
 }
 
+/**
+ * A reactive object as the database will take it.
+ *
+ * Vue wraps everything in `state` in a Proxy, and the structured clone
+ * algorithm -- which is what an IndexedDB write is -- refuses a Proxy outright:
+ * `DataCloneError: #<Object> could not be cloned`. Spreading the top level is
+ * not enough, because the nested objects that come back through the proxy are
+ * proxies too, and a library row carries two of them (`folderKits`, `facts`).
+ *
+ * So the kit dropdown in the library list threw on every change, silently, and
+ * the setting appeared to be stuck on whatever the importer had worked out.
+ * Anything written back out of `state` has to come through here first.
+ */
+function plain(value) {
+  const raw = toRaw(value)
+  if (raw === null || typeof raw !== 'object') return raw
+  // Already clonable as they stand, and rebuilding them would lose the type.
+  if (raw instanceof Date || raw instanceof ArrayBuffer || ArrayBuffer.isView(raw)) return raw
+  if (Array.isArray(raw)) return raw.map(plain)
+  const out = {}
+  for (const key of Object.keys(raw)) out[key] = plain(raw[key])
+  return out
+}
+
 /** The kit a library's notes were written for. */
 export async function setDrumSetKit(id, kit, customMap = null) {
   const set = state.drumSets.find((row) => row.id === id)
   if (!set) return
-  const next = { ...set, kit: kit || '', customMap: customMap || set.customMap || {} }
-  await putSet(next)
+  const next = plain({ ...set, kit: kit || '', customMap: customMap || set.customMap || {} })
+  try {
+    await putSet(next)
+  } catch (error) {
+    // It used to reject into nothing and the dropdown simply sprang back.
+    noteError(error, 'saving the kit for ' + (set.name || id))
+    toast(`Could not save the kit for ${set.name || 'that library'}`)
+    return
+  }
   await refreshDrumSets()
   refreshDrums()
 }
@@ -2531,7 +2611,30 @@ function boundToImported(bindings) {
 }
 
 /** What the filters are showing, out of the imported catalogue. */
+/**
+ * A page of the catalogue, with something on screen to say it is coming.
+ *
+ * Paging three quarters of a million rows is a database question and a database
+ * question takes as long as it takes. Until this wrapper there was nothing at
+ * all between the click and the answer, so a slow page read as a dead control.
+ *
+ * The counter rather than a boolean: two searches can be in flight -- the list
+ * and the graph ask separately -- and the first to finish would otherwise clear
+ * the flag while the second was still going.
+ */
+let drumSearches = 0
+
 export async function searchDrums(filters = null, window = null) {
+  drumSearches++
+  state.drumBusy = true
+  try {
+    return await runDrumSearch(filters, window)
+  } finally {
+    if (--drumSearches <= 0) { drumSearches = 0; state.drumBusy = false }
+  }
+}
+
+async function runDrumSearch(filters = null, window = null) {
   // A different question makes the remembered position meaningless: the same
   // offset in a different answer is a different row.
   if (filters) { rememberPageEnd(-1, null); state.drumFilters = { ...state.drumFilters, ...filters } }
@@ -2626,13 +2729,24 @@ export async function searchDrums(filters = null, window = null) {
  */
 export const BUILT_IN_SET = 'builtin'
 
+/*
+ * Bumped whenever a stored built-in row is shaped differently than before.
+ *
+ * The count alone cannot notice this: giving the corpus shelves changed what
+ * every row says and not how many there are, so a catalogue filed by the
+ * previous version would have gone on reporting eleven hundred rows with no
+ * folder in them for ever.
+ */
+const CORPUS_SHAPE = 2
+
 async function shelveTheCorpus(list) {
   if (!list || !list.length) return
 
-  // Re-shelved when the corpus changes, and not otherwise. The count is enough
-  // to notice a new one: it is the thing that moves when patterns are added.
+  // Re-shelved when the corpus changes, and not otherwise. The count notices a
+  // new pattern; the shape notices a new way of writing the same ones down.
   const held = await countGrooves(BUILT_IN_SET)
-  if (held === list.length) return
+  const filed = (await listSets()).find((one) => one.id === BUILT_IN_SET)
+  if (held === list.length && filed && filed.shape === CORPUS_SHAPE) return
 
   const rows = list.map((groove, at) => ({
     ...packGroove(groove, BUILT_IN_SET, at),
@@ -2646,10 +2760,17 @@ async function shelveTheCorpus(list) {
     return
   }
 
+  // Eleven hundred rows now say something they did not say before, and there
+  // are still eleven hundred of them -- which is the one change neither the
+  // remembered dropdowns nor the stored map can notice by counting.
+  await forgetCachedFacets(BUILT_IN_SET)
+  await forgetGraph('drums')
+
   await putSet({
     id: BUILT_IN_SET,
     name: 'Built in',
     builtIn: true,
+    shape: CORPUS_SHAPE,
     kit: 'vdrums',
     customMap: {},
     folderKits: {},
@@ -2719,14 +2840,17 @@ export async function buildBulkGraph(which, { onProgress = null } = {}) {
 /** The stored shape, as the view wants it. */
 function unpackStoredGraph(row) {
   if (!row || !row.nodes) return null
-  return {
+  // With the child index put back. It is derived from `parents` and so is not
+  // worth storing, and without it every node in the stored map reports no
+  // children. @see core/pathTree.js withChildren
+  return withChildren({
     nodes: row.nodes,
     edges: row.edges,
     parents: row.parents,
     depth: row.depth,
     truncated: row.truncated,
     clips: row.clips,
-  }
+  })
 }
 
 /** What to call the top level of the tree. */
@@ -3478,6 +3602,60 @@ export function bindPhrase(phraseName, tokenIndex) {
   toast(phraseName ? `${token.body} → ${phraseName}` : `${token.body} → no phrase`)
 }
 
+/**
+ * Put what a book just offered into the chart.
+ *
+ * The books are browsers: they do not know about chart text and should not.
+ * They call this with what was picked, and this knows where it was going --
+ * into a gap as new text, or into a mark that is already there.
+ *
+ * One splice either way, so one undo step either way.
+ * @see core/chartEdit.js, components/ChordCanvas.vue applyChartEdit
+ */
+export function placePick(what, name) {
+  const ui = state.ui
+  const wanted = String(name || '').trim()
+  if (!wanted) return false
+
+  if (what === 'drums' && ui.assignDrumTo >= 0) {
+    const token = state.score.tokens[ui.assignDrumTo]
+    ui.assignDrumTo = -1
+    if (token) { applyChartSplice(setDrumPattern(state.text, token, wanted)); return true }
+    return false
+  }
+  if (what === 'drums' && ui.insertDrumAt >= 0) {
+    const at = ui.insertDrumAt
+    ui.insertDrumAt = -1
+    applyChartSplice(insertAt(state.text, at, `[d:${wanted}]`))
+    return true
+  }
+  if (what === 'phrases' && ui.insertPhraseAt >= 0) {
+    const at = ui.insertPhraseAt
+    ui.insertPhraseAt = -1
+    // A phrase has to hang on a chord, so one is written with it. `%` would
+    // be wrong -- it repeats a bar rather than sounding anything.
+    applyChartSplice(insertAt(state.text, at, `.C{${wanted}}`))
+    return true
+  }
+  return false
+}
+
+/**
+ * Apply a splice to the chart.
+ *
+ * Through the editor when it is listening, so the browser records one undo
+ * step; straight into the text when it is not -- which is how the plugin's
+ * compile path and the tests reach it. @see components/ChordCanvas.vue
+ */
+let spliceInto = null
+export function onChartSplice(fn) { spliceInto = fn }
+
+export function applyChartSplice(edit) {
+  if (!edit) return
+  if (spliceInto) { spliceInto(edit); return }
+  setText(applyEdit(state.text, edit))
+}
+
 export function unbindPhrase(tokenIndex) {
   const token = state.score.tokens[tokenIndex ?? currentTokenIndex()]
   if (!token) return
@@ -4106,4 +4284,34 @@ export function runToastAction() {
   state.ui.toast = null
   state.ui.toastAction = null
   if (action && typeof action.run === 'function') action.run()
+}
+
+/*
+ * A handle for the screenshot harness.
+ *
+ * The graph views and the list views are things whose only real test is whether
+ * somebody can read them: a unit test can prove no node has a thousand children
+ * and cannot say the picture is legible or that a panel has not collapsed. So
+ * the harness drives the real application at a real desktop size and photographs
+ * it, which needs a way in. @see scripts/shots.py
+ *
+ * The same shape as the probes the boot check uses, and like them it is here in
+ * every build: a handle that only exists in a test build is a handle that tests
+ * a build nobody ships.
+ */
+if (typeof window !== 'undefined') {
+  window.__jaminApp = {
+    state,
+    openBook,
+    openDrumBook,
+    ensureLicks,
+    searchDrums,
+    searchProgressions,
+    // So the screenshot harness can put a real catalogue's map in front of the
+    // renderer without a twenty-minute import first. It goes in the same store
+    // the plugin reads it back out of, so what is photographed is the real
+    // path. @see scripts/shots.py
+    writeGraph,
+    storedGraph,
+  }
 }

@@ -45,6 +45,8 @@ SUITES = [
     # The catalogue as the tree it already is, which is what replaced the
     # co-occurrence hairball.
     (["src/core/pathTree.js"], "tests/pathTree.test.js"),
+    (["src/core/chordParser.js", "src/core/score.js", "src/core/chartEdit.js",
+      "src/core/chordPicker.js"], "tests/chartEdit.test.js"),
     (["src/core/chordParser.js", "src/core/chordDetect.js"], "tests/chordDetect.test.js"),
     # Ten thousand edits to one chart. Slow on purpose -- it is measuring what a
     # day's work costs, and a day's work is what broke it.
@@ -157,7 +159,8 @@ for modules, suite in SUITES:
     if (result.returncode != 0 or "FAIL" in said or "THREW" in said
             or "all checks passed" not in said):
         if "all checks passed" not in said and "FAIL" not in said:
-            sys.stdout.write(f"{suite}: never reached its sign-off line\n")
+            sys.stdout.write(f"FAIL {suite}: never reached its sign-off line "
+                             f"— it threw, or it calls something that no longer exists\n")
         failed += 1
 
 for path in temporary:
@@ -165,6 +168,17 @@ for path in temporary:
         os.unlink(path)
     except OSError:
         pass
+
+# What the drum store promises, against a real IndexedDB.
+#
+# Node rather than JavaScriptCore, because these need a database. Correctness
+# only: this shim is not a performance model. @see scripts/store_check.py
+store = subprocess.run([sys.executable, os.path.join(HERE, "store_check.py")],
+                       cwd=ROOT, capture_output=True, text=True)
+sys.stdout.write(store.stdout)
+sys.stderr.write(store.stderr)
+if store.returncode != 0:
+    failed += 1
 
 # Source invariants -- about where code reads from rather than what it computes.
 check = subprocess.run([sys.executable, os.path.join(HERE, "check_sources.py")],
@@ -191,5 +205,11 @@ if os.path.exists(lint):
         failed += 1
 else:
     print("     (eslint is not installed; skipping the undefined-name check)")
+
+# Said once at the end, because a single failing line is easy to lose in forty
+# passing ones -- which is exactly how a suite testing a function that had been
+# deleted went on "passing" for a commit.
+print(f"\n{failed} of {len(SUITES) + 3} checks FAILED" if failed
+      else f"\nall {len(SUITES) + 3} checks passed")
 
 sys.exit(1 if failed else 0)

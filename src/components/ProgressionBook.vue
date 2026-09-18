@@ -33,7 +33,7 @@ import {
 import { summarizeProgression } from '../core/progressions.js'
 import { parseScore } from '../core/score.js'
 import InfoTip from './InfoTip.vue'
-import CatalogueGraph from './CatalogueGraph.vue'
+import CatalogueMap from './CatalogueMap.vue'
 import { ADAPTERS } from '../core/graphView.js'
 import { vDragMidi } from '../core/dragOut.js'
 import { pcName } from '../core/chordParser.js'
@@ -140,7 +140,20 @@ const decade = ref('')
 /** Only progressions the same length as the chart, or that go into it evenly. */
 const onlyFitting = ref(false)
 const facets = ref({ genres: [], decades: [] })
-const filtersOpen = ref(undefined)
+/*
+ * Open already, when there is room for them.
+ *
+ * Folded away is right in the plugin's own editor, where five selects is most
+ * of a 480px window and the list is what somebody came for. Full screen it is
+ * the wrong default twice over: the filters are the fastest way into a
+ * catalogue of this size, and folded they leave a column of nothing beside a
+ * list that has plenty of room already.
+ *
+ * Measured once, on the width the window opens at. Dragging a plugin window
+ * about should not fold and unfold a panel somebody is using.
+ */
+const filtersOpen = ref(
+  typeof window !== 'undefined' && window.innerWidth >= 1280 ? 0 : undefined)
 const activeFilters = computed(() =>
   [genre.value, decade.value, onlyFitting.value].filter(Boolean).length)
 
@@ -342,8 +355,19 @@ let drawing = 0
 async function refreshTree() {
   if (!asGraph.value) return
   const mine = ++drawing
-  const narrowed = Boolean(search.value) || genre.value !== 'any' || decade.value !== 'any'
-    || onlyFitting.value
+  /*
+   * `'any'` is not what an unset filter is.
+   *
+   * These two hold `''` when nothing is chosen -- that is the value on the
+   * "Any genre" item -- so comparing against `'any'` was true whichever way it
+   * was set, and the unfiltered branch below could never be reached. With a
+   * bulk library in, every opening of the map re-queried and rebuilt instead
+   * of using the one that had been built and stored for exactly this.
+   *
+   * `activeFilters` already knows what counts as set, and is what the panel
+   * shows; one answer, in one place.
+   */
+  const narrowed = Boolean(search.value) || activeFilters.value > 0
 
   if (state.bulk.count > 0 && !narrowed && !sortBy.value) {
     const kept = await storedGraph('progressions')
@@ -358,8 +382,8 @@ async function refreshTree() {
     try {
       // Everything the filters match, not the page of it on screen.
       const found = await progressionPage(0, MOST_GRAPH_ROWS, search.value,
-                                          { genre: genre.value === 'any' ? '' : genre.value,
-                                            decade: decade.value === 'any' ? '' : decade.value,
+                                          { genre: genre.value,
+                                            decade: decade.value,
                                             fits: onlyFitting.value ? songBars.value : 0 })
       if (mine !== drawing) return
       graph.value = treeOf('progressions', found.rows, sortBy.value)
@@ -385,7 +409,18 @@ onMounted(refreshTree)
 </script>
 
 <template>
-  <v-dialog v-model="state.ui.progressions" max-width="1040" scrollable class="jamin-book">
+  <!-- The whole screen, like the other two. A library of several hundred
+       thousand progressions is not a thing to read through a letterbox.
+       @see components/ArticulationBook.vue -->
+  <v-dialog
+    v-model="state.ui.progressions"
+    fullscreen
+    :scrim="false"
+    transition="dialog-bottom-transition"
+    scrollable
+    class="jamin-book"
+    :class="{ 'jamin-book-mapped': asGraph }"
+  >
     <v-card>
       <v-card-title class="d-flex align-center">
         <v-icon size="18" class="mr-2">mdi-bookshelf</v-icon>
@@ -413,7 +448,44 @@ onMounted(refreshTree)
         <v-window v-model="state.ui.progressionsTab">
           <!-- Library: list on the left, the one you picked on the right ---- -->
           <v-window-item value="library">
-            <v-row class="jamin-book-row">
+            <!-- The library as a map, filling the screen.
+                 @see components/CatalogueMap.vue -->
+            <CatalogueMap
+              v-if="asGraph"
+              :tree="graph"
+              :busy="building || reading"
+              :found="total"
+              label="progressions"
+              @pick="pickNode"
+            >
+              <template #filters>
+                <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify"
+                              clearable density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="sortBy" :items="sorts"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="genre" :items="genreItems"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="decade" :items="decadeItems"
+                          density="compact" variant="solo-filled" flat hide-details />
+              </template>
+
+              <template #detail>
+                <div v-if="!selected" class="text-caption text-medium-emphasis py-6 text-center">
+                  Pick a progression to see its chords.
+                </div>
+                <div v-else>
+                  <div class="text-body-1 mb-1">{{ selected.name }}</div>
+                  <div class="text-caption text-medium-emphasis mb-3">
+                    {{ selected.bars }} bar{{ selected.bars === 1 ? '' : 's' }}
+                    <span v-if="selected.genre"> · {{ selected.genre }}</span>
+                    <span v-if="selected.decade"> · {{ selected.decade }}s</span>
+                  </div>
+                  <pre class="jamin-map-chords">{{ preview }}</pre>
+                </div>
+              </template>
+            </CatalogueMap>
+
+            <v-row v-else class="jamin-book-row">
               <v-col cols="12" md="6" class="jamin-book-col"
                      :class="{ 'jamin-filters-open': filtersOpen !== undefined }">
                 <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify" clearable
@@ -457,29 +529,7 @@ onMounted(refreshTree)
                   </v-expansion-panel>
                 </v-expansion-panels>
 
-                <!-- The same library as the words in it. Picking a word
-                     searches for it, so everything to the right carries on
-                     working. @see components/CatalogueGraph.vue -->
-                <template v-if="asGraph">
-                  <CatalogueGraph
-                    v-if="graph"
-                    :tree="graph"
-                    class="jamin-book-scroll"
-                    @pick="pickNode"
-                  />
-                  <div v-else class="text-caption text-medium-emphasis pa-4">
-                    <div v-if="building">
-                      <v-progress-circular indeterminate size="16" width="2" class="mr-2" />
-                      Reading the library — {{ drawn.toLocaleString() }} progressions.
-                      This happens once; the arrangement is kept.
-                    </div>
-                    <div v-else-if="reading">
-                      <v-progress-circular indeterminate size="16" width="2" class="mr-2" />
-                      Drawing what the filters found
-                    </div>
-                    <span v-else>Nothing to draw.</span>
-                  </div>
-                </template>
+
 
                 <v-list
                   v-else-if="rows.length"

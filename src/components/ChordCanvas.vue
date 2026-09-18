@@ -12,7 +12,15 @@
  * movement -- because our lines are each a different size.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { state, live, setText, describeAt, bindPhrase, unbindPhrase, openBook } from '../store.js'
+import {
+  state, live, setText, describeAt, bindPhrase, unbindPhrase, openBook, openDrumBook,
+  onChartSplice,
+} from '../store.js'
+import {
+  deleteToken, setChordSymbol, removeArticulation, insertAt,
+} from '../core/chartEdit.js'
+import ChartTokenTools from './ChartTokenTools.vue'
+import ChordPicker from './ChordPicker.vue'
 import { stripPhraseMarks } from '../core/phrases.js'
 import { layoutChart, createMeasurer, caretRect, indexAtPoint, verticalMove, rectForToken } from '../canvas/layout.js'
 import { drawChart } from '../canvas/textRenderer.js'
@@ -52,6 +60,16 @@ onMounted(() => {
   gl = new GlRenderer(glCanvas.value)
 
   input.value.value = state.text
+
+  /*
+   * The editor is how a splice reaches the chart while it is on screen.
+   *
+   * The books know what was picked and nothing about chart text; the store
+   * knows where it was going; only this knows how to make the change in a way
+   * the browser will record as one undo step. @see store.js applyChartSplice
+   */
+  onChartSplice(applyChartEdit)
+
   observer = new ResizeObserver(resize)
   observer.observe(root.value)
   resize()
@@ -192,16 +210,51 @@ function onPaste(event) {
   replaceRange(input.value.selectionStart, input.value.selectionEnd, text)
 }
 
-/** Splice text into the chart and leave the caret after it. */
+/**
+ * Splice text into the chart and leave the caret after it.
+ *
+ * By selecting the range and inserting over it, rather than by assigning
+ * `field.value`. Assigning `value` throws away the browser's undo stack -- the
+ * one thing this component keeps a real `<textarea>` around for -- so every
+ * paste, and every edit made by clicking rather than typing, used to cost
+ * somebody their whole undo history. One selection and one insert is also
+ * exactly one undo step, which is what an edit made by one click should be.
+ *
+ * The fallback is the old way, for anywhere `execCommand` is gone: still
+ * correct, just not undoable.
+ */
 function replaceRange(from, to, text) {
   const field = input.value
-  const next = field.value.slice(0, from) + text + field.value.slice(to)
-  const caret = from + text.length
-  field.value = next
-  field.setSelectionRange(caret, caret)
-  setText(next)
+  field.focus()
+  field.setSelectionRange(from, to)
+
+  let spliced = false
+  try {
+    spliced = document.execCommand('insertText', false, text)
+  } catch {
+    spliced = false
+  }
+  if (!spliced) {
+    field.value = field.value.slice(0, from) + text + field.value.slice(to)
+    const caret = from + text.length
+    field.setSelectionRange(caret, caret)
+  }
+
+  setText(field.value)
   layoutKey = ''
   syncCaret()
+}
+
+/**
+ * One of the chart edits, applied.
+ *
+ * @see core/chartEdit.js -- everything there is a splice, and a splice is
+ * what this takes, so an operation is described in one place and performed in
+ * one place.
+ */
+function applyChartEdit(made) {
+  if (!made) return
+  replaceRange(made.from, made.to, made.text)
 }
 
 function onInput(event) {
@@ -248,7 +301,7 @@ function chordAt(event) {
   )
 }
 
-const menu = ref({ open: false, x: 0, y: 0, token: -1 })
+const menu = ref({ open: false, x: 0, y: 0, token: -1, at: -1 })
 
 const menuToken = computed(() => (menu.value.token >= 0 ? state.score.tokens[menu.value.token] : null))
 
@@ -261,12 +314,45 @@ const menuToken = computed(() => (menu.value.token >= 0 ? state.score.tokens[men
  * chord.
  */
 function onContextMenu(event) {
-  if (!state.settings.accompany.perChordPhrases) return
   const token = chordAt(event)
-  if (token < 0) return
+
+  /*
+   * On a chord, what can be done to that chord. Anywhere else -- a space, a
+   * bar line, the empty end of a line -- what can be put there instead.
+   *
+   * The second is the useful half on an empty chart, where there is no chord
+   * to right-click and the old menu had nothing to say at all.
+   */
+  if (token >= 0 && state.settings.accompany.perChordPhrases) {
+    event.preventDefault()
+    menu.value = { open: true, x: event.clientX, y: event.clientY, token, at: -1 }
+    return
+  }
+  if (token >= 0) return
 
   event.preventDefault()
-  menu.value = { open: true, x: event.clientX, y: event.clientY, token }
+  menu.value = { open: true, x: event.clientX, y: event.clientY, token: -1, at: pointIndex(event) }
+}
+
+/** Put a chord here: the picker, aimed at a gap rather than at a token. */
+function insertChord() {
+  picker.value = { token: -1, insertAt: menu.value.at, x: menu.value.x, y: menu.value.y }
+  menu.value.open = false
+}
+
+/** Put a drum change here, chosen from the drum book. */
+function insertDrums() {
+  state.ui.insertDrumAt = menu.value.at
+  openDrumBook()
+  menu.value.open = false
+}
+
+/** Put a chord here carrying an articulation, chosen from the phrase book. */
+function insertPhrase() {
+  state.ui.insertPhraseAt = menu.value.at
+  state.ui.phrasesTab = 'catalogue'
+  openBook('phrases')
+  menu.value.open = false
 }
 
 function assignPhrase() {
@@ -279,6 +365,145 @@ function assignPhrase() {
 function removePhrase() {
   unbindPhrase(menu.value.token)
   menu.value.open = false
+}
+
+/* ---------------- doing it by pointing -------------------------------
+ *
+ * Hover a token and its icons appear over it; click one and the chart is
+ * edited. Every edit is a splice from @see core/chartEdit.js applied through
+ * `applyChartEdit`, so each is one undo step and none of them touches
+ * `field.value`.
+ *
+ * The keyboard path is to type the chart, which is why there is no keyboard
+ * equivalent here. A long press stands in for a hover where there is no mouse.
+ */
+const hover = ref(-1)
+const picker = ref(null)
+
+const hoverToken = computed(() =>
+  (hover.value >= 0 ? state.score.tokens[hover.value] : null))
+
+const hoverRect = computed(() => {
+  if (hover.value < 0) return null
+  ensureLayout()
+  return rectForToken(layout, hover.value)
+})
+
+/** Which token is under the pointer, whatever kind it is. */
+function tokenAt(event) {
+  const index = pointIndex(event)
+  return state.score.tokens.findIndex(
+    (token) => index >= token.start && index <= token.end
+  )
+}
+
+function onMouseMove(event) {
+  // While a picker is open the hover is frozen: the icons underneath it are
+  // not what somebody is pointing at.
+  if (picker.value) return
+  hover.value = tokenAt(event)
+}
+
+function onMouseLeave() {
+  if (!picker.value) hover.value = -1
+}
+
+/** A long press where there is no mouse to hover with. */
+let pressTimer = null
+function onTouchStart(event) {
+  clearTimeout(pressTimer)
+  const touch = event.touches && event.touches[0]
+  if (!touch) return
+  const spot = { clientX: touch.clientX, clientY: touch.clientY }
+  pressTimer = setTimeout(() => { hover.value = tokenAt(spot) }, 420)
+}
+
+function onTouchEnd() {
+  clearTimeout(pressTimer)
+}
+
+function onToolAct(what) {
+  const index = hover.value
+  const token = state.score.tokens[index]
+  if (!token) return
+
+  if (what === 'delete') {
+    applyChartEdit(deleteToken(state.text, token))
+    hover.value = -1
+    return
+  }
+  if (what === 'unarticulate') {
+    applyChartEdit(removeArticulation(state.text, token))
+    return
+  }
+  if (what === 'articulate') {
+    state.ui.assignTo = index
+    state.ui.phrasesTab = 'catalogue'
+    openBook('phrases')
+    hover.value = -1
+    return
+  }
+  if (what === 'drums') {
+    state.ui.assignDrumTo = index
+    openDrumBook()
+    hover.value = -1
+    return
+  }
+  if (what === 'chord') {
+    const rect = hoverRect.value
+    const box = root.value.getBoundingClientRect()
+    picker.value = {
+      token: index,
+      insertAt: -1,
+      x: box.left + (rect ? rect.x : 40),
+      y: box.top + (rect ? rect.y - scroll + rect.h + 8 : 60),
+    }
+  }
+}
+
+/** The picker wrote something: into the token it was opened on, or into the
+    gap it was opened from. */
+/*
+ * A way in for the screenshot harness.
+ *
+ * The canvas hit-tests against its own layout, so there is no reliable way to
+ * put a headless pointer on a particular chord from outside. This puts the
+ * hover where a pointer would have put it. @see scripts/shots.py
+ */
+if (typeof window !== 'undefined') {
+  window.__jaminChartProbe = (what) => {
+    const chordIndex = state.score.tokens.findIndex((one) => one.type === 'chord')
+    ensureLayout()
+    const rect = rectForToken(layout, chordIndex) || { x: 60, y: 40, h: 20 }
+    const box = root.value ? root.value.getBoundingClientRect() : { left: 0, top: 0 }
+
+    if (what === 'tools') { picker.value = null; hover.value = chordIndex; return }
+    if (what === 'picker' || what === 'colours') {
+      hover.value = chordIndex
+      picker.value = {
+        token: chordIndex, insertAt: -1,
+        x: box.left + rect.x, y: box.top + rect.y - scroll + rect.h + 8,
+      }
+      return
+    }
+    if (what === 'insert') {
+      hover.value = -1
+      picker.value = null
+      menu.value = { open: true, x: 320, y: 90, token: -1, at: state.text.length }
+    }
+  }
+}
+
+function onPicked(symbol) {
+  const open = picker.value
+  picker.value = null
+  if (!open) return
+  if (open.insertAt >= 0) {
+    applyChartEdit(insertAt(state.text, open.insertAt, symbol))
+    return
+  }
+  const token = state.score.tokens[open.token]
+  if (token) applyChartEdit(setChordSymbol(state.text, token, symbol))
 }
 
 function onMouseDown(event) {
@@ -634,6 +859,10 @@ defineExpose({ focus: () => input.value && input.value.focus() })
       @input="onInput"
       @keydown="onKeyDown"
       @mousedown="onMouseDown"
+      @mousemove="onMouseMove"
+      @mouseleave="onMouseLeave"
+      @touchstart="onTouchStart"
+      @touchend="onTouchEnd"
       @contextmenu="onContextMenu"
       @copy="writeClipboard($event, false)"
       @cut="writeClipboard($event, true)"
@@ -642,21 +871,55 @@ defineExpose({ focus: () => input.value && input.value.focus() })
       @blur="focused = false"
     />
 
+    <!-- What is under the pointer, and what can be done to it. -->
+    <ChartTokenTools
+      :rect="hoverRect"
+      :token="hoverToken"
+      :scroll="scroll"
+      :height="height"
+      @act="onToolAct"
+    />
+
+    <!-- Choosing a chord by pointing at one. -->
+    <ChordPicker
+      :at="picker"
+      :current="picker && picker.token >= 0 && state.score.tokens[picker.token]
+        ? state.score.tokens[picker.token].body : ''"
+      :height="height"
+      @pick="onPicked"
+      @close="picker = null"
+    />
+
     <v-menu v-model="menu.open" :target="[menu.x, menu.y]" location="bottom start">
       <v-list density="compact" min-width="190">
-        <v-list-subheader v-if="menuToken" class="text-caption">
-          {{ menuToken.body }}<span v-if="menuToken.phraseRef"> → {{ menuToken.phraseRef }}</span>
-        </v-list-subheader>
-        <v-list-item prepend-icon="mdi-music-box-outline" @click="assignPhrase">
-          <v-list-item-title class="text-body-2">Assign phrase…</v-list-item-title>
-        </v-list-item>
-        <v-list-item
-          prepend-icon="mdi-music-box-outline"
-          :disabled="!menuToken || !menuToken.phraseRef"
-          @click="removePhrase"
-        >
-          <v-list-item-title class="text-body-2">Remove phrase</v-list-item-title>
-        </v-list-item>
+        <template v-if="menuToken">
+          <v-list-subheader class="text-caption">
+            {{ menuToken.body }}<span v-if="menuToken.phraseRef"> → {{ menuToken.phraseRef }}</span>
+          </v-list-subheader>
+          <v-list-item prepend-icon="mdi-music-box-outline" @click="assignPhrase">
+            <v-list-item-title class="text-body-2">Assign phrase…</v-list-item-title>
+          </v-list-item>
+          <v-list-item
+            prepend-icon="mdi-music-box-outline"
+            :disabled="!menuToken.phraseRef"
+            @click="removePhrase"
+          >
+            <v-list-item-title class="text-body-2">Remove phrase</v-list-item-title>
+          </v-list-item>
+        </template>
+
+        <!-- On a space or a bar: what can go there. -->
+        <template v-else>
+          <v-list-item prepend-icon="mdi-music-accidental-sharp" @click="insertChord">
+            <v-list-item-title class="text-body-2">Insert chord…</v-list-item-title>
+          </v-list-item>
+          <v-list-item prepend-icon="mdi-circle-multiple-outline" @click="insertDrums">
+            <v-list-item-title class="text-body-2">Insert drum pattern…</v-list-item-title>
+          </v-list-item>
+          <v-list-item prepend-icon="mdi-book-music-outline" @click="insertPhrase">
+            <v-list-item-title class="text-body-2">Insert phrase…</v-list-item-title>
+          </v-list-item>
+        </template>
       </v-list>
     </v-menu>
   </div>

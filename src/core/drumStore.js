@@ -372,6 +372,9 @@ export async function deleteSet(id, onProgress = null) {
     await new Promise((resume) => setTimeout(resume, 0))
   }
 
+  // Its dropdowns said what it held, and it holds nothing now.
+  await forgetFacets(db, id)
+
   const last = db.transaction(SETS, 'readwrite')
   last.objectStore(SETS).delete(id)
   return done(last)
@@ -936,13 +939,89 @@ export async function grooveFacets(setId = null) {
     ? await countOn(db, 'set', setId)
     : await ask(grooves(db).count()).catch(() => 0)
 
+  const remembered = await rememberedFacets(db, setId, holds)
+  if (remembered) return remembered
+
   const counted = setId ? await tallyWithin(db, setId) : await tallyEverywhere(db)
 
-  return {
+  const answer = {
     ...counted,
     folders: await shelvesIn(db, setId, counted.folders),
     holds: holds || 0,
     exact: true,
+  }
+  await rememberFacets(db, setId, holds, answer)
+  return answer
+}
+
+/*
+ * What the dropdowns say, remembered between askings.
+ *
+ * Filling them means finding every distinct value of nine fields. The trick
+ * that should make that cheap is `nextunique`, which is meant to seek to the
+ * next distinct key rather than step over every duplicate -- and measured in
+ * the web view the plugin embeds, WebKit steps: the same two values took 5ms
+ * to find in a thousand rows and 73ms in twenty thousand. So the cost is per
+ * clip, not per value, and the biggest library here holds 404,339 clips. Nine
+ * fields of that is fifteen to twenty seconds, every time somebody picks a
+ * library.
+ *
+ * It is the same answer every time, so it is worked out once and kept. The
+ * stamp is the library's row count: rows are only ever added by an import or
+ * removed with the whole library, so a count that still matches is an answer
+ * that still holds. @see forgetFacets for the two places that is not enough.
+ *
+ * It lives in the `graphs` store because that store is already a place to put
+ * a blob under a name, and adding one of its own would mean a version bump --
+ * which in this database means an upgrade transaction over three quarters of a
+ * million rows, on a page somebody just opened. @see buildIndexes.
+ */
+const facetKey = (setId) => `facets:${setId || 'all'}`
+
+async function rememberedFacets(db, setId, holds) {
+  if (!db.objectStoreNames.contains(GRAPHS)) return null
+  const row = await ask(db.transaction(GRAPHS, 'readonly').objectStore(GRAPHS)
+    .get(facetKey(setId))).catch(() => null)
+  if (!row || row.holds !== (holds || 0) || !row.facets) return null
+  return row.facets
+}
+
+async function rememberFacets(db, setId, holds, facets) {
+  if (!db.objectStoreNames.contains(GRAPHS)) return
+  try {
+    const tx = db.transaction(GRAPHS, 'readwrite')
+    tx.objectStore(GRAPHS).put({ id: facetKey(setId), holds: holds || 0, facets, at: Date.now() })
+    await done(tx)
+  } catch {
+    // A cache that will not be written is not a failure worth reporting; the
+    // answer above is already correct and was already returned.
+  }
+}
+
+/**
+ * Forget what a library's dropdowns said, from outside.
+ *
+ * For the one case the row count cannot notice: rewriting a library's rows
+ * into a different shape without changing how many there are. @see
+ * store.js shelveTheCorpus, which gave the bundled corpus folders it never
+ * had and left eleven hundred rows saying something new.
+ */
+export async function forgetCachedFacets(setId = null) {
+  const db = await open()
+  await forgetFacets(db, setId)
+}
+
+/** Forget what a library's dropdowns said, and what everything's said. */
+async function forgetFacets(db, setId = null) {
+  if (!db || !db.objectStoreNames.contains(GRAPHS)) return
+  try {
+    const tx = db.transaction(GRAPHS, 'readwrite')
+    if (setId) tx.objectStore(GRAPHS).delete(facetKey(setId))
+    // Whatever happened to one library changed the whole catalogue too.
+    tx.objectStore(GRAPHS).delete(facetKey(null))
+    await done(tx)
+  } catch {
+    /* as above */
   }
 }
 
@@ -1130,19 +1209,59 @@ async function pairsWithin(db, setId, indexName) {
  * beginning `Pack/Rock`, so the walk costs one step per shelf.
  */
 async function shelvesIn(db, setId, already) {
-  // Inside one library the folders come from the paired index, grouped to the
-  // top two levels here rather than by jumping the cursor: a library's shelves
-  // are tens of names, not the hundreds a whole collection has.
+  /*
+   * Inside one library, by jumping the cursor -- the same trick as below, with
+   * the library bolted to the front of every key.
+   *
+   * This used to ask `pairsWithin` for every distinct *deep* folder and then
+   * add them up into shelves. The assumption was that a library's folders are
+   * tens of names. In a real collection they are not: Superior Drummer files
+   * 404,685 clips under nearly as many distinct folders, so the walk hit its
+   * four-thousand cap and then issued four thousand separate counts to collapse
+   * them into about forty shelves.
+   *
+   * Measured on the real library: 732 seconds. Twelve minutes to fill a
+   * dropdown, which is what "the filter takes a long time to fill out the drop
+   * down menu" was. Jumping costs one step and one count per shelf, so it is
+   * tens of operations rather than thousands, and the deep folders are never
+   * visited at all.
+   */
   if (setId) {
     // Already tallied by the walk when there are no paired indexes.
     if (!grooves(db).indexNames.contains('setFolder')) return already || []
-    const deep = await pairsWithin(db, setId, 'setFolder')
-    const shelves = new Map()
-    for (const [folder, n] of deep) {
-      const shelf = String(folder || '').split('/').slice(0, 2).join('/')
-      shelves.set(shelf, (shelves.get(shelf) || 0) + n)
+
+    const shelves = []
+    await new Promise((resolve) => {
+      let request
+      try {
+        request = grooves(db).index('setFolder')
+          .openKeyCursor(IDBKeyRange.bound([setId], [setId, []]))
+      } catch {
+        resolve()
+        return
+      }
+      request.onsuccess = () => {
+        const cursor = request.result
+        if (!cursor || shelves.length >= 400) { resolve(); return }
+        const shelf = String(cursor.key[1] || '').split('/').slice(0, 2).join('/')
+        shelves.push(shelf)
+        try {
+          // Past everything that begins with this shelf, and on to the next.
+          cursor.continue([setId, `${shelf}\uffff`])
+        } catch {
+          resolve()
+        }
+      }
+      request.onerror = () => resolve()
+    })
+
+    const pairs = []
+    for (const shelf of shelves) {
+      const n = await ask(grooves(db).index('setFolder')
+        .count(IDBKeyRange.bound([setId, shelf], [setId, `${shelf}\uffff`]))).catch(() => 0)
+      if (n) pairs.push([shelf, n])
     }
-    return order('folder', [...shelves.entries()]).slice(0, 120)
+    return order('folder', pairs).slice(0, 120)
   }
 
   if (!grooves(db).indexNames.contains('folder')) return []
@@ -1201,9 +1320,13 @@ function order(name, pairs) {
 export async function clearImported() {
   const db = await open()
   if (!db) return false
-  const tx = db.transaction([SETS, GROOVES], 'readwrite')
-  tx.objectStore(SETS).clear()
-  tx.objectStore(GROOVES).clear()
+  // The graphs and the remembered dropdowns both describe a catalogue that is
+  // about to not exist. An emptied catalogue counts zero rows, which is a
+  // stamp a cache written when it was empty would match.
+  const stores = db.objectStoreNames.contains(GRAPHS)
+    ? [SETS, GROOVES, GRAPHS] : [SETS, GROOVES]
+  const tx = db.transaction(stores, 'readwrite')
+  for (const name of stores) tx.objectStore(name).clear()
   return done(tx)
 }
 
@@ -1335,6 +1458,26 @@ export async function measureStore(rows = 50000) {
 
   const perSet = await ask(store().index('set').count(IDBKeyRange.only('set-3'))).catch(() => 0)
 
+  /*
+   * And what it costs to take rows out again, which nothing had measured.
+   *
+   * Removing a library deletes every row it owns, and every delete has to
+   * maintain nineteen indexes. Under fake-indexeddb that is catastrophic --
+   * one batch of two thousand does not finish in forty seconds of solid CPU,
+   * which is an hours-long removal for a real library and is how a check of
+   * it came to burn nine hours. Whether that is the shim's index maintenance
+   * or something this store does is a question only a real engine answers.
+   */
+  const toGo = (await one(store().index('set').getAllKeys(IDBKeyRange.only('set-5'), 2000))) || []
+  const wiping = since()
+  const wipeTx = db.transaction(GROOVES, 'readwrite')
+  const wipeStore = wipeTx.objectStore(GROOVES)
+  for (const key of toGo) wipeStore.delete(key)
+  await new Promise((settled) => {
+    wipeTx.oncomplete = settled; wipeTx.onerror = settled; wipeTx.onabort = settled
+  })
+  const wipeMs = Math.round(since() - wiping)
+
   db.close()
 
   /*
@@ -1359,6 +1502,46 @@ export async function measureStore(rows = 50000) {
     open.onerror = () => done(null)
   })
   const upgradeMs = Math.round(since() - upgraded)
+
+  /*
+   * And what it costs to find out *which* values a library has, which is the
+   * other half of filling a dropdown and the half that was never measured.
+   *
+   * `nextunique` is supposed to seek to the next distinct key rather than step
+   * over every duplicate. Whether an engine really does that decides everything:
+   * over a 404,000-row library, seeking is one step per genre and stepping is
+   * one step per clip. fake-indexeddb steps -- measured at 130us a row, which
+   * is the whole of the twelve minutes it reports for one library's dropdowns
+   * and tells us nothing about this web view.
+   *
+   * So the two walks below are the experiment. Both have the same eight
+   * distinct genres; the second has twenty times the rows. If seeking is real
+   * they cost the same. If the ratio is twenty, this engine steps too and the
+   * dropdowns need their answer stored rather than counted.
+   */
+  let uniqueSmallMs = 0
+  let uniqueWholeMs = 0
+  let uniqueSeen = 0
+  if (later) {
+    const distinct = (span) => new Promise((done) => {
+      const found = []
+      const request = later.transaction(GROOVES, 'readonly').objectStore(GROOVES)
+        .index('setGenre').openKeyCursor(span, 'nextunique')
+      request.onsuccess = () => {
+        const cursor = request.result
+        if (!cursor) { done(found); return }
+        found.push(cursor.key[1])
+        cursor.continue()
+      }
+      request.onerror = () => done(found)
+    })
+    const small = since()
+    uniqueSeen = (await distinct(IDBKeyRange.bound(['set-3'], ['set-3', []]))).length
+    uniqueSmallMs = Math.round(since() - small)
+    const whole = since()
+    await distinct(null)
+    uniqueWholeMs = Math.round(since() - whole)
+  }
 
   // And that the thing it was built for is now instant.
   let pairMs = 0
@@ -1386,6 +1569,11 @@ export async function measureStore(rows = 50000) {
        + ` · tally of one ${perSet}-row library in ${tallyMs}ms`
        + ` · two compound indexes built over ${rows} existing rows in ${upgradeMs}ms`
        + ` · that pair counted (${pairCount}) in ${pairMs}ms`
+       + ` · ${uniqueSeen} distinct genres found in one ${perSet}-row library in ${uniqueSmallMs}ms`
+       + ` and across all ${rows} rows in ${uniqueWholeMs}ms`
+       + ` (same values either way — equal times mean nextunique seeks,`
+       + ` ${Math.round(rows / Math.max(1, perSet))}x means it steps)`
+       + ` · ${toGo.length} rows deleted, indexes and all, in ${wipeMs}ms`
 }
 
 if (typeof window !== 'undefined') window.__jaminStorageProbe = measureStore

@@ -45,6 +45,9 @@ endif()
 # iteration loop, with no plugin rebuild and no host restart. JAMIN_WEB_DIR
 # overrides it at runtime for even that.
 function(jamin_bundle_web target)
+    # An optional second argument: where to install the sealed bundle.
+    set(_dest "${ARGV1}")
+
     if(NOT EXISTS "${JAMIN_WEB_DIST}/index.html")
         message(FATAL_ERROR
             "No web build at ${JAMIN_WEB_DIST}.\n"
@@ -78,6 +81,24 @@ function(jamin_bundle_web target)
                     --timestamp=none $<TARGET_BUNDLE_DIR:${target}>
             COMMAND codesign --verify --strict $<TARGET_BUNDLE_DIR:${target}>
             COMMENT "Re-sealing ${target} around the page"
+            VERBATIM)
+    endif()
+
+    # And only then does it go to the plugin folder.
+    #
+    # From here rather than from JUCE's COPY_PLUGIN_AFTER_BUILD, which is a
+    # POST_BUILD on the plugin target and so runs before this target does --
+    # installing the bundle as it stood before the page was copied in and the
+    # seal remade. The build tree was always right and the installed plugin was
+    # always one build behind, which is invisible until somebody wonders why a
+    # fix they watched being built is not in the plugin they just opened.
+    if(JAMIN_INSTALL_AFTER_BUILD AND _dest)
+        add_custom_command(TARGET ${target}_web POST_BUILD
+            COMMAND "${CMAKE_COMMAND}"
+                    -DBUNDLE=$<TARGET_BUNDLE_DIR:${target}>
+                    -DDEST=${_dest}
+                    -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/InstallBundle.cmake"
+            COMMENT "Installing ${target} into ${_dest}"
             VERBATIM)
     endif()
 

@@ -89,10 +89,34 @@ def main():
                     print("     The transport must come from `live` or `state.status`;")
                     print("     inside the plugin there is no MIDI engine to ask.")
 
+    failures += control_characters()
     failures += unimported()
 
     print("sources: all checks passed" if failures == 0 else f"sources: {failures} FAILED")
     return 1 if failures else 0
+
+
+# A source file that is not text.
+#
+# `const DOWN = '\0'` with a real NUL byte in it rather than the escape parses
+# and runs and bundles, and turns the file binary: `grep` matches nothing in it
+# without a word, `file` calls it data, and a search for a function that is
+# plainly there comes back empty. Half an hour was spent concluding a module did
+# not contain what it contained.
+def control_characters():
+    failures = 0
+    for path in sorted(walk()):
+        raw = open(path, "rb").read()
+        for at, byte in enumerate(raw):
+            if byte < 9 or 13 < byte < 32:
+                line = raw[:at].count(b"\n") + 1
+                relative = os.path.relpath(path, ROOT)
+                failures += 1
+                print(f"FAIL {relative}:{line}: a raw control byte (0x{byte:02x}) in the source")
+                print("     It runs, and it makes the file binary to grep and every")
+                print(r"     other text tool. Write it as an escape (\u0000).")
+                break
+    return failures
 
 
 # Something called out of the store that nobody imported.

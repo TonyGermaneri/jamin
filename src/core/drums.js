@@ -26,7 +26,7 @@ let pending = null
 let report = { grooves: 0, error: null }
 
 /** One entry of the shipped file, as the application uses it. */
-function toGroove(entry, index) {
+export function toGroove(entry, index) {
   if (!entry || !Array.isArray(entry.v)) return null
 
   const [numerator = 4, denominator = 4] = String(entry.t || '4-4').split('-').map(Number)
@@ -53,6 +53,29 @@ function toGroove(entry, index) {
     origin: 'Groove MIDI Dataset',
     builtin: true,
   }
+
+  /*
+   * Shelves, for a collection that arrived without any.
+   *
+   * Every imported library is a tree of folders, and everything downstream --
+   * the folder filter, and the map, which *is* the folder tree -- reads that
+   * structure off the path. The bundled corpus has no path at all: it came as
+   * eleven hundred rows in one file. So on the map it was eleven hundred clips
+   * hanging directly off a single node, which is both the largest thing on the
+   * screen and the least informative.
+   *
+   * These are not invented facts. Genre, feel and drummer are fields the
+   * corpus already carries, arranged the way a vendor pack arranges the same
+   * information: what kind of music, what kind of groove, who played it. The
+   * eighteen genres divide it, and no shelf ends up holding more than a few
+   * dozen.
+   */
+  groove.folder = [
+    groove.genre || 'unfiled',
+    groove.substyle || groove.kind,
+    groove.drummer || 'unattributed',
+  ].join('/')
+  groove.path = `${groove.folder}/${groove.name}`
 
   /*
    * The notes are built when something asks for them, and not before.

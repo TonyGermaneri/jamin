@@ -47,7 +47,13 @@ function(jamin_add_plugin target)
 
         # CI collects from the build tree and signs there; installing into somebody's own plugin
         # folders is a thing to opt into, not a thing a build does behind their back.
-        COPY_PLUGIN_AFTER_BUILD   ${JAMIN_INSTALL_AFTER_BUILD})
+        #
+        # Always FALSE, even when installing is asked for: JUCE's copy is a
+        # POST_BUILD on this target, and the page is copied in afterwards by a
+        # target that depends on it, so JUCE's copy is always of the bundle
+        # before the page went in. @see cmake/WebAssets.cmake, which installs
+        # the bundle it has just sealed.
+        COPY_PLUGIN_AFTER_BUILD   FALSE)
 
     target_sources(${target} PRIVATE
         PluginProcessor.cpp
@@ -77,7 +83,15 @@ function(jamin_add_plugin target)
     # AU's resources, so each gets its own copy of the page.
     foreach(_format IN ITEMS AU VST3 Standalone)
         if(TARGET ${target}_${_format})
-            jamin_bundle_web(${target}_${_format})
+            # Where each format lives, asked of JUCE rather than spelled out
+            # here, so a machine that keeps its plugins somewhere else still
+            # gets them in the right place. A standalone is an application and
+            # has nowhere to be installed to.
+            set(_where "")
+            if(JAMIN_INSTALL_AFTER_BUILD AND NOT _format STREQUAL "Standalone")
+                get_property(_where GLOBAL PROPERTY JUCE_${_format}_COPY_DIR)
+            endif()
+            jamin_bundle_web(${target}_${_format} "${_where}")
         endif()
     endforeach()
 endfunction()

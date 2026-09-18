@@ -40,6 +40,17 @@ const elsewhere = computed(() =>
 /** What kind of part the aimed-at track plays. */
 const trackMode = computed(() => modeOf(aimedAt.value))
 
+/**
+ * Whether what is showing is a map rather than a list.
+ *
+ * The two want opposite things from the screen. A list wants a column and a
+ * detail pane beside it; a map wants the glass, with everything else floating
+ * over the top of it. @see styles/app.css .jamin-book-mapped
+ */
+const mapped = computed(() => (state.ui.book === 'drums'
+  ? state.settings.graph.drums
+  : state.settings.graph.phrases))
+
 /*
  * Clicking a track shows that track's catalogue.
  *
@@ -88,13 +99,24 @@ const whose = computed(() => {
   <!-- The drum catalogue wants the whole width: a row of grooves carries a pill
        per part and a song has several. The phrase catalogue does not.
        @see styles/app.css .jamin-drums -->
+  <!--
+    The whole screen, not a card on top of one.
+
+    It was a dialog, and a dialog is a thing you glance at and dismiss. This is
+    where the work happens: eight hundred thousand patterns, ten thousand
+    phrases, and a map of either that wants every pixel there is. A modal
+    frames all of that inside about a quarter of the window and leaves the
+    chart showing uselessly around the edges.
+    @see styles/app.css .jamin-book
+  -->
   <v-dialog
     v-model="open"
-    :width="mode === 'drums' ? '98vw' : undefined"
-    :max-width="mode === 'drums' ? 'none' : 880"
+    fullscreen
+    :scrim="false"
+    transition="dialog-bottom-transition"
     scrollable
     class="jamin-book"
-    :class="{ 'jamin-drums': mode === 'drums' }"
+    :class="{ 'jamin-drums': mode === 'drums', 'jamin-book-mapped': mapped }"
   >
     <v-card>
       <!--

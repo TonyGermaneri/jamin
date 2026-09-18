@@ -550,4 +550,36 @@ check('even when the kit moved it somewhere odd',
       mapDrumNotes([{ at: 0, note: 48, duration: 6, velocity: 90 }],
                    { ...gm, tomHigh: 71 })[0].voice, 'tomHigh')
 
+/* ---------------- the bundled corpus has shelves ----------------------- */
+/*
+ * It arrived as eleven hundred rows in one file with no path in any of them,
+ * and everything that reads structure -- the folder filter, and the map, which
+ * *is* the folder tree -- had nothing to read. On the map that was eleven
+ * hundred clips hanging off a single node: the biggest thing on the screen and
+ * the least informative, which is how it was reported.
+ *
+ * So a path is made from fields the corpus already carries, laid out the way a
+ * vendor pack lays out the same information. Nothing invented, and every clip
+ * gets one whatever it is missing.
+ */
+const shelved = toGroove({ n: 'funk 138', g: 'funk', u: 'purdieshuffle', k: 'beat',
+                           w: 'drummer1', t: '4-4', r: 2, v: [[0, 36, 12, 100]] }, 0)
+check('a built-in groove is filed by genre, feel and drummer',
+      shelved.folder, 'funk/purdieshuffle/drummer1')
+check('and its path ends with its own name', shelved.path, 'funk/purdieshuffle/drummer1/funk 138')
+
+// Two thirds of the corpus has no substyle, so the kind stands in rather than
+// leaving a blank level that every one of them would share.
+const noStyle = toGroove({ n: 'rock 1', g: 'rock', u: '', k: 'fill', w: 'drummer7',
+                           t: '4-4', r: 1, v: [[0, 38, 12, 90]] }, 1)
+check('no feel recorded falls back to what kind it is',
+      noStyle.folder, 'rock/fill/drummer7')
+
+// And nothing is ever filed under a blank, which would put every unlabelled
+// clip back in one heap -- the thing this exists to stop.
+const bare = toGroove({ n: 'unknown', t: '4-4', r: 1, v: [[0, 36, 12, 80]] }, 2)
+check('an unlabelled clip still gets a shelf', bare.folder, 'unfiled/beat/unattributed')
+check('and no level of it is empty',
+      bare.folder.split('/').every((one) => one.length > 0), true)
+
 console.log(failed ? `drums: ${failed} FAILED` : 'drums: all checks passed')

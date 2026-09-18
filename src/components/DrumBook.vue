@@ -32,6 +32,8 @@ import {
   midiForGroove,
   searchDrums,
   drumFacetsFor,
+  noteError,
+  placePick,
   sectionBars,
   partsItFits,
   clearEverySlot,
@@ -49,8 +51,9 @@ import {
 import { summarizeGroove } from '../core/drums.js'
 import { DRUM_VOICES, kitById, gmName, TD11_TO_VOICE } from '../core/drumKits.js'
 import InfoTip from './InfoTip.vue'
-import CatalogueGraph from './CatalogueGraph.vue'
+import CatalogueMap from './CatalogueMap.vue'
 import { vDragMidi } from '../core/dragOut.js'
+import { useRowsThatFit } from '../core/fitRows.js'
 import { everyTag } from '../core/drumTags.js'
 import { ADAPTERS } from '../core/graphView.js'
 
@@ -69,7 +72,20 @@ const era = ref('any')
 const onlyFavourites = ref(false)
 /** Only patterns that go into one of the song's parts a whole number of times. */
 const onlyFitting = ref(false)
-const filtersOpen = ref(undefined)
+/*
+ * Open already, when there is room for them.
+ *
+ * Folded away is right in the plugin's own editor, where five selects is most
+ * of a 480px window and the list is what somebody came for. Full screen it is
+ * the wrong default twice over: the filters are the fastest way into a
+ * catalogue of this size, and folded they leave a column of nothing beside a
+ * list that has plenty of room already.
+ *
+ * Measured once, on the width the window opens at. Dragging a plugin window
+ * about should not fold and unfold a panel somebody is using.
+ */
+const filtersOpen = ref(
+  typeof window !== 'undefined' && window.innerWidth >= 1280 ? 0 : undefined)
 const selected = ref(null)
 const page = ref(1)
 const PER_PAGE = 10
@@ -169,10 +185,40 @@ const EMPTY_FACETS = {
 }
 const facets = ref(EMPTY_FACETS)
 
+/**
+ * Whether the dropdowns are still being counted.
+ *
+ * Counting nine facets over three quarters of a million rows is seconds, not
+ * milliseconds, and every list is empty until it finishes -- so choosing a
+ * library and finding "Any genre" and nothing else reads as a library with no
+ * genres in it rather than as a question still being answered. It was reported
+ * as exactly that. The lists say they are working now.
+ */
+const facetsBusy = ref(false)
+
+// Whichever request was asked for last is the only one whose answer counts.
+// Changing library twice quickly used to let the slower first answer land on
+// top of the second, filling the dropdowns from the library that is no longer
+// chosen.
+let facetRun = 0
+
 watch(library, async () => {
+  const mine = ++facetRun
+  facetsBusy.value = true
   facets.value = EMPTY_FACETS
-  // An empty set id means every library, which the facets understand too.
-  facets.value = await drumFacetsFor(state.drumFilters.set)
+  try {
+    // An empty set id means every library, which the facets understand too.
+    const counted = await drumFacetsFor(state.drumFilters.set)
+    if (mine !== facetRun) return
+    facets.value = counted
+  } catch (error) {
+    // Nine empty dropdowns and no reason is the same picture as a library with
+    // nothing in it, which is how this was reported the first time. If the
+    // counting falls over, say so where somebody will see it.
+    if (mine === facetRun) noteError(error, 'counting what the filters can offer')
+  } finally {
+    if (mine === facetRun) facetsBusy.value = false
+  }
 }, { immediate: true })
 
 /** What this groove's library is read as, by name rather than by id. */
@@ -285,6 +331,27 @@ function lengthsThatFit() {
  * somebody who opened a view. The same rule as the filter indexes.
  */
 const asGraph = computed(() => state.settings.graph.drums)
+
+/*
+ * As many patterns as there is room for.
+ *
+ * Ten, because the smallest editor a DAW gives the plugin is 480px tall. Full
+ * screen that is ten rows and most of a screen of nothing, over a catalogue of
+ * three quarters of a million. A drum row is seventy-one pixels: a name, a
+ * summary line and the row of part pills under it. @see core/fitRows.js
+ */
+const { box: listBox, rows: rowsThatFit } = useRowsThatFit(71, { least: 6, most: 30 })
+
+// The list already has a ref, for scrolling the selected row into view. One
+// element, one ref: this hands the same element to the measurer.
+watch(listEl, (el) => { listBox.value = el }, { immediate: true })
+
+watch(rowsThatFit, (many) => {
+  if (state.drumFilters.perPage === many) return
+  state.drumFilters.perPage = many
+  state.drumFilters.page = 1
+  searchDrums()
+}, { immediate: false })
 const graph = ref(null)
 /** True while the whole catalogue is being read, which happens once. */
 const building = ref(false)
@@ -508,6 +575,15 @@ async function roll() {
 /** Picking a groove, which in auto-select mode also places it. */
 function choose(groove) {
   selected.value = groove
+
+  // Opened to put a pattern into the chart, or to change one already in it:
+  // choosing writes it there and the book has done its job. @see store.js
+  // placePick
+  if (placePick('drums', groove.name)) {
+    state.ui.book = null
+    return
+  }
+
   if (autoSelect.value) assignEverywhere(groove)
 }
 
@@ -547,6 +623,9 @@ watch(selected, async (groove) => {
   // Something else may have been picked while the file was being read.
   if (selected.value === groove) resolved.value = whole
 }, { immediate: true })
+
+/** Why this pattern has no notes to show, when that is the reason. @see notesFor */
+const unreadable = computed(() => (resolved.value && resolved.value.unreadable) || '')
 
 /**
  * The groove as a piano roll, with the whole keyboard down the side.
@@ -959,8 +1038,80 @@ onMounted(refreshTree)
         <v-window v-model="state.ui.drumsTab">
           <!-- Grooves: the catalogue ------------------------------------- -->
           <v-window-item value="grooves">
-            <v-row class="jamin-book-row">
-              <v-col cols="12" md="7" class="jamin-book-col">
+            <!--
+              The catalogue as a map, filling the screen.
+
+              @see components/CatalogueMap.vue. The aside here is deliberately
+              shorter than the one beside the list: a map is for finding a
+              pattern among three quarters of a million, and the mutes, the
+              transport and the whole keyboard are for working on one you have
+              already found.
+            -->
+            <CatalogueMap
+              v-if="asGraph"
+              :tree="graph"
+              :busy="building || reading || state.drumBusy"
+              :found="found"
+              label="patterns"
+              @pick="pickNode"
+            >
+              <template #filters>
+                <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify"
+                              clearable density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="library" :items="libraries"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="sortBy" :items="sorts"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="kind" :items="kinds" :loading="facetsBusy"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="genre" :items="genres" :loading="facetsBusy"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="bars" :items="barCounts" :loading="facetsBusy"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="signature" :items="signatures" :loading="facetsBusy"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="feel" :items="feels" :loading="facetsBusy"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="surface" :items="surfaces" :loading="facetsBusy"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="partTag" :items="partTags" :loading="facetsBusy"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="era" :items="eras" :loading="facetsBusy"
+                          density="compact" variant="solo-filled" flat hide-details />
+                <v-select v-model="shelf" :items="shelves" :loading="facetsBusy"
+                          density="compact" variant="solo-filled" flat hide-details />
+              </template>
+
+              <template #detail>
+                <div v-if="!selected" class="text-caption text-medium-emphasis py-6 text-center">
+                  Pick a pattern to see what it plays.
+                </div>
+                <div v-else>
+                  <div class="text-body-1 mb-1">{{ selected.name }}</div>
+                  <div class="text-caption text-medium-emphasis mb-3">
+                    {{ summarizeGroove(selected) }}
+                  </div>
+                  <div v-if="unreadable" class="text-caption text-warning mb-3">
+                    Its notes are in the file on disk, and {{ unreadable }}
+                  </div>
+                  <div v-else-if="preview" class="jamin-map-roll mb-3">
+                    <div v-for="row in preview.rows" :key="row.id" class="jamin-map-roll-row">
+                      <span class="jamin-map-roll-name">{{ row.name }}</span>
+                      <span class="jamin-map-roll-cells">
+                        <i v-for="(velocity, step) in row.cells" :key="step"
+                           :class="{ 'is-hit': velocity > 0 }" />
+                      </span>
+                    </div>
+                  </div>
+                  <div class="text-caption text-medium-emphasis">
+                    {{ selected.folder || 'no folder' }}
+                  </div>
+                </div>
+              </template>
+            </CatalogueMap>
+
+            <v-row v-else class="jamin-book-row">
+              <v-col cols="12" md="8" lg="9" class="jamin-book-col">
                 <v-text-field
                   v-model="search" density="compact" hide-details clearable
                   prepend-inner-icon="mdi-magnify" label="Search" class="mb-2 flex-grow-0"
@@ -1003,36 +1154,9 @@ onMounted(refreshTree)
                 </div>
 
 
-                <!-- The same catalogue as the words in it. Picking a word
-                     searches for it, so everything to the right carries on
-                     working. @see components/CatalogueGraph.vue -->
-                <template v-if="asGraph">
-                  <CatalogueGraph
-                    v-if="graph"
-                    :tree="graph"
-                    class="jamin-book-scroll"
-                    @pick="pickNode"
-                  />
-                  <!-- Drawing, rather than offering to. A view that opens onto
-                       an invitation to press something has decided not to do
-                       its job. -->
-                  <div v-else class="text-caption text-medium-emphasis pa-4">
-                    <div v-if="building">
-                      <v-progress-circular indeterminate size="16" width="2" class="mr-2" />
-                      Reading the catalogue — {{ drawn.toLocaleString() }} patterns.
-                      This happens once; the arrangement is kept.
-                    </div>
-                    <div v-else-if="reading">
-                      <v-progress-circular indeterminate size="16" width="2" class="mr-2" />
-                      Drawing what the filters found
-                    </div>
-                    <span v-else>Nothing to draw.</span>
-                  </div>
-                </template>
-
                 <!-- No longer gives way when the filters open: they are on
                      the other side now and take nothing from the list. -->
-                <v-list v-else-if="list.length" ref="listEl" density="compact"
+                <v-list v-if="list.length" ref="listEl" density="compact"
                         class="py-0 jamin-book-scroll"
                         tabindex="0"
                         style="outline: none"
@@ -1105,13 +1229,28 @@ onMounted(refreshTree)
                       </v-chip>
                     </div>
 
+                    <!-- What the folders said about it, in columns, because a
+                         name and a heart across fourteen hundred pixels leaves
+                         the middle of every row empty and the thing somebody is
+                         choosing between unsaid. They fall away as the window
+                         narrows. @see core/drumTags.js -->
                     <template #append>
-                      <v-btn icon size="x-small" variant="text"
-                             :color="favourite(groove) ? 'error' : undefined"
-                             :aria-label="`Favourite ${groove.name}`"
-                             @click.stop="toggleFavourite(groove)">
-                        <v-icon size="16">{{ favourite(groove) ? 'mdi-heart' : 'mdi-heart-outline' }}</v-icon>
-                      </v-btn>
+                      <div class="jamin-row-facts">
+                        <span class="jamin-row-fact d-none d-lg-flex">{{ groove.genre }}</span>
+                        <span class="jamin-row-fact d-none d-xl-flex">
+                          {{ (groove.tags || {}).feel }}
+                        </span>
+                        <span class="jamin-row-fact d-none d-xl-flex">
+                          {{ (groove.tags || {}).surface }}
+                        </span>
+                        <span class="jamin-row-fact jamin-row-fact-last">{{ groove.hits }} hits</span>
+                        <v-btn icon size="x-small" variant="text"
+                               :color="favourite(groove) ? 'error' : undefined"
+                               :aria-label="`Favourite ${groove.name}`"
+                               @click.stop="toggleFavourite(groove)">
+                          <v-icon size="16">{{ favourite(groove) ? 'mdi-heart' : 'mdi-heart-outline' }}</v-icon>
+                        </v-btn>
+                      </div>
                     </template>
                   </v-list-item>
                 </v-list>
@@ -1151,7 +1290,7 @@ onMounted(refreshTree)
               </v-col>
 
               <!-- What you picked -->
-              <v-col cols="12" md="5" class="jamin-book-col">
+              <v-col cols="12" md="4" lg="3" class="jamin-book-col">
                 <!-- The filters live here rather than above the list.
                      Folded away over the list they still took a line, and
                      opened they took a third of the window from the one thing
@@ -1167,6 +1306,11 @@ onMounted(refreshTree)
                       </span>
                       <span v-else>Filters</span>
                       <v-spacer />
+                      <!-- Visible with the panel shut, which is how it is most
+                           of the time: the count below is the last answer until
+                           the new one lands. -->
+                      <v-progress-circular v-if="facetsBusy || state.drumBusy" indeterminate
+                                           size="13" width="2" class="mr-2" />
                       <span class="text-medium-emphasis mr-2">{{ found.toLocaleString() }}</span>
                     </v-expansion-panel-title>
                     <v-expansion-panel-text>
@@ -1187,19 +1331,19 @@ onMounted(refreshTree)
                         </v-col>
                         <v-col cols="6">
                           <v-select v-model="kind" :items="kinds" label="Kind"
-                                    density="compact" hide-details />
+                                    :loading="facetsBusy" density="compact" hide-details />
                         </v-col>
                         <v-col cols="6">
                           <v-select v-model="genre" :items="genres" label="Genre"
-                                    density="compact" hide-details />
+                                    :loading="facetsBusy" density="compact" hide-details />
                         </v-col>
                         <v-col cols="6">
                           <v-select v-model="bars" :items="barCounts" label="Length"
-                                    density="compact" hide-details />
+                                    :loading="facetsBusy" density="compact" hide-details />
                         </v-col>
                         <v-col cols="6">
                           <v-select v-model="signature" :items="signatures" label="Time signature"
-                                    density="compact" hide-details />
+                                    :loading="facetsBusy" density="compact" hide-details />
                         </v-col>
 
                         <!-- What the folders said. Found by counting 4,415 real
@@ -1212,26 +1356,26 @@ onMounted(refreshTree)
                         <v-col cols="6">
                           <v-select v-model="surface" :items="surfaces" label="Played on"
                                     :hint="tagHint(facets.surfaces)" persistent-hint
-                                    density="compact" />
+                                    :loading="facetsBusy" density="compact" />
                         </v-col>
                         <v-col cols="6">
                           <v-select v-model="feel" :items="feels" label="Feel"
                                     :hint="tagHint(facets.feels)" persistent-hint
-                                    density="compact" />
+                                    :loading="facetsBusy" density="compact" />
                         </v-col>
                         <v-col cols="6">
                           <v-select v-model="partTag" :items="partTags" label="Part of a song"
                                     :hint="tagHint(facets.parts)" persistent-hint
-                                    density="compact" />
+                                    :loading="facetsBusy" density="compact" />
                         </v-col>
                         <v-col cols="6">
                           <v-select v-model="era" :items="eras" label="Era"
                                     :hint="tagHint(facets.eras)" persistent-hint
-                                    density="compact" />
+                                    :loading="facetsBusy" density="compact" />
                         </v-col>
                         <v-col cols="12">
                           <v-select v-model="shelf" :items="shelves" label="Folder it came from"
-                                    density="compact" hide-details />
+                                    :loading="facetsBusy" density="compact" hide-details />
                         </v-col>
 
                         <v-col cols="12">
@@ -1267,6 +1411,14 @@ onMounted(refreshTree)
                     </v-expansion-panel-text>
                   </v-expansion-panel>
                 </v-expansion-panels>
+
+                <!-- The list is about to change, or the counts above are. Four
+                     pixels above the rows, which is where somebody is already
+                     looking when they have just asked a question of eight
+                     hundred thousand patterns. -->
+                <v-progress-linear v-if="state.drumBusy || facetsBusy" indeterminate
+                                   color="primary" height="3"
+                                   class="mb-2 flex-grow-0" rounded />
 
                 <!-- Two buttons rather than one. Starting a song over means
                      clearing the grooves and keeping the fills about as often
@@ -1329,6 +1481,22 @@ onMounted(refreshTree)
                         is the Kit tab and applies to everything.
                       </InfoTip>
                     </div>
+                  </div>
+
+                  <!-- An index row whose file could not be read draws as
+                       fourteen empty rows, which is precisely what a pattern
+                       with no notes in it draws as. The two are not the same
+                       thing and the difference is usually a drive that is not
+                       plugged in, so say which this is. -->
+                  <v-alert v-if="unreadable" type="warning" variant="tonal"
+                           density="compact" class="mb-3 text-caption">
+                    The notes for this pattern are in the file on disk, and
+                    {{ unreadable }}
+                  </v-alert>
+                  <div v-else-if="selected && selected.byReference && !resolved"
+                       class="mb-3 d-flex align-center text-caption text-medium-emphasis">
+                    <v-progress-circular indeterminate size="14" width="2" class="mr-2" />
+                    Reading it from the library…
                   </div>
 
                   <!-- What is actually in it, against the whole keyboard.

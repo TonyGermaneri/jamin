@@ -49,6 +49,15 @@ const props = defineProps({
   tree: { type: Object, default: null },
   /** Where it settled last time, or null. */
   positions: { type: Object, default: null },
+  /**
+   * Nothing but the canvas.
+   *
+   * Inside the full-screen map the breadcrumb and the buttons live on the
+   * glass in front rather than in a strip above and a strip below, and those
+   * two strips are the difference between a canvas that fills the screen and
+   * one that nearly does. @see components/CatalogueMap.vue
+   */
+  bare: { type: Boolean, default: false },
 })
 const emit = defineEmits(['pick'])
 
@@ -98,6 +107,23 @@ const theme = computed(() => state.settings.theme)
 const physics = computed(() => state.settings.graph.physics)
 
 
+/*
+ * How big cosmos's world is.
+ *
+ * Its space runs from 0 to this in both directions with the middle at half of
+ * it, which the layout has to be told (@see core/pathTree.js radialPositions)
+ * -- a tree drawn around the origin is a tree drawn around the corner.
+ */
+const SPACE = 8192
+
+/** How much ink a single edge can have before a thousand of them is a wall. */
+function inkForLinks(count) {
+  if (count <= 120) return 0.38
+  // Halving each time the drawing quadruples, floored so structure never
+  // disappears entirely.
+  return Math.max(0.05, 0.38 * Math.sqrt(120 / count))
+}
+
 /* ---------------- building it ---------------------------------------- */
 
 function build() {
@@ -106,7 +132,7 @@ function build() {
   engine.value?.destroy?.()
 
   const graph = new Graph(canvas.value, {
-    spaceSize: 8192,
+    spaceSize: SPACE,
     backgroundColor: 'rgba(0,0,0,0)',
     /*
      * A tree wants different physics from a cloud.
@@ -122,10 +148,31 @@ function build() {
     simulationLinkSpring: physics.value.spring,
     simulationLinkDistance: physics.value.linkDistance,
     simulationDecay: physics.value.decay,
-    linkWidth: physics.value.linkWidth,
-    // The dim colour: the edges are the structure, and structure should be
-    // legible without competing with what hangs off it.
-    linkColor: rgba(theme.value.dim, 0.38),
+    /*
+     * `linkWidth` and `linkColor` are not what cosmos.gl calls these.
+     *
+     * It reads `linkDefaultWidth` / `linkDefaultColor`, and an unknown key in
+     * its config is ignored rather than rejected -- so the graph has been
+     * drawing its edges at the library's own defaults since the day it was
+     * written, and every attempt to tune them did nothing at all. Found by
+     * changing the colour, photographing it, and getting the same picture.
+     * @see scripts/shots.py
+     */
+    linkDefaultWidth: physics.value.linkWidth,
+    /*
+     * The dim colour, and fainter the more there is of it.
+     *
+     * The edges are the structure, and structure should be legible without
+     * competing with what hangs off it. At nine nodes 0.38 is barely visible;
+     * at nine hundred, where a thousand near-parallel edges converge on the
+     * same parent, the same 0.38 sums into solid grey wedges -- the picture of
+     * a real collection was several smears with dots around the rim.
+     *
+     * So it thins as the drawing fills up. Ink per edge, rather than ink per
+     * line, which is what the eye is actually reading.
+     */
+    linkDefaultColor: rgba(theme.value.dim, 1),
+    linkOpacity: inkForLinks(nodes.value.length),
     curvedLinks: false,
     fitViewOnInit: true,
     /*
@@ -173,30 +220,179 @@ function build() {
    * branches crossing. There is nothing here for it to improve.
    * @see core/pathTree.js radialPositions
    */
-  graph.setPointPositions(radialPositions(shown.value, { ringGap: 420 }))
-  graph.setPointSizes(treeSizes(nodes.value))
-  graph.setPointColors(treeColours(nodes.value, {
+  engine.value = graph
+  drawn = null
+  draw(placesFor(shown.value))
+  // The last argument is "run the simulation during the transition", and it
+  // defaults to true.
+  graph.fitView?.(0, undefined, false)
+
+  stopFollowing()
+  followLabels()
+}
+
+/**
+ * The whole layout, centred in cosmos's space and sized to stay inside it.
+ *
+ * The ring spacing comes from how deep the *whole* tree goes rather than how
+ * deep the part on screen goes, so that opening a folder adds a ring instead
+ * of re-spacing every ring already drawn. Together with wedges weighed by
+ * clips (@see core/pathTree.js radialPositions) that makes opening additive:
+ * nothing that is already on screen moves.
+ */
+function placesFor(slice) {
+  // The whole tree's depth, not the slice's: the rings must not re-space when
+  // a folder opens. @see core/pathTree.js radialPositions
+  const deepest = Math.max(1, ((props.tree && props.tree.depth) || slice.depth) - 1)
+  return radialPositions(slice, { centre: SPACE / 2, fitRadius: SPACE / 2 - 240, deepest })
+}
+
+/*
+ * Where every visible node was last put.
+ *
+ * Kept so that opening a folder can be an animation from the picture that is
+ * on screen rather than a new picture. Indices are into the visible slice and
+ * mean nothing once the slice changes, so what is remembered is the position
+ * against the node's index in the *whole* tree, which does not move.
+ */
+let drawn = null
+/* The positions actually on screen, and whose they are. Kept so that opening a
+   second folder while the first is still opening grows out of the picture as
+   it stands rather than as it stood when the first one started. */
+let live = null
+let liveOrigin = null
+
+/** Take the positions on screen as the ones to grow from next time. */
+function settle() {
+  if (!live || !liveOrigin) return
+  drawn = new Map()
+  liveOrigin.forEach((was, index) => {
+    drawn.set(was, [live[index * 2], live[index * 2 + 1]])
+  })
+}
+
+/**
+ * Put the current slice on the screen at these positions.
+ *
+ * Everything the renderer holds is per-point and the points change every time
+ * a folder opens, so sizes, colours and links are uploaded together with the
+ * positions. The links are the *slice's* -- the whole tree's edge list is
+ * numbered against the whole tree, and handing it to a renderer holding nine
+ * hundred points is asking it to draw an edge to point 795,983.
+ */
+function draw(places) {
+  const graph = engine.value
+  const slice = shown.value
+  if (!graph || !slice) return
+
+  graph.setPointPositions(places)
+  graph.setPointSizes(treeSizes(slice.nodes))
+  graph.setPointColors(treeColours(slice.nodes, {
     from: theme.value.accent, to: theme.value.accentAlt, dim: theme.value.dim,
   }))
 
-  const pairs = new Float32Array(props.tree.edges.length)
-  pairs.set(props.tree.edges)
+  const pairs = new Float32Array(slice.edges.length)
+  pairs.set(slice.edges)
   graph.setLinks(pairs)
 
   graph.render()
   // Belt as well as braces: the config says not to simulate during a zoom, and
   // this says not to simulate at all. Nothing here needs it.
   graph.pause?.()
-  // The last argument is "run the simulation during the transition", and it
-  // defaults to true.
-  graph.fitView?.(0, undefined, false)
-  engine.value = graph
 
-  stopFollowing()
-  followLabels()
+  live = places
+  liveOrigin = slice.origin
+  settle()
 }
 
 let lastClick = { at: -1, when: 0 }
+
+/* ---------------- opening a folder ------------------------------------
+ *
+ * Not by drawing the graph again.
+ *
+ * A folder opening used to tear the renderer down and build a new one from
+ * the new slice, so every node on screen was given a fresh position at the
+ * same moment and the whole picture rearranged itself. Nothing about that
+ * reads as "this folder opened" -- it reads as a different graph arriving,
+ * and there is no way to follow a thing you were looking at through it.
+ *
+ * So the slice changes, the renderer does not, and the difference is walked
+ * rather than jumped: what is already on screen slides from where it is to
+ * where it now belongs, and what is new starts at the middle of the node it
+ * came out of and travels outward to its ring. The node that was opened is
+ * the one place on the screen nothing moves, which is what makes it read as
+ * that node opening.
+ *
+ * Eased rather than linear, and a third of a second, because the point is to
+ * be followed by an eye rather than to be quick.
+ */
+const OPENING_MS = 340
+let opening = null
+
+function growInto(slice) {
+  const graph = engine.value
+  if (!graph || !slice || !slice.nodes.length) return
+
+  // Already on screen. Building the graph draws the first slice itself, and
+  // the watcher then fires with that same slice -- which would be a third of a
+  // second spent travelling from each node to where it already is.
+  if (liveOrigin === slice.origin) return
+
+  // A folder opened while another is still opening: stop there and take the
+  // half-travelled picture as the one to grow from, so nothing jumps back.
+  if (opening) { cancelAnimationFrame(opening); opening = null; settle() }
+
+  const ends = placesFor(slice)
+
+  // With nothing on screen to grow out of, this is the first draw.
+  if (!drawn || !drawn.size) { draw(ends); return }
+
+  const starts = new Float32Array(ends.length)
+  for (let index = 0; index < slice.nodes.length; index++) {
+    const was = slice.origin[index]
+    const held = drawn.get(was)
+    if (held) {
+      starts[index * 2] = held[0]
+      starts[index * 2 + 1] = held[1]
+      continue
+    }
+    // New. Start it inside whichever visible ancestor it came out of, so it
+    // emerges from the node that was opened rather than fading in from a
+    // place nothing on screen corresponds to.
+    let from = slice.parents[index]
+    let seed = null
+    while (from >= 0 && !seed) {
+      seed = drawn.get(slice.origin[from]) || null
+      from = slice.parents[from]
+    }
+    starts[index * 2] = seed ? seed[0] : ends[index * 2]
+    starts[index * 2 + 1] = seed ? seed[1] : ends[index * 2 + 1]
+  }
+
+  // The sizes, colours and links belong to the new slice from the first frame:
+  // only the positions are travelled.
+  draw(starts)
+
+  const began = performance.now()
+  const ease = (t) => 1 - Math.pow(1 - t, 3)
+  const step = () => {
+    const through = Math.min(1, (performance.now() - began) / OPENING_MS)
+    const much = ease(through)
+    const now = new Float32Array(ends.length)
+    for (let n = 0; n < ends.length; n++) {
+      now[n] = starts[n] + (ends[n] - starts[n]) * much
+    }
+    engine.value?.setPointPositions?.(now)
+    engine.value?.render?.()
+    live = now
+    if (through < 1) { opening = requestAnimationFrame(step); return }
+    opening = null
+    // Landed. Where everything ended up is where the next opening starts.
+    settle()
+  }
+  opening = requestAnimationFrame(step)
+}
 
 /**
  * Open a folder, or close it again.
@@ -217,21 +413,33 @@ function unfold(index) {
   opened.value = next
 }
 
+/*
+ * Everything the renderer hands back is an index into the *visible slice*.
+ *
+ * It used to be looked up in the whole tree, which is a different numbering
+ * the moment anything is folded -- so clicking a node put some unrelated
+ * node's name in the aside, lit unrelated points, and labelled the picture
+ * with whatever happened to be at those indices. The slice is what is drawn,
+ * so the slice is what an index from the drawing means.
+ */
 function choose(index) {
+  const slice = shown.value
+  if (!slice || !slice.nodes[index]) return
   at.value = index
   along.value = 0
   refreshLabels()
-  emit('pick', props.tree.nodes[index], index)
+  emit('pick', slice.nodes[index], slice.origin[index])
   light(index)
 }
 
 /** The branch you are on: this node, the way up, and the way down. */
 function light(index) {
   const graph = engine.value
-  if (!graph || !props.tree) return
+  const slice = shown.value
+  if (!graph || !slice) return
   const kin = [index,
-               ...trail(props.tree, index).map((one) => one.at),
-               ...childrenOf(props.tree, index).map((one) => one.at)]
+               ...trail(slice, index).map((one) => one.at),
+               ...childrenOf(slice, index).map((one) => one.at)]
   graph.setFocusedPointByIndex?.(index)
   graph.selectPointsByIndices?.(kin)
 }
@@ -249,8 +457,7 @@ function light(index) {
  * replaced.
  */
 function onKey(event) {
-  const tree = props.tree
-  if (!tree) return
+  if (!shown.value || !shown.value.nodes.length) return
 
   if (event.key === 'Escape') {
     event.preventDefault()
@@ -290,7 +497,7 @@ function onKey(event) {
   }
 
   if (event.key === 'ArrowUp') {
-    const up = tree.parents[at.value]
+    const up = shown.value ? shown.value.parents[at.value] : -1
     if (up >= 0) { choose(up); look(up) }
   }
 }
@@ -316,8 +523,8 @@ const showLabels = computed(() => state.settings.graph.labels)
 let labelFrame = null
 
 function chooseLabelled() {
-  const tree = props.tree
-  if (!tree) return []
+  const tree = shown.value
+  if (!tree || !tree.nodes.length) return []
 
   const wanted = new Map()
   const budget = state.settings.graph.mostLabels || 60
@@ -341,8 +548,8 @@ function chooseLabelled() {
 
 function refreshLabels() {
   const graph = engine.value
-  const tree = props.tree
-  if (!graph || !tree || !showLabels.value) { labels.value = []; return }
+  const tree = shown.value
+  if (!graph || !tree || !tree.nodes.length || !showLabels.value) { labels.value = []; return }
 
   const wanted = chooseLabelled()
   if (!wanted.length) { labels.value = []; return }
@@ -365,10 +572,32 @@ function refreshLabels() {
     if (x < -40 || y < -20 || x > box.width + 40 || y > box.height + 20) continue
 
     const node = tree.nodes[index]
+    /*
+     * Not on top of one another.
+     *
+     * Two names in the same place are not two names, they are a smudge --
+     * "Impro-Visor" and "POP909" printed over each other read as neither. The
+     * ones that matter are chosen first (@see chooseLabelled: where you are,
+     * then the biggest), so the first to claim a patch of screen keeps it and
+     * whatever would have landed on top is simply not drawn.
+     *
+     * A rough box: eye-measured from the rendered text rather than measured
+     * per label, because measuring sixty labels a frame costs a layout each
+     * and being a few pixels out only ever means one more gap.
+     */
+    const wide = 7 * String(node.label || '').length + 14
+    let clear = true
+    for (const already of out) {
+      if (Math.abs(already.x - x) < (already.wide + wide) / 2
+          && Math.abs(already.y - y) < 15) { clear = false; break }
+    }
+    if (!clear) continue
+
     out.push({
       at: index,
       x: Math.round(x),
       y: Math.round(y),
+      wide,
       label: node.label,
       clips: node.clips,
       depth: node.depth,
@@ -422,19 +651,81 @@ function fit() {
   engine.value?.fitView?.(300, undefined, false)
 }
 
-onMounted(build)
+/*
+ * How much of it to show before anybody asks.
+ *
+ * Two levels of a tree is nine dots and a caption -- technically a graph, and
+ * useless: it says the catalogue has two sources without saying anything about
+ * what is in them. A map is worth looking at when there is enough of it on
+ * screen to see shape in, so this opens branches biggest-first until there is.
+ *
+ * By node count rather than by depth, because depth means something different
+ * in every catalogue: two levels of the drum tree is eight hundred nodes and
+ * two levels of the phrase tree is nine. Around this many is what a 1920-wide
+ * canvas holds while each dot is still separately visible.
+ */
+const ENOUGH = 900
+
+function openEnough() {
+  if (!props.tree) return
+  const next = new Set()
+
+  /*
+   * A rank at a time, shallowest first.
+   *
+   * Opening the biggest nodes wherever they are looks sensible and is not: in
+   * a real collection the biggest are all inside the same two libraries, so
+   * the view opened one branch eleven levels deep and left the other
+   * forty-seven libraries as unopened dots. A map of a catalogue that shows
+   * one corner of it.
+   *
+   * Breadth-first opens every library, then every shelf in every library, and
+   * stops at the rank that would go past the budget -- so what is on screen is
+   * as much of the whole thing as fits, at an even depth, which is what makes
+   * the shape of it readable.
+   */
+  for (let rank = 0; rank < 12; rank++) {
+    const slice = visibleSlice(props.tree, next)
+    if (slice.nodes.length >= ENOUGH) break
+
+    let shallowest = Infinity
+    for (const one of slice.nodes) {
+      if (one.hidden > 0 && one.depth < shallowest) shallowest = one.depth
+    }
+    if (shallowest === Infinity) break
+
+    // What this rank would cost, before paying for it: half a rank drawn is a
+    // lopsided picture, which is the thing being avoided.
+    let coming = 0
+    slice.nodes.forEach((one) => {
+      if (one.hidden > 0 && one.depth === shallowest) coming += one.hidden
+    })
+    if (rank && slice.nodes.length + coming > ENOUGH * 1.6) break
+
+    slice.nodes.forEach((one, at) => {
+      if (one.hidden > 0 && one.depth === shallowest) next.add(slice.origin[at])
+    })
+  }
+  opened.value = next
+}
+
+onMounted(() => { openEnough(); build() })
 watch(() => props.tree, () => {
   at.value = -1
   along.value = 0
-  opened.value = new Set()
+  openEnough()
   build()
 })
-// A folder opening or closing is a different tree to draw.
-watch(shown, build)
+// A folder opening or closing is the same graph with more of it showing, so
+// it grows into the new shape rather than being built again. And it does not
+// re-fit: the view belongs to whoever is looking through it.
+watch(shown, (slice) => growInto(slice))
 // Re-drawn when the theme changes, because every colour in it came from there.
 watch(() => JSON.stringify(theme.value), build)
 
 onBeforeUnmount(() => {
+  if (opening) cancelAnimationFrame(opening)
+  opening = null
   stopFollowing()
   engine.value?.destroy?.()
   engine.value = null
@@ -442,11 +733,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="jamin-graph">
+  <div class="jamin-graph" :class="{ 'is-bare': bare }">
     <!-- Where you are, and the way down. In a tree that is the whole of what
          anybody needs: the levels above, and the children below -- which is
          also exactly what the arrow keys walk. -->
-    <div class="jamin-graph-strip">
+    <div v-if="!bare" class="jamin-graph-strip">
       <template v-if="where.length">
         <button
           v-for="(one, n) in where" :key="one.at"
@@ -498,7 +789,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div class="jamin-graph-foot">
+    <div v-if="!bare" class="jamin-graph-foot">
       <span>
         {{ nodes.length.toLocaleString() }} nodes · {{ tree ? tree.depth : 0 }} levels
         <span v-if="tree && tree.truncated" class="jamin-graph-settling">· too large to draw whole</span>

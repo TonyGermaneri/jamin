@@ -64,6 +64,39 @@ export function countBars(chords) {
 const cleanGenre = (value) => String(value || '').replace(/'/g, '').trim()
 
 /**
+ * One Chordonomicon line, as a progression.
+ *
+ * Exported because the screenshot harness builds the library's map straight
+ * from the CSV rather than importing it first, and a second copy of this in a
+ * test script is a test that slowly stops describing the program. The first
+ * copy had a genre cleaner of its own and drew the map with labels like
+ * `'t-'m` and `po-al`. @see scripts/shots.py
+ *
+ * `at(column)` reads a named column of the row; `n` is where it came in the
+ * file, which is the id a row with no id of its own gets.
+ */
+export function progressionRow(at, n) {
+  const chords = at('chords')
+  if (!chords.trim()) return null
+
+  // The collection's own genre when it has one, and the first of the loose
+  // list of them when it does not -- about half the rows.
+  const genre = cleanGenre(at('main_genre')) || cleanGenre(at('genres').split(' ')[0])
+  const decade = String(at('decade') || '').replace(/\.0$/, '')
+  const id = at('id') || String(n + 1)
+
+  return {
+    n,
+    name: [genre, decade && `${decade}s`, `#${id}`].filter(Boolean).join(' '),
+    chords,
+    bars: countBars(chords),
+    genre,
+    decade,
+    source: 'Chordonomicon',
+  }
+}
+
+/**
  * @param {File|Blob} file the downloaded CSV
  * @param {{onProgress?: Function, batchSize?: number, limit?: number}} opts
  * @returns {Promise<{rows: number, skipped: number, bytes: number, ms: number}>}
@@ -99,25 +132,13 @@ export async function importChordonomiconCsv(file, opts = {}) {
 
     const cells = splitCsvLine(line)
     const at = (name) => cells[columns.indexOf(name)] || ''
-    const chords = at('chords')
-    if (!chords.trim()) {
+    const row = progressionRow(at, rows)
+    if (!row) {
       skipped++
       return
     }
 
-    const genre = cleanGenre(at('main_genre')) || cleanGenre(at('genres').split(' ')[0])
-    const decade = String(at('decade') || '').replace(/\.0$/, '')
-    const id = at('id') || String(rows + 1)
-
-    batch.push({
-      n: rows,
-      name: [genre, decade && `${decade}s`, `#${id}`].filter(Boolean).join(' '),
-      chords,
-      bars: countBars(chords),
-      genre,
-      decade,
-      source: 'Chordonomicon',
-    })
+    batch.push(row)
     rows++
     if (batch.length >= batchSize) await flush()
   }

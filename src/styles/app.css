@@ -46,10 +46,13 @@ body,
   background: transparent;
 }
 
+/* Tucked into the corner, because the chart is the page and this is not.
+   @see .jamin-chrome.is-idle -- it disappears entirely when nobody is moving
+   a mouse, rather than lingering at a fifth of itself. */
 .jamin-chrome {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 2px;
+  right: 2px;
   display: flex;
   gap: 6px;
   align-items: center;
@@ -58,7 +61,10 @@ body,
 }
 
 .jamin-chrome.is-idle {
-  opacity: 0.18;
+  opacity: 0;
+  /* Gone, but not unreachable: moving the mouse brings it back, and a pointer
+     that lands on it while it is fading still finds it. */
+  pointer-events: none;
 }
 
 .jamin-readout {
@@ -172,14 +178,26 @@ body,
  * the only part that scrolls, and everything that is a control rather than
  * content keeps its place.
  */
+/*
+ * Fullscreen, so there is no 32px of chart showing round the edges of the work.
+ *
+ * `v-dialog fullscreen` already stretches the overlay; these keep the column
+ * behaviour below working against the whole viewport rather than against a
+ * card that was 32px shorter than one.
+ */
 .jamin-book .v-overlay__content {
-  max-height: calc(100dvh - 32px);
+  max-height: 100dvh;
+  height: 100dvh;
+  width: 100vw;
+  margin: 0;
 }
 
 .jamin-book .v-overlay__content > .v-card {
   display: flex;
   flex-direction: column;
-  max-height: calc(100dvh - 32px);
+  max-height: 100dvh;
+  height: 100dvh;
+  border-radius: 0;
 }
 
 .jamin-book .v-overlay__content > .v-card > .v-card-title,
@@ -979,4 +997,609 @@ body,
   font-weight: 600;
   background: var(--jamin-accent);
   color: var(--jamin-bg);
+}
+
+/* ------------------------------------------------------------------ *
+ * The catalogue as a map
+ *
+ * The canvas is the page. Everything else is glass in front of it: a chrome
+ * row, two thin rows of filters, and a detail panel down the right. None of
+ * them takes a pixel from the canvas -- it is absolutely positioned behind all
+ * of them and is edge to edge whatever is on top.
+ *
+ * Translucent with a blur rather than opaque, because the map continues under
+ * the glass and seeing that it does is what makes the panels read as floating
+ * over one picture rather than as walls dividing four.
+ * @see components/CatalogueMap.vue
+ * ------------------------------------------------------------------ */
+.jamin-map {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: rgb(var(--v-theme-surface));
+  display: flex;
+  flex-direction: column;
+}
+
+/* The picture, and what floats over it: in flow below the filters, so a panel
+   starts where the filters end rather than on top of them. */
+.jamin-map-below {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* The canvas is underneath and has to stay reachable; the panels inside turn
+     pointer events back on for themselves. */
+  pointer-events: none;
+}
+
+.jamin-map-below > * {
+  pointer-events: auto;
+}
+
+/* The map is thinking, and has not gone anywhere. The old picture is one
+   filter out of date, which is a great deal better than no picture. */
+.jamin-map.is-waiting,
+.jamin-map.is-waiting .jamin-graph-canvas {
+  cursor: progress;
+}
+
+.jamin-map-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.jamin-map-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 3;
+  background: linear-gradient(90deg,
+              transparent, rgb(var(--v-theme-primary)), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: jamin-map-sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes jamin-map-sweep {
+  from { background-position: -40% 0; }
+  to   { background-position: 140% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jamin-map-progress { animation: none; background-position: 0 0; background-size: 100% 100%; }
+}
+
+/* The glass along the top: chrome, then the filters. */
+.jamin-map-glass {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  background: rgba(var(--v-theme-surface), 0.82);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid rgba(var(--v-border-color), 0.12);
+}
+
+.jamin-map-chrome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  min-height: 40px;
+}
+
+/*
+ * Two rows, thin, and small.
+ *
+ * On a map a filter is how you move rather than a setting you occasionally
+ * change, so all of them are on screen at once instead of behind a disclosure.
+ * That only works if they are small: these are 11px controls at 34px tall, and
+ * ten of them fit across 1920 in two rows with room left over.
+ */
+/*
+ * Wide enough to read, which is what decides how many rows there are.
+ *
+ * Twelve drum filters across 1920 is 150px each, and "Any time signature" in
+ * 150px is "Any time signat…" -- a filter you cannot read is a filter you
+ * cannot use. At 260px they are legible and twelve of them fall into two rows,
+ * which is the shape this wants anyway.
+ */
+.jamin-map-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 4px 8px;
+  padding: 0 10px 6px;
+}
+
+.jamin-map-filters .v-field {
+  font-size: 11px;
+  --v-field-padding-start: 8px;
+  --v-field-padding-end: 4px;
+}
+
+.jamin-map-filters .v-field__input {
+  min-height: 30px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+  font-size: 11px;
+}
+
+.jamin-map-filters .v-label,
+.jamin-map-filters .v-field-label {
+  font-size: 11px;
+}
+
+.jamin-map-filters .v-input__details {
+  display: none;
+}
+
+/* What is chosen, down the right, over the map. */
+.jamin-map-detail {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  width: 360px;
+  z-index: 2;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(var(--v-theme-surface), 0.88);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(var(--v-border-color), 0.14);
+}
+
+/* How much the filters found, bottom left, out of the way of everything. */
+.jamin-map-count {
+  position: absolute;
+  left: 14px;
+  bottom: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  color: rgba(var(--v-theme-on-surface), 0.6);
+  pointer-events: none;
+}
+
+.jamin-map-count strong {
+  font-size: 15px;
+  font-weight: 600;
+  color: rgba(var(--v-theme-on-surface), 0.9);
+}
+
+/* In the map the graph is only its canvas: no strip above, no buttons below. */
+.jamin-graph.is-bare,
+.jamin-graph.is-bare .jamin-graph-wrap {
+  height: 100%;
+  min-height: 0;
+}
+
+/*
+ * A book showing a map is the map, with the book's own chrome floating on it.
+ *
+ * The card stacks a title, a tab bar and a body, and stacked, the canvas starts
+ * a hundred pixels down -- "edge to edge" as a phrase rather than a fact.
+ *
+ * The fix is to position the canvas against the *card* rather than against the
+ * body it lives in: it then covers the whole card, chrome included, while
+ * everything else stays exactly where the normal flow puts it. No offset to
+ * keep in step with the height of two rows above it -- an earlier attempt used
+ * one and the filters were hidden behind the tabs the first time it was
+ * photographed. @see scripts/shots.py
+ */
+.jamin-book-mapped .v-overlay__content > .v-card {
+  position: relative;
+}
+
+/* Static all the way down, so the canvas inside measures itself against the
+   card rather than against whichever wrapper Vuetify happened to position --
+   it came out 144px short, which is exactly the chrome it was supposed to be
+   sitting behind. */
+.jamin-book-mapped .v-overlay__content > .v-card > .v-card-text,
+.jamin-book-mapped .v-window,
+.jamin-book-mapped .v-window__container,
+.jamin-book-mapped .v-window-item,
+.jamin-book-mapped .jamin-map {
+  padding: 0;
+  position: static;
+  overflow: visible;
+}
+
+/* Static takes `inset: 0` away with it, and a flex column with no height is a
+   column of nothing: the panels below the filters collapsed onto them. The
+   body is already a flex child that fills what the chrome leaves, so the map
+   takes all of it. */
+.jamin-book-mapped .jamin-map {
+  height: 100%;
+  min-height: 0;
+}
+
+/* Which is what puts it behind the title and the tabs as well as the body. */
+.jamin-book-mapped .jamin-map-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+/* The title and the tabs keep their place and become glass. */
+.jamin-book-mapped .v-overlay__content > .v-card > .v-card-title,
+.jamin-book-mapped .v-overlay__content > .v-card > .jamin-book-chrome,
+.jamin-book-mapped .v-overlay__content > .v-card > .v-tabs {
+  position: relative;
+  z-index: 3;
+  background: rgba(var(--v-theme-surface), 0.82);
+  backdrop-filter: blur(14px);
+}
+
+.jamin-book-mapped .v-overlay__content > .v-card > .v-tabs {
+  border-bottom: 1px solid rgba(var(--v-border-color), 0.12);
+}
+
+/* And the filters sit at the top of the body, which is under the tabs. */
+.jamin-book-mapped .jamin-map-glass {
+  position: relative;
+  z-index: 2;
+  background: rgba(var(--v-theme-surface), 0.72);
+}
+
+/* A pattern's grid, small enough to sit in the map's aside. The full keyboard,
+   the mutes and the transport belong beside the list, where somebody is working
+   on a pattern rather than looking for one. */
+.jamin-map-roll {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.jamin-map-roll-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.jamin-map-roll-name {
+  flex: 0 0 62px;
+  font-size: 9px;
+  text-align: right;
+  color: rgba(var(--v-theme-on-surface), 0.5);
+}
+
+.jamin-map-roll-cells {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 1px;
+}
+
+.jamin-map-roll-cells i {
+  flex: 1 1 auto;
+  height: 7px;
+  border-radius: 1px;
+  background: rgba(var(--v-theme-on-surface), 0.07);
+}
+
+.jamin-map-roll-cells i.is-hit {
+  background: rgb(var(--v-theme-primary));
+}
+
+/* A progression's chords in the map's aside, wrapped rather than cut. */
+.jamin-map-chords {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+  color: rgba(var(--v-theme-on-surface), 0.85);
+}
+
+/* ------------------------------------------------------------------ *
+ * A catalogue as a list, on a screen rather than in a 480px editor
+ *
+ * The same two columns as before, given the treatment a desktop asks for:
+ * each is a surface with an edge, so the list reads as a pane of a catalogue
+ * rather than as text on the background, and the space between them is a
+ * gutter rather than an accident. Material's surface / outline-variant roles,
+ * taken from the theme so it follows whatever palette is chosen.
+ *
+ * Only above 1280px. Below that the editor is the plugin's own window, where
+ * every pixel spent on a border is a pixel taken from a row, and the flat
+ * arrangement it had is the right one.
+ * ------------------------------------------------------------------ */
+@media (min-width: 1280px) {
+  .jamin-book:not(.jamin-book-mapped) .jamin-book-row {
+    gap: 16px;
+    padding: 4px 16px 0;
+    margin-inline: 0;
+  }
+
+  .jamin-book:not(.jamin-book-mapped) .jamin-book-col {
+    background: rgba(var(--v-theme-on-surface), 0.02);
+    border: 1px solid rgba(var(--v-border-color), 0.1);
+    border-radius: 12px;
+    padding: 8px;
+    overflow: hidden;
+  }
+
+  /* A row of a catalogue: two lines of type with air around them, and a hover
+     that says it can be clicked without shouting. */
+  .jamin-book:not(.jamin-book-mapped) .jamin-book-scroll .v-list-item {
+    border-radius: 8px;
+    margin-bottom: 1px;
+  }
+
+  /* The detail pane is read, not scanned, so it gets the wider measure and the
+     room between paragraphs that reading wants. */
+  .jamin-book:not(.jamin-book-mapped) .jamin-book-detail {
+    padding: 10px 12px 16px;
+    line-height: 1.55;
+  }
+
+  /* Paging belongs to the list, at the foot of it, rather than floating in the
+     space underneath. */
+  .jamin-book:not(.jamin-book-mapped) .jamin-book-foot {
+    flex: none;
+    margin-top: 6px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(var(--v-border-color), 0.1);
+  }
+}
+
+/*
+ * The facts down the right of a catalogue row.
+ *
+ * Fixed columns rather than a flowing line, so the same fact is in the same
+ * place on every row and the eye can run down one of them. Tabular numerals
+ * for the same reason: a column of counts that jiggles is a column nobody can
+ * compare.
+ */
+.jamin-row-facts {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: rgba(var(--v-theme-on-surface), 0.62);
+}
+
+.jamin-row-fact {
+  display: flex;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  width: 96px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.jamin-row-fact-wide { width: 130px; }
+.jamin-row-fact-last { width: 72px; }
+
+/* A phrase's notes, the width of whatever pane it is in. */
+.jamin-phrase-roll {
+  display: block;
+  width: 100%;
+  height: 140px;
+  background: rgba(var(--v-theme-on-surface), 0.045);
+  border-radius: 8px;
+}
+
+/*
+ * Labelled values, in two columns.
+ *
+ * A grid rather than a run of sentences: the label column is the same width on
+ * every row, so the values line up and the whole thing is read by running down
+ * it rather than by reading it.
+ */
+.jamin-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.jamin-facts > div {
+  display: grid;
+  grid-template-columns: 68px 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.jamin-facts dt {
+  color: rgba(var(--v-theme-on-surface), 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+}
+
+.jamin-facts dd {
+  margin: 0;
+  color: rgba(var(--v-theme-on-surface), 0.88);
+}
+
+/* ------------------------------------------------------------------ *
+ * Doing it by pointing
+ *
+ * Icons over whatever the pointer is on, and a picker for choosing a chord.
+ * Both sit above the transparent <textarea> that catches typing, so both have
+ * to be explicit about pointer events: the tools take them, the gaps between
+ * them do not, and nothing here is allowed to move the caret.
+ * @see components/ChartTokenTools.vue, components/ChordPicker.vue
+ * ------------------------------------------------------------------ */
+.jamin-token-tools {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  gap: 1px;
+  padding: 2px;
+  transform: translateX(-50%);
+  border-radius: 7px;
+  background: rgba(var(--v-theme-surface), 0.94);
+  border: 1px solid rgba(var(--v-border-color), 0.16);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.45);
+  animation: jamin-tools-in 110ms ease-out;
+}
+
+@keyframes jamin-tools-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(3px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jamin-token-tools { animation: none; }
+}
+
+.jamin-token-tool {
+  display: grid;
+  place-items: center;
+  width: calc(26px * var(--jamin-tool-scale, 1));
+  height: calc(24px * var(--jamin-tool-scale, 1));
+  border-radius: 5px;
+  color: rgba(var(--v-theme-on-surface), 0.72);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.jamin-token-tool:hover {
+  background: rgba(var(--v-theme-on-surface), 0.1);
+  color: rgb(var(--v-theme-on-surface));
+}
+
+/* The picker. Scaled rather than re-flowed on a short editor: every part stays
+   in proportion and in the same place, which a breakpoint layout would not. */
+.jamin-picker {
+  position: fixed;
+  z-index: 8;
+  transform: scale(var(--jamin-picker-scale, 1));
+  transform-origin: top left;
+  width: 340px;
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(var(--v-theme-surface), 0.97);
+  border: 1px solid rgba(var(--v-border-color), 0.18);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
+}
+
+.jamin-wheel {
+  position: relative;
+  width: 312px;
+  height: 312px;
+}
+
+.jamin-wheel::before {
+  content: '';
+  position: absolute;
+  inset: 16px;
+  border-radius: 50%;
+  border: 1px solid rgba(var(--v-border-color), 0.16);
+}
+
+.jamin-spoke {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 0;
+  background: none;
+  border: 0;
+}
+
+.jamin-spoke-name {
+  font: 600 14px/1.25 ui-monospace, "SF Mono", monospace;
+  color: rgba(var(--v-theme-on-surface), 0.8);
+  padding: 3px 7px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.jamin-spoke-name:hover {
+  background: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-surface));
+}
+
+.jamin-wheel-hub {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(var(--v-theme-on-surface), 0.3);
+}
+
+/* The things that are not chords, under the wheel. */
+.jamin-marks {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(var(--v-border-color), 0.14);
+}
+
+.jamin-mark,
+.jamin-colour {
+  height: 34px;
+  border-radius: 6px;
+  border: 1px solid rgba(var(--v-border-color), 0.16);
+  background: rgba(var(--v-theme-on-surface), 0.04);
+  color: rgba(var(--v-theme-on-surface), 0.85);
+  font: 12px/1 ui-monospace, "SF Mono", monospace;
+  cursor: pointer;
+}
+
+.jamin-mark:hover,
+.jamin-colour:hover {
+  background: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-surface));
+}
+
+.jamin-colour.is-current {
+  border-color: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-primary));
+}
+
+.jamin-colour.is-more {
+  background: transparent;
+  border-style: dashed;
+}
+
+.jamin-picker-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: rgba(var(--v-theme-on-surface), 0.55);
+}
+
+.jamin-picker-head strong {
+  font: 600 16px/1 ui-monospace, "SF Mono", monospace;
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.jamin-picker-back {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  color: rgba(var(--v-theme-on-surface), 0.6);
+}
+
+.jamin-colours {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
 }
