@@ -22,6 +22,7 @@ import {
   searchGrooves, grooveFacets, getGrooves, whileUpgrading,
   buildIndexes, indexesAreCurrent,
   readGraph, writeGraph, forgetGraph, everyPath,
+  emptyTally, tallyRow, finishTally, rememberFacetsFor, materialiseFacets,
 } from './core/drumStore.js'
 import {
   loadDrumBindings, saveDrumBindings, reconcileBindings, bindGroove,
@@ -134,6 +135,8 @@ export const state = reactive({
   drumCounts: {},
   // Whether a page of the catalogue is being fetched. @see searchDrums
   drumBusy: false,
+  /** The one-off counting of the filter dropdowns. @see prepareDrumFilters */
+  drumPreparing: { running: false, name: '', done: 0, of: 0, rows: 0 },
   /**
    * Drums somebody has taken out, by voice id.
    *
@@ -1999,6 +2002,18 @@ const hostReader = {
  */
 async function importOnePack(pack, progress, reader = hostReader) {
   const perFolder = new Map()
+  /*
+   * What the filter dropdowns will say, counted as the rows go by.
+   *
+   * Free here -- every row is in hand already -- and the alternative is
+   * asking the database for it later, which it has no cheap way to answer:
+   * WebKit steps a `nextunique` cursor over every duplicate rather than
+   * seeking, so finding the distinct values of nine fields costs per clip
+   * rather than per value. On a 404,339-clip library that was the better part
+   * of half a minute, every time somebody chose it.
+   * @see core/drumStore.js tallyRow
+   */
+  const tally = emptyTally()
   // Spread over the whole library rather than the first shelf of it. @see
   // reservoir, and the same mistake caught once before in spread().
   const samples = reservoir(120, hashOf(pack.id))
@@ -2042,7 +2057,9 @@ async function importOnePack(pack, progress, reader = hostReader) {
       }
 
       // Without the notes: this row is a pointer, not a copy.
-      batch.push(packGroove(groove, pack.id, index++, { byReference: true }))
+      const row = packGroove(groove, pack.id, index++, { byReference: true })
+      tallyRow(tally, row)
+      batch.push(row)
     }
 
     // Running totals for the whole job: what earlier libraries got, plus this
@@ -2082,6 +2099,11 @@ async function importOnePack(pack, progress, reader = hostReader) {
   if (!kept) return true
 
   progress.packsMade++
+
+  // What the dropdowns will say, written down now rather than worked out the
+  // first time somebody opens this library.
+  await rememberFacetsFor(pack.id, kept, finishTally(tally))
+
   const { folderKits, setKit, reason } = classifyFolders(perFolder)
   const drawn = samples.take()
 
@@ -2951,6 +2973,33 @@ function nextPageFrom(offset) {
 /** What the filters can offer. No library means across all of them. */
 export async function drumFacetsFor(setId) {
   return grooveFacets(setId || null)
+}
+
+/**
+ * Count the dropdowns for a catalogue that was imported before they were
+ * counted at import.
+ *
+ * Everything imported from now on is tallied as it arrives and never needs
+ * this. What needs it is a catalogue that was already in the database -- and
+ * it is a one-off: a pass per library, all nine fields together, and the
+ * answer written down, after which opening a library is a row read.
+ *
+ * Shown rather than hidden. It is minutes on three quarters of a million
+ * clips, and a wait nobody asked for looks like a hang -- the same rule the
+ * index build follows. @see core/drumStore.js materialiseFacets
+ */
+export async function prepareDrumFilters() {
+  const progress = state.drumPreparing
+  Object.assign(progress, { running: true, name: '', done: 0, of: 0, rows: 0 })
+  try {
+    await materialiseFacets((said) => Object.assign(progress, said))
+    toast('The filters are ready')
+  } catch (error) {
+    noteError(error, 'counting what the filters can offer')
+    toast('Could not count the filters — the error log has the reason')
+  } finally {
+    progress.running = false
+  }
 }
 
 /**
@@ -4321,5 +4370,6 @@ if (typeof window !== 'undefined') {
     refreshDrumSets,
     searchGrooves,
     grooveFacets,
+    materialiseFacets,
   }
 }

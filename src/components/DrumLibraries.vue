@@ -18,6 +18,7 @@ import {
   cancelDrumImport,
   forgetDrumSet,
   forgetEveryDrumSet,
+  prepareDrumFilters,
   setDrumSetKit,
   countEachDrumSet,
   buildIndexes,
@@ -372,6 +373,36 @@ async function bringIndexesUpToDate() {
       works without them by reading each library, which on a large one is a wait
       every time you choose it. Building them takes up to a minute, once — it
       happens on its own at the start of your next import.
+    </span>
+  </div>
+
+  <!--
+    Count the dropdowns for a catalogue imported before they were counted at
+    import.
+
+    Offered here rather than done on the first open: on a large collection it
+    is minutes, and doing minutes of work because somebody opened a menu is
+    the thing this exists to stop. Everything imported from now on is tallied
+    as it arrives and never needs it. @see store.js prepareDrumFilters
+  -->
+  <div v-if="state.drumSets.length" class="d-flex align-center mt-4" style="gap: 8px">
+    <v-btn size="small" variant="tonal"
+           prepend-icon="mdi-filter-check-outline"
+           :loading="state.drumPreparing.running"
+           :disabled="state.drumPreparing.running || state.drumRemoval.running"
+           @click="prepareDrumFilters">
+      Count the filter lists
+    </v-btn>
+    <span class="text-caption text-medium-emphasis">
+      <template v-if="state.drumPreparing.running">
+        {{ state.drumPreparing.name }} — {{ state.drumPreparing.done + 1 }} of
+        {{ state.drumPreparing.of }}<span v-if="state.drumPreparing.rows">,
+        {{ state.drumPreparing.rows.toLocaleString() }} read</span>
+      </template>
+      <template v-else>
+        Once, for libraries imported before jamin counted them on the way in.
+        Afterwards, choosing a library is instant.
+      </template>
     </span>
   </div>
 

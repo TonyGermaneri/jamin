@@ -204,7 +204,7 @@ function open() {
      * So the version is only ever asked for deliberately. @see buildIndexes,
      * which the import calls before it reads a single file, and which is the
      * only thing that upgrades. A catalogue imported before an index existed
-     * goes on working without it -- slower, and @see tallyWithin says how it
+     * goes on working without it -- slower, and @see walkWithin says how it
      * copes -- until the next import brings it up to date.
      */
     const request = openAt(wantVersion)
@@ -942,16 +942,97 @@ export async function grooveFacets(setId = null) {
   const remembered = await rememberedFacets(db, setId, holds)
   if (remembered) return remembered
 
-  const counted = setId ? await tallyWithin(db, setId) : await tallyEverywhere(db)
-
-  const answer = {
-    ...counted,
-    folders: await shelvesIn(db, setId, counted.folders),
-    holds: holds || 0,
-    exact: true,
-  }
+  /*
+   * Nothing written down for this one, so count it and write it down.
+   *
+   * Which is the slow path, and is meant to be: a library imported since this
+   * existed was tallied as it arrived and never reaches here. This is for the
+   * ones that were already in the database when it did not.
+   */
+  const counted = setId ? await walkWithin(db, setId) : await tallyEverything(db)
+  const answer = { ...counted, holds: holds || 0, exact: true }
   await rememberFacets(db, setId, holds, answer)
   return answer
+}
+
+/**
+ * The whole catalogue's dropdowns, out of the libraries' own.
+ *
+ * Added up from what each library already knows rather than counted again
+ * over everything -- forty-nine small tallies is arithmetic, and three
+ * quarters of a million rows is a minute. Any library that has not been
+ * tallied yet is counted here and written down as a side effect, so this is
+ * also how a catalogue from before all this gets prepared.
+ */
+async function tallyEverything(db) {
+  const sets = await ask(db.transaction(SETS, 'readonly').objectStore(SETS).getAll())
+    .catch(() => [])
+
+  const total = emptyTally()
+  for (const set of sets) {
+    const holds = await countOn(db, 'set', set.id)
+    if (!holds) continue
+    let each = await rememberedFacets(db, set.id, holds)
+    if (!each) {
+      each = { ...(await walkWithin(db, set.id)), holds, exact: true }
+      await rememberFacets(db, set.id, holds, each)
+    }
+    addTally(total, each)
+  }
+  return finishTally(total)
+}
+
+/** Fold one library's counted values into a running total. */
+function addTally(into, some) {
+  for (const name of FACETS) {
+    for (const [value, many] of some[plural(name)] || []) {
+      into[name].set(value, (into[name].get(value) || 0) + many)
+    }
+  }
+  for (const [shelf, many] of some.folders || []) {
+    into.folders.set(shelf, (into.folders.get(shelf) || 0) + many)
+  }
+}
+
+/**
+ * Count every library that has not been counted, with something to watch.
+ *
+ * The one-off for a catalogue imported before the tallies existed. One pass
+ * per library, all nine fields at once, and the answer written down -- after
+ * which opening a library is a row read. @see store.js prepareDrumFilters
+ */
+export async function materialiseFacets(onProgress = null) {
+  const db = await open()
+  if (!db) return 0
+
+  const sets = await ask(db.transaction(SETS, 'readonly').objectStore(SETS).getAll())
+    .catch(() => [])
+  let done = 0
+
+  for (const set of sets) {
+    const holds = await countOn(db, 'set', set.id)
+    if (!holds) { done++; continue }
+    if (await rememberedFacets(db, set.id, holds)) { done++; continue }
+
+    if (onProgress) onProgress({ name: set.name || set.id, done, of: sets.length, rows: 0 })
+    const counted = await walkWithin(db, set.id,
+      (rows) => onProgress && onProgress({ name: set.name || set.id, done, of: sets.length, rows }))
+    await rememberFacets(db, set.id, holds, { ...counted, holds, exact: true })
+    done++
+  }
+
+  // And the whole-catalogue answer, which is now just arithmetic.
+  await forgetFacets(db, null)
+  await grooveFacets(null)
+  return done
+}
+
+/** What a library's tally is, for the import to store as it goes. */
+export async function rememberFacetsFor(setId, holds, counted) {
+  const db = await open()
+  if (!db) return
+  await forgetFacets(db, null)
+  await rememberFacets(db, setId, holds, { ...counted, holds, exact: true })
 }
 
 /*
@@ -1044,259 +1125,90 @@ function plural(name) {
 }
 
 /**
- * Every distinct value in an index, without reading a row.
- *
- * `nextunique` is the whole trick: the cursor lands on the first entry for each
- * distinct key and skips every duplicate, so this is one step per value rather
- * than one per row.
- */
-function distinctIn(db, name, cap = 4000) {
-  return new Promise((resolve) => {
-    const values = []
-    let request
-    try {
-      request = grooves(db).index(name).openKeyCursor(null, 'nextunique')
-    } catch {
-      resolve(values)
-      return
-    }
-    request.onsuccess = () => {
-      const cursor = request.result
-      if (!cursor || values.length >= cap) { resolve(values); return }
-      values.push(cursor.key)
-      cursor.continue()
-    }
-    request.onerror = () => resolve(values)
-  })
-}
-
-/** Across everything: the index knows the values and the index knows the counts. */
-async function tallyEverywhere(db) {
-  const out = { folders: [] }
-  for (const name of FACETS) {
-    if (!grooves(db).indexNames.contains(name)) { out[plural(name)] = []; continue }
-    const values = await distinctIn(db, name)
-    const pairs = []
-    for (const value of values) {
-      // A fresh transaction each time: the await above and the one below both
-      // end whichever transaction was open. @see grooves
-      const n = await ask(grooves(db).index(name).count(IDBKeyRange.only(value))).catch(() => 0)
-      if (n) pairs.push([value, n])
-    }
-    out[plural(name)] = order(name, pairs)
-  }
-  return out
-}
-
-/**
- * Within one library: counted by an index, the same as everything else.
- *
- * This was a pass over every row the library holds, tallying all eight facets
- * as it went -- which is correct and costs 23ms per thousand rows in the
- * plugin's WebKit. For the GM pack, three hundred and sixty thousand rows, that
- * is eight and a half seconds during which the genre list is empty. Empty is
- * indistinguishable from "this library has no genres", and was reported as it.
- *
- * With a [library, value] index the pair is countable directly: one key cursor
- * for the distinct values and one count each, neither of which reads a row.
- */
-async function tallyWithin(db, setId) {
-  // A catalogue imported before the paired indexes existed has none of them and
-  // is not going to be upgraded behind somebody's back. It still has to answer.
-  // @see buildIndexes, and walkWithin for what it costs.
-  if (!grooves(db).indexNames.contains(PAIR_FOR.genre)) return walkWithin(db, setId)
-
-  const out = { folders: [] }
-  for (const name of FACETS) {
-    out[plural(name)] = order(name, await pairsWithin(db, setId, PAIR_FOR[name]))
-  }
-  return out
-}
-
-/**
  * The same answer, the slow way, for a catalogue with no paired indexes.
  *
  * One pass over the library's rows tallying every facet at once -- 23ms per
  * thousand rows in the plugin's WebKit, so a third of a minute for the largest
  * library anybody has. Correct, and the reason the indexes exist.
  */
-async function walkWithin(db, setId) {
-  const seen = {}
+/* ------------------------------------------------------------------ *
+ * What the dropdowns say, counted once and written down
+ *
+ * Every value of nine fields, and how many rows carry each. There is no cheap
+ * way to ask a database this: the trick that should make it cheap is a
+ * `nextunique` cursor, which is meant to seek to the next distinct key, and
+ * WebKit -- which is what the plugin is -- steps over every duplicate instead.
+ * Measured in the plugin's own web view: the same two values took 5ms to find
+ * in a thousand rows and 73ms in twenty thousand. The cost is per clip, not
+ * per value, and the biggest library here holds 404,339 clips.
+ *
+ * So it is not asked at all. The tally is built while the rows are being
+ * written, when every one of them is in hand anyway, and stored beside the
+ * library. Opening a library is then a single row read.
+ * @see store.js importOnePack, which tallies as it imports
+ * ------------------------------------------------------------------ */
+
+/** An empty tally, ready to be added to. */
+export function emptyTally() {
+  const seen = { folders: new Map() }
   for (const name of FACETS) seen[name] = new Map()
-  const folders = new Map()
+  return seen
+}
+
+/**
+ * One row, counted.
+ *
+ * Takes a stored row (`{ k, r, g, t, x, f }`) so the import and a pass over
+ * the database are counting exactly the same thing in exactly the same way --
+ * two tallies that disagree would be worse than one that is slow.
+ */
+export function tallyRow(seen, row) {
+  const tags = row.x || {}
+  const held = {
+    kind: row.k, bars: row.r, genre: row.g, signature: row.t,
+    feel: tags.feel, surface: tags.surface, part: tags.part, era: tags.era,
+  }
+  for (const name of FACETS) {
+    const one = held[name]
+    if (one || one === 0) seen[name].set(one, (seen[name].get(one) || 0) + 1)
+  }
+  // A shelf is the top two levels of a path, which is the grain somebody
+  // actually narrows by -- the whole path is one folder per clip.
+  const shelf = String(row.f || '').split('/').slice(0, 2).join('/')
+  seen.folders.set(shelf, (seen.folders.get(shelf) || 0) + 1)
+}
+
+/** The tally, in the shape the dropdowns want. */
+export function finishTally(seen) {
+  const out = { folders: order('folder', [...seen.folders.entries()]).slice(0, 120) }
+  for (const name of FACETS) out[plural(name)] = order(name, [...seen[name].entries()])
+  return out
+}
+
+/**
+ * Count a library the slow way, once, because nobody counted it as it arrived.
+ *
+ * One pass over its rows tallying all nine fields together -- not nine passes,
+ * one each. For a catalogue imported before any of this existed, this is the
+ * price of the first look at it, and it is paid once and written down.
+ */
+async function walkWithin(db, setId, onProgress = null) {
+  const seen = emptyTally()
+  let read = 0
 
   await new Promise((resolve) => {
     const request = grooves(db).index('set').openCursor(IDBKeyRange.only(setId))
     request.onsuccess = () => {
       const cursor = request.result
       if (!cursor) { resolve(); return }
-      const row = cursor.value
-      const tags = row.x || {}
-      const held = {
-        kind: row.k, bars: row.r, genre: row.g, signature: row.t,
-        feel: tags.feel, surface: tags.surface, part: tags.part, era: tags.era,
-      }
-      for (const name of FACETS) {
-        const one = held[name]
-        if (one || one === 0) seen[name].set(one, (seen[name].get(one) || 0) + 1)
-      }
-      const shelf = String(row.f || '').split('/').slice(0, 2).join('/')
-      folders.set(shelf, (folders.get(shelf) || 0) + 1)
+      tallyRow(seen, cursor.value)
+      if (onProgress && (++read % 5000) === 0) onProgress(read)
       cursor.continue()
     }
     request.onerror = () => resolve()
   })
 
-  const out = { folders: order('folder', [...folders.entries()]) }
-  for (const name of FACETS) out[plural(name)] = order(name, [...seen[name].entries()])
-  return out
-}
-
-/**
- * Every value of one field inside one library, and exactly how many rows carry
- * each.
- *
- * The range is everything from `[set]` up to `[set, []]`. Short arrays sort
- * before longer ones that start the same way, and an array sorts after every
- * string and number -- so those two bounds are "this library, whatever the
- * value" and nothing else. @see PAIRED
- */
-async function pairsWithin(db, setId, indexName) {
-  if (!indexName) return []
-  const store = grooves(db)
-  if (!store.indexNames.contains(indexName)) return []
-
-  const span = IDBKeyRange.bound([setId], [setId, []])
-  const values = await new Promise((resolve) => {
-    const found = []
-    let request
-    try {
-      request = store.index(indexName).openKeyCursor(span, 'nextunique')
-    } catch {
-      resolve(found)
-      return
-    }
-    request.onsuccess = () => {
-      const cursor = request.result
-      if (!cursor || found.length >= 4000) { resolve(found); return }
-      found.push(cursor.key[1])
-      cursor.continue()
-    }
-    request.onerror = () => resolve(found)
-  })
-
-  const pairs = []
-  for (const value of values) {
-    // A fresh transaction each time: the await ends whichever was open.
-    // @see grooves
-    const n = await ask(grooves(db).index(indexName).count(IDBKeyRange.only([setId, value])))
-      .catch(() => 0)
-    if (n) pairs.push([value, n])
-  }
-  return pairs
-}
-
-/**
- * The shelves, and exactly what is on each.
- *
- * A shelf is the top two levels of a path, which makes it a *prefix* rather
- * than a value -- and a prefix over strings is a bounded range an index counts
- * as cheaply as it counts one key.
- *
- * Finding them is the same trick in reverse. Rather than visiting every
- * distinct folder, which in this collection is one per pattern, the cursor
- * jumps: having seen `Pack/Rock/01`, it continues from just past everything
- * beginning `Pack/Rock`, so the walk costs one step per shelf.
- */
-async function shelvesIn(db, setId, already) {
-  /*
-   * Inside one library, by jumping the cursor -- the same trick as below, with
-   * the library bolted to the front of every key.
-   *
-   * This used to ask `pairsWithin` for every distinct *deep* folder and then
-   * add them up into shelves. The assumption was that a library's folders are
-   * tens of names. In a real collection they are not: Superior Drummer files
-   * 404,685 clips under nearly as many distinct folders, so the walk hit its
-   * four-thousand cap and then issued four thousand separate counts to collapse
-   * them into about forty shelves.
-   *
-   * Measured on the real library: 732 seconds. Twelve minutes to fill a
-   * dropdown, which is what "the filter takes a long time to fill out the drop
-   * down menu" was. Jumping costs one step and one count per shelf, so it is
-   * tens of operations rather than thousands, and the deep folders are never
-   * visited at all.
-   */
-  if (setId) {
-    // Already tallied by the walk when there are no paired indexes.
-    if (!grooves(db).indexNames.contains('setFolder')) return already || []
-
-    const shelves = []
-    await new Promise((resolve) => {
-      let request
-      try {
-        request = grooves(db).index('setFolder')
-          .openKeyCursor(IDBKeyRange.bound([setId], [setId, []]))
-      } catch {
-        resolve()
-        return
-      }
-      request.onsuccess = () => {
-        const cursor = request.result
-        if (!cursor || shelves.length >= 400) { resolve(); return }
-        const shelf = String(cursor.key[1] || '').split('/').slice(0, 2).join('/')
-        shelves.push(shelf)
-        try {
-          // Past everything that begins with this shelf, and on to the next.
-          cursor.continue([setId, `${shelf}\uffff`])
-        } catch {
-          resolve()
-        }
-      }
-      request.onerror = () => resolve()
-    })
-
-    const pairs = []
-    for (const shelf of shelves) {
-      const n = await ask(grooves(db).index('setFolder')
-        .count(IDBKeyRange.bound([setId, shelf], [setId, `${shelf}\uffff`]))).catch(() => 0)
-      if (n) pairs.push([shelf, n])
-    }
-    return order('folder', pairs).slice(0, 120)
-  }
-
-  if (!grooves(db).indexNames.contains('folder')) return []
-
-  const shelves = []
-
-  await new Promise((resolve) => {
-    let request
-    try {
-      request = grooves(db).index('folder').openKeyCursor()
-    } catch {
-      resolve()
-      return
-    }
-    request.onsuccess = () => {
-      const cursor = request.result
-      if (!cursor || shelves.length >= 400) { resolve(); return }
-      const shelf = String(cursor.key || '').split('/').slice(0, 2).join('/')
-      shelves.push(shelf)
-      try {
-        cursor.continue(`${shelf}\uffff`)
-      } catch {
-        resolve()
-      }
-    }
-    request.onerror = () => resolve()
-  })
-
-  const pairs = []
-  for (const shelf of shelves) {
-    const n = await ask(grooves(db).index('folder')
-      .count(IDBKeyRange.bound(shelf, `${shelf}\uffff`))).catch(() => 0)
-    if (n) pairs.push([shelf, n])
-  }
-  return order('folder', pairs).slice(0, 120)
+  return finishTally(seen)
 }
 
 /**

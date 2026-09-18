@@ -1420,6 +1420,27 @@ onMounted(refreshTree)
                                    color="primary" height="3"
                                    class="mb-2 flex-grow-0" rounded />
 
+                <!--
+                  A catalogue imported before the dropdowns were counted at
+                  import has to be counted once. Offered rather than done
+                  behind somebody's back: it is minutes on a large collection,
+                  and a wait nobody asked for looks like a hang.
+                  @see store.js prepareDrumFilters
+                -->
+                <v-alert
+                  v-if="state.drumPreparing.running"
+                  type="info" variant="tonal" density="compact"
+                  class="mb-2 flex-grow-0 text-caption"
+                >
+                  <v-progress-linear indeterminate color="info" height="2" class="mb-2" rounded />
+                  Counting what the filters can offer —
+                  {{ state.drumPreparing.name }}
+                  ({{ state.drumPreparing.done + 1 }} of {{ state.drumPreparing.of }}<span
+                    v-if="state.drumPreparing.rows"
+                  >, {{ state.drumPreparing.rows.toLocaleString() }} read</span>).
+                  This happens once.
+                </v-alert>
+
                 <!-- Two buttons rather than one. Starting a song over means
                      clearing the grooves and keeping the fills about as often
                      as the other way round, and one button that did both would
