@@ -508,23 +508,24 @@ int main(int argc, const char **argv) {
               @"    catch (e) { lines.push('idb: threw ' + e.name + ' ' + e.message); }"
               @"  }"
               /* And the graph, actually drawn.
-                 cosmos.gl runs its force simulation in fragment shaders, and
-                 whether that works is a fact about this WebKit rather than
-                 about the library. A canvas that fails to get a context fails
-                 silently -- the page renders, the box stays empty -- which is
-                 exactly the shape of bug nobody notices until somebody turns
-                 the setting on. */
+                 A canvas that fails to get a context fails silently -- the
+                 page renders, the box stays empty -- which is exactly the
+                 shape of bug nobody notices until somebody turns the setting
+                 on. "Fitted" is the second half of the same question: a
+                 transform that is still the identity means the layout ran and
+                 the framing did not, so there are points somewhere off the
+                 side of a canvas that looks blank. */
               @"  if (window.__jaminGraphProbe) {"
               @"    try { lines.push('graph: ' + await window.__jaminGraphProbe()); }"
               @"    catch (e) { lines.push('graph: threw ' + e.name + ' ' + e.message); }"
               @"    const said = lines[lines.length - 1];"
               @"    check('the catalogue graph draws', /points=[1-9]/.test(said));"
-              @"    check('and its simulation runs', /moved=true/.test(said));"
-              /* How big a graph this machine will draw at all. Reported rather
-                 than asserted: the answer is about the GPU in the machine, and
-                 a test that fails on a laptop teaches nobody anything. What is
-                 asserted is only that the size the catalogue actually needs --
-                 a few thousand -- is reachable. */
+              @"    check('and it frames what it drew', /fitted=true/.test(said));"
+              /* How big a tree this machine will draw at all. Reported rather
+                 than asserted: the answer is about the machine, and a test that
+                 fails on a laptop teaches nobody anything. What is asserted is
+                 only that the size the catalogue actually needs -- a few
+                 thousand nodes on screen at once -- is reachable. */
               @"    if (window.__jaminGraphStress) {"
               @"      try { lines.push('stress: ' + await window.__jaminGraphStress()); }"
               @"      catch (e) { lines.push('stress: threw ' + e.name); }"

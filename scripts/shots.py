@@ -16,8 +16,11 @@ evidence for whoever is looking now, not artefacts to keep. Any corpus this
 pulls down to fill the views is fetched into the same place and is never
 committed and never bundled. @see docs/testing.md
 
-It needs a build: `npm run build:page` first, because it drives dist/ rather
-than the dev server -- what is photographed should be what ships.
+It needs a build first, because it drives dist/ rather than the dev server --
+what is photographed should be what ships. Use `npm run build`, not
+`npm run build:page`: Vite empties dist before it writes, so building the page
+alone deletes `jamin-compile.js` and leaves a plugin that renders perfectly and
+plays nothing.
 """
 import functools
 import http.server
@@ -87,7 +90,8 @@ def main():
         page.wait_for_timeout(1200)
         ready(page)
 
-        print(f"\n  {reachTools(page)}\n")
+        print(f"\n  {reachTools(page)}")
+        print(f"  {openingKeepsIt(page)}\n")
 
         for name, prepare in VIEWS:
             if wanted and name not in wanted:
@@ -230,6 +234,49 @@ def reachTools(page):
     if after == before:
         return "FAIL clicking the first icon changed nothing"
     return f"ok   pointer reaches the icons, and delete works ({before!r} -> {after!r})"
+
+
+def openingKeepsIt(page):
+    """Does the picture survive a node being opened?
+
+    The complaint this exists for: opening a node made the graph vanish and
+    come back as something else. What a hierarchy explorer has to do instead is
+    keep every node that was on screen on screen, and grow the new ones out of
+    the one that was opened. No screenshot can see that -- it is a question
+    about the frames in between -- so this opens one and watches the count.
+    """
+    page.evaluate("""() => {
+      const app = window.__jaminApp
+      app.state.settings.graph.drums = true
+      app.openBook('drums')
+    }""")
+    page.wait_for_timeout(3000)
+    if not page.evaluate("() => Boolean(window.__jaminTreeProbe)"):
+        return "FAIL the graph never drew"
+
+    before = page.evaluate("() => window.__jaminTreeProbe.showing()")
+    shut = page.evaluate("() => window.__jaminTreeProbe.shutOnes()")
+    if not shut:
+        return "FAIL nothing was left closed to open"
+
+    opened = page.evaluate("(l) => window.__jaminTreeProbe.open(l)", shut[0])
+    if not opened:
+        return f"FAIL could not open {shut[0]!r}"
+
+    # Through the transition, sampling as it runs.
+    lowest = before
+    for _ in range(14):
+        page.wait_for_timeout(40)
+        lowest = min(lowest, page.evaluate("() => window.__jaminTreeProbe.showing()"))
+    page.wait_for_timeout(500)
+    after = page.evaluate("() => window.__jaminTreeProbe.showing()")
+
+    if lowest < before:
+        return f"FAIL the picture shrank while opening ({before} -> {lowest} -> {after})"
+    if after <= before:
+        return f"FAIL opening {shut[0]!r} added nothing ({before} -> {after})"
+    return (f"ok   opening {shut[0]!r} kept every node and added "
+            f"{after - before} ({before} -> {after}, never below {lowest})")
 
 
 def onChart(page, what, small=False):

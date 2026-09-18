@@ -4314,5 +4314,12 @@ if (typeof window !== 'undefined') {
     writeGraph,
     storedGraph,
     setText,
+    // The store's own query layer, so a harness can time it at a realistic
+    // size without going through the interface. @see scripts/shots.py
+    putGrooves,
+    putSet,
+    refreshDrumSets,
+    searchGrooves,
+    grooveFacets,
   }
 }

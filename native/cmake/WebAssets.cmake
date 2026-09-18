@@ -55,6 +55,31 @@ function(jamin_bundle_web target)
             "  or `cmake --build <dir> --target web`.")
     endif()
 
+    #[[
+      And the compiler, which is a separate bundle and a separate build.
+
+      `npm run build` makes two things: the page, and `jamin-compile.js` --
+      jamin's own music code, which the plugin runs headless in QuickJS to turn
+      a chart into notes. @see plugin/PluginProcessor.cpp
+
+      `npm run build:page` makes only the first, and Vite empties the output
+      directory before it writes, so running it alone *removes* the compiler.
+      The page still looks perfectly correct in a browser and in the editor --
+      and the plugin plays nothing at all, because the thing that turns chords
+      into MIDI is not in the bundle. That shipped, installed and was noticed
+      from the DAW being silent.
+
+      A missing compiler is now a build failure rather than a quiet one.
+    ]]
+    if(NOT EXISTS "${JAMIN_WEB_DIST}/jamin-compile.js")
+        message(FATAL_ERROR
+            "The page is built but the compiler is not: no jamin-compile.js in "
+            "${JAMIN_WEB_DIST}.\n"
+            "  `npm run build:page` builds only the page and empties dist on the "
+            "way, which takes the compiler with it.\n"
+            "  Run `npm run build` -- it makes both -- and build again.")
+    endif()
+
     # A target of its own rather than POST_BUILD on the plugin, because
     # POST_BUILD only fires when the plugin relinks -- so a `npm run build` with
     # no C++ change left a stale page inside the bundle, and the tests were

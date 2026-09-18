@@ -160,20 +160,21 @@ export const ADAPTERS = {
 }
 
 /**
- * How big a graph this machine will actually draw.
+ * How much of a tree this machine will draw, and how quickly.
  *
- * The catalogue's own map is a few hundred nodes, which is nothing -- but the
- * plan said a million nodes should be reachable and that claim was made from
- * reading rather than from measuring. So this builds progressively larger
- * graphs until one takes too long or throws, and reports where that was.
+ * Reported rather than asserted: the answer is about the machine, and a test
+ * that fails on a slow laptop teaches nobody anything. What the boot check
+ * asserts is only that a tree the size a catalogue actually needs is drawn at
+ * all. @see native/tools/boot_probe.m
  *
- * Upload and first frame, not steady-state frame rate: the thing that fails at
- * scale is the texture allocation and the link buffer, and a graph that cannot
- * be uploaded never gets to be slow.
+ * The renderer is imported here rather than passed in, now that it is ours. It
+ * was an argument when it was a third-party force-graph engine and this file
+ * made a point of not importing one.
  */
-export async function stressGraph(Graph, sizes = [1000, 10000, 100000, 500000, 1000000]) {
+export async function stressGraph(sizes = [1000, 5000, 20000, 60000]) {
+  const { TreeGraph } = await import('../canvas/treeGraph.js')
   const box = document.createElement('div')
-  box.style.cssText = 'position:fixed;left:-9999px;width:600px;height:400px'
+  box.style.cssText = 'position:fixed;left:-9999px;width:800px;height:600px'
   document.body.appendChild(box)
 
   const said = []
@@ -182,45 +183,17 @@ export async function stressGraph(Graph, sizes = [1000, 10000, 100000, 500000, 1
       const began = performance.now()
       let graph = null
       try {
-        graph = new Graph(box, { spaceSize: 8192, simulationFriction: 0.9 })
-
-        const points = new Float32Array(count * 2)
-        for (let at = 0; at < count; at++) {
-          points[at * 2] = (Math.random() - 0.5) * 8000
-          points[at * 2 + 1] = (Math.random() - 0.5) * 8000
-        }
-        const sizes2 = new Float32Array(count).fill(2)
-        const colours = new Float32Array(count * 4).fill(0.6)
-
-        // Two links per point, which is the shape a bipartite catalogue graph
-        // has and a good deal denser than the tag skeleton this actually draws.
-        const links = new Float32Array(count * 4)
-        for (let at = 0; at < count; at++) {
-          links[at * 4] = at
-          links[at * 4 + 1] = (at + 1) % count
-          links[at * 4 + 2] = at
-          links[at * 4 + 3] = (at + 7) % count
-        }
-
-        graph.setPointPositions(points)
-        graph.setPointSizes(sizes2)
-        graph.setPointColors(colours)
-        graph.setLinks(links)
-        graph.render()
-        graph.start()
-        await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))
-        graph.pause()
-
+        graph = new TreeGraph(box)
+        graph.setTree(fakeTree(count), { openTo: 99 })
+        // A frame, so what is timed includes painting it.
+        await new Promise((drawn) => requestAnimationFrame(drawn))
         said.push(`${count}=${Math.round(performance.now() - began)}ms`)
       } catch (trouble) {
-        said.push(`${count}=threw:${trouble.name}`)
+        said.push(`${count}=threw ${(trouble && trouble.name) || trouble}`)
         break
       } finally {
-        try { graph?.destroy() } catch { /* a graph that threw may not destroy */ }
+        if (graph) graph.destroy()
       }
-
-      // Past ten seconds to get one frame up, nothing larger is worth asking.
-      if (performance.now() - began > 10000) { said.push(`${count}=too slow, stopping`); break }
     }
   } finally {
     box.remove()
@@ -228,66 +201,39 @@ export async function stressGraph(Graph, sizes = [1000, 10000, 100000, 500000, 1
   return said.join(' ')
 }
 
-export async function measureGraph(Graph) {
+/**
+ * That the tree draws at all, in this web view.
+ *
+ * A canvas that fails to get a context fails silently -- the page renders and
+ * the box stays empty -- which is exactly the shape of bug nobody notices
+ * until somebody turns the setting on.
+ */
+export async function measureGraph() {
+  const { TreeGraph } = await import('../canvas/treeGraph.js')
   const box = document.createElement('div')
-  box.style.cssText = 'position:fixed;left:-9999px;width:400px;height:300px'
+  box.style.cssText = 'position:fixed;left:-9999px;width:800px;height:600px'
   document.body.appendChild(box)
 
   try {
-    const tags = Array.from({ length: 64 }, (_, n) => ({ tag: `w${n}`, clips: 8 + n * 3 }))
-    const edges = []
-    for (let a = 0; a < tags.length; a++) {
-      edges.push([a, (a + 1) % tags.length, 5])
-      edges.push([a, (a + 7) % tags.length, 2])
-    }
-
-    const graph = new Graph(box, {
-      spaceSize: 1024, fitViewOnInit: true, simulationFriction: 0.8,
-    })
-    // Any arrangement will do: this measures what the GPU will take, not what
-    // the picture looks like. @see pathTree.js for the real layout.
-    const began = new Float32Array(tags.length * 2)
-    const sizes = new Float32Array(tags.length)
-    const colours = new Float32Array(tags.length * 4)
-    for (let at = 0; at < tags.length; at++) {
-      const angle = (at / tags.length) * Math.PI * 2
-      began[at * 2] = Math.cos(angle) * 200
-      began[at * 2 + 1] = Math.sin(angle) * 200
-      sizes[at] = 6
-      colours.set([0.5, 0.6, 0.9, 1], at * 4)
-    }
-    graph.setPointPositions(began.slice())
-    graph.setPointSizes(sizes)
-    graph.setPointColors(colours)
-
-    const pairs = new Float32Array(edges.length * 2)
-    edges.forEach(([a, b], n) => { pairs[n * 2] = a; pairs[n * 2 + 1] = b })
-    graph.setLinks(pairs)
-    graph.render()
-    graph.start()
-
-    /*
-     * Waited for rather than timed.
-     *
-     * A fixed pause is a coin toss on a loaded machine: at 700ms this reported
-     * `moved=false` on one run and `moved=true` on the next, which is a test
-     * that fails for reasons having nothing to do with the code. So it asks
-     * until the answer is yes, and gives up at a point well past any plausible
-     * first tick.
-     */
-    let now = null
-    let moved = false
-    for (let tries = 0; tries < 40 && !moved; tries++) {
-      await new Promise((done) => setTimeout(done, 100))
-      now = await graph.getPointPositions?.()
-      moved = Boolean(now) && [...now].some((one, at) => Math.abs(one - began[at]) > 0.5)
-    }
-    graph.pause()
-
+    const graph = new TreeGraph(box)
+    graph.setTree(fakeTree(64), { openTo: 99 })
+    await new Promise((drawn) => requestAnimationFrame(drawn))
+    const showing = graph.drawn.length
+    const fitted = graph.at.k !== 1
     graph.destroy()
-    return `points=${tags.length} links=${edges.length} readBack=${now ? now.length : 0}`
-         + ` moved=${Boolean(moved)}`
+    return `points=${showing} fitted=${fitted}`
   } finally {
     box.remove()
   }
+}
+
+/** A tree of a given size, for the probes to draw. */
+function fakeTree(count) {
+  const nodes = []
+  const parents = []
+  for (let n = 0; n < count; n++) {
+    nodes.push({ label: `n${n}`, depth: n === 0 ? 0 : 1 + (n % 3), clips: count - n, leaf: false })
+    parents.push(n === 0 ? -1 : Math.floor((n - 1) / 4))
+  }
+  return { nodes, parents, depth: 5, truncated: false }
 }
