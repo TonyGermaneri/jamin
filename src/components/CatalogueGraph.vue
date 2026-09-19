@@ -227,10 +227,36 @@ function build() {
       shutOnes: () => (graph.root
         ? graph.root.descendants().filter((one) => one._children).map((one) => one.data.label)
         : []),
+      // How far down the picture currently goes, so the harness can say that
+      // a catalogue opens at its top level rather than pouring its second
+      // level onto the screen.
+      deepest: () => graph.drawn.reduce((most, one) => Math.max(most, one.node.depth), 0),
+      labels: () => labels.value.length,
+      // Where each node ended up on screen, which is the only way to tell a
+      // node that is missing from one that is drawn underneath its neighbour
+      // or pushed off the edge by a fit that did not know about the chrome.
+      places: () => graph.drawn.map((one) => {
+        const [x, y] = graph.screenOf(one)
+        return { label: one.node.data.label, x: Math.round(x), y: Math.round(y) }
+      }),
     }
   }
 
-  if (dressed.value) graph.setTree(dressed.value, { openTo: 2 })
+  /*
+   * The top level, and nothing under it.
+   *
+   * Two levels was chosen so the first sight of a catalogue had some shape to
+   * it rather than being a ring of a dozen words, and on a small library that
+   * is true. On a real one the second level is thousands of nodes: the shape
+   * it gives is a solid band, which is not shape, and every label worth
+   * reading is culled for collision by the ones that are not.
+   *
+   * So the catalogue opens as its top level and grows only where somebody
+   * opens it. Nothing is hidden that was not always one double-click away,
+   * and opening never closes anything -- @see toggle, which touches the one
+   * node it was given and leaves every other branch standing.
+   */
+  if (dressed.value) graph.setTree(dressed.value, { openTo: 1 })
   refreshLabels()
 }
 
@@ -295,7 +321,7 @@ watch(dressed, (next) => {
   const graph = engine.value
   if (!graph) return
   here.value = null
-  if (next) graph.setTree(next, { openTo: 2 })
+  if (next) graph.setTree(next, { openTo: 1 })
   refreshLabels()
 })
 

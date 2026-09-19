@@ -84,7 +84,10 @@ export class TreeGraph {
   /* ---------------- the tree ---------------- */
 
   /**
-   * Take a catalogue's tree, and open the first couple of levels of it.
+   * Take a catalogue's tree, and open it down to `openTo`.
+   *
+   * One level, for a real catalogue: the level below it is thousands of nodes
+   * and reads as a solid band. @see components/CatalogueGraph.vue
    *
    * `{ nodes, parents }` in, a d3 hierarchy out. Collapsed children live on
    * `_children`, which is the convention every collapsible-tree example uses
@@ -162,6 +165,30 @@ export class TreeGraph {
     tidyTree()
       .size([Math.PI * 2, deepest * ring])
       .separation((a, b) => (a.parent === b.parent ? 1 : 2) / Math.max(1, a.depth))(this.root)
+
+    /*
+     * Closing the circle, which a tidy tree does not know it is drawing.
+     *
+     * d3 lays a tree out along a line and places the first and last leaf at
+     * the two ends of it. Bent into a ring those two ends are the same place,
+     * so the first node and the last are drawn exactly on top of one another
+     * -- invisible in a catalogue of two hundred, and the whole picture in a
+     * catalogue of two, where the phrase book drew one dot and appeared to
+     * have lost half its contents. It also quietly cost two labels on every
+     * graph, culled for colliding with a node underneath them.
+     *
+     * So the leaves are spread over the ring rather than along it: `L` of
+     * them at the centres of `L` equal arcs, leaving the same gap between the
+     * last and the first as between any other pair. The remap is affine, so
+     * the parents -- which d3 has already placed at the midpoints of their
+     * children -- stay at the midpoints of them.
+     */
+    const leaves = open.reduce((many, one) => many + (one.children ? 0 : 1), 0)
+    if (leaves > 1) {
+      const squeeze = (leaves - 1) / leaves
+      const shift = Math.PI / leaves
+      for (const one of open) one.x = one.x * squeeze + shift
+    }
 
     const next = open.map((node) => {
       const radius = node.depth * ring
@@ -284,6 +311,55 @@ export class TreeGraph {
     return this.at.apply([x, y])
   }
 
+  /**
+   * How much of the canvas is actually clear.
+   *
+   * The canvas runs the whole window and the interface floats on top of it:
+   * a bar of filters across the top, a detail panel down the right, a count
+   * along the bottom. Fitting to the canvas therefore fits to a box a third
+   * of which cannot be seen, and with only two nodes to place it put one of
+   * them squarely behind the detail panel -- a graph that looked like it had
+   * lost half its contents and had not.
+   *
+   * Each floating piece is measured here rather than declared as a number,
+   * because the bar is one row or two depending on how many filters a
+   * catalogue has and the panel is only there once something is picked -- but
+   * it says for itself which edge it is on, as `data-keep-clear="right"`.
+   * Working that out from the geometry instead was tried and was wrong: a
+   * panel down the right-hand side sits against the bottom edge as snugly as
+   * it does the right one, the tie went the wrong way, and the graph was
+   * squeezed into the top corner with half of it behind the panel -- which is
+   * the fault this was written to fix.
+   */
+  clearArea() {
+    const box = { top: 0, right: 0, bottom: 0, left: 0 }
+    const host = this.canvas && this.canvas.parentElement
+    if (!host || !host.ownerDocument) return box
+
+    const mine = this.canvas.getBoundingClientRect()
+    if (!mine.width || !mine.height) return box
+
+    for (const one of host.ownerDocument.querySelectorAll('[data-keep-clear]')) {
+      const side = one.getAttribute('data-keep-clear')
+      if (!Object.prototype.hasOwnProperty.call(box, side)) continue
+
+      const there = one.getBoundingClientRect()
+      if (!there.width || !there.height) continue
+      if (there.right <= mine.left || there.left >= mine.right) continue
+      if (there.bottom <= mine.top || there.top >= mine.bottom) continue
+
+      const deep = side === 'top' ? there.bottom - mine.top
+        : side === 'bottom' ? mine.bottom - there.top
+          : side === 'left' ? there.right - mine.left
+            : mine.right - there.left
+      // Never more than half, so a panel that has grown to fill the window
+      // leaves a graph rather than a sliver.
+      const most = (side === 'top' || side === 'bottom' ? mine.height : mine.width) * 0.5
+      box[side] = Math.max(box[side], Math.min(deep, most))
+    }
+    return box
+  }
+
   fitView(padding = 80) {
     if (!this.drawn.length || !this.width) return
     let lowX = Infinity; let lowY = Infinity; let highX = -Infinity; let highY = -Infinity
@@ -296,10 +372,17 @@ export class TreeGraph {
     }
     const wide = Math.max(1, highX - lowX)
     const tall = Math.max(1, highY - lowY)
-    const scale = Math.max(0.02, Math.min(40,
-      Math.min((this.width - padding * 2) / wide, (this.height - padding * 2) / tall)))
+
+    const clear = this.clearArea()
+    const room = Math.max(120, this.width - clear.left - clear.right - padding * 2)
+    const high = Math.max(120, this.height - clear.top - clear.bottom - padding * 2)
+    // The middle of what can be seen, which is not the middle of the canvas.
+    const midX = clear.left + (this.width - clear.left - clear.right) / 2
+    const midY = clear.top + (this.height - clear.top - clear.bottom) / 2
+
+    const scale = Math.max(0.02, Math.min(40, Math.min(room / wide, high / tall)))
     select(this.canvas).call(this.zoom.transform, zoomIdentity
-      .translate(this.width / 2, this.height / 2)
+      .translate(midX, midY)
       .scale(scale)
       .translate(-(lowX + wide / 2), -(lowY + tall / 2)))
   }

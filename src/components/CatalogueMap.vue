@@ -60,7 +60,7 @@ const waiting = computed(() => Boolean(props.busy))
          readable while the next one is worked out. -->
     <div v-if="waiting" class="jamin-map-progress" aria-hidden="true"></div>
 
-    <div class="jamin-map-glass">
+    <div class="jamin-map-glass" data-keep-clear="top">
       <!-- Which track, which catalogue, and the way out. -->
       <div v-if="$slots.chrome" class="jamin-map-chrome">
         <slot name="chrome" />
@@ -84,14 +84,14 @@ const waiting = computed(() => Boolean(props.busy))
       @see scripts/shots.py
     -->
     <div class="jamin-map-below">
-      <aside v-if="$slots.detail" class="jamin-map-detail">
+      <aside v-if="$slots.detail" class="jamin-map-detail" data-keep-clear="right">
         <slot name="detail" />
       </aside>
 
       <!-- What the filters found, and how much of the map is drawn. The
            second is a fact about the picture rather than about the catalogue,
            and on a map that is worth saying. -->
-      <div class="jamin-map-count">
+      <div class="jamin-map-count" data-keep-clear="bottom">
         <strong>{{ found.toLocaleString() }}</strong>
         <span>{{ label }}</span>
         <span v-if="tree && tree.nodes">

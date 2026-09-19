@@ -91,7 +91,9 @@ def main():
         ready(page)
 
         print(f"\n  {reachTools(page)}")
-        print(f"  {openingKeepsIt(page)}\n")
+        print(f"  {startsSmall(page)}")
+        print(f"  {openingKeepsIt(page)}")
+        print(f"  {eachCatalogue(page)}\n")
 
         for name, prepare in VIEWS:
             if wanted and name not in wanted:
@@ -277,6 +279,82 @@ def openingKeepsIt(page):
         return f"FAIL opening {shut[0]!r} added nothing ({before} -> {after})"
     return (f"ok   opening {shut[0]!r} kept every node and added "
             f"{after - before} ({before} -> {after}, never below {lowest})")
+
+
+def startsSmall(page):
+    """Does a catalogue open at its top level, or pour itself onto the screen?
+
+    It used to open two levels deep, which on a shipped corpus is a few nodes
+    and on a real library is thousands: a solid band of dots, with every label
+    worth reading culled for collision against the ones that were not. The
+    complaint was "there's too damn many nodes", and the number is the check.
+    """
+    page.evaluate("""() => {
+      const app = window.__jaminApp
+      app.state.settings.graph.drums = true
+      app.openBook('drums')
+    }""")
+    page.wait_for_timeout(3000)
+    if not page.evaluate("() => Boolean(window.__jaminTreeProbe)"):
+        return "FAIL the graph never drew"
+    deepest = page.evaluate("() => window.__jaminTreeProbe.deepest()")
+    showing = page.evaluate("() => window.__jaminTreeProbe.showing()")
+    named = page.evaluate("() => window.__jaminTreeProbe.labels()")
+    shut = len(page.evaluate("() => window.__jaminTreeProbe.shutOnes()"))
+    if deepest > 1:
+        return f"FAIL the catalogue opened {deepest} levels deep, not 1"
+    # And the point of showing less: what is left can be read. A ring of dots
+    # with no words on it is not an improvement on a band of them.
+    if showing and named < showing * 0.8:
+        return f"FAIL only {named} of {showing} nodes got a label"
+    return (f"ok   the catalogue opens at its top level: {showing} nodes, "
+            f"{named} labelled, {shut} still closed")
+
+
+def eachCatalogue(page):
+    """The same question of all three, because they are not the same shape.
+
+    The drum catalogue has one library at its middle; the phrase catalogue has
+    a source per root and the progression catalogue a genre. A rule written
+    against the shape of one of them is a rule that empties another.
+    """
+    out = []
+    for book in ("drums", "phrases", "progressions"):
+        page.evaluate("""(b) => {
+          const app = window.__jaminApp
+          app.state.settings.graph[b] = true
+          app.openBook(b)
+        }""", book)
+        page.wait_for_timeout(2500)
+        if not page.evaluate("() => Boolean(window.__jaminTreeProbe)"):
+            out.append(f"FAIL {book}: no graph")
+            continue
+        showing = page.evaluate("() => window.__jaminTreeProbe.showing()")
+        deepest = page.evaluate("() => window.__jaminTreeProbe.deepest()")
+        places = page.evaluate("() => window.__jaminTreeProbe.places()")
+
+        # Nothing may be drawn where nothing can be seen. The canvas runs the
+        # whole window and the panels float on top of it, so a fit that does
+        # not account for them puts nodes behind the detail pane: the phrase
+        # book drew two sources and showed one, which is indistinguishable
+        # from a catalogue that has lost half its contents.
+        hidden = [one for one in places if page.evaluate("""(p) => {
+          for (const el of document.querySelectorAll('[data-keep-clear]')) {
+            const r = el.getBoundingClientRect()
+            if (!r.width || !r.height) continue
+            if (p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom) return true
+          }
+          return p.x < 0 || p.y < 0 || p.x > window.innerWidth || p.y > window.innerHeight
+        }""", one)]
+
+        if deepest > 1:
+            out.append(f"FAIL {book} opened {deepest} levels deep")
+        elif hidden:
+            out.append(f"FAIL {book} hid {len(hidden)} of {showing}: "
+                       + ", ".join(f"{h['label']}({h['x']},{h['y']})" for h in hidden[:4]))
+        else:
+            out.append(f"ok {book}: {showing} nodes, all in the clear")
+    return "  |  ".join(out)
 
 
 def withLibrary(page, book):
