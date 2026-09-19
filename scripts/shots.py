@@ -367,12 +367,20 @@ def eachCatalogue(page):
         # measuring the wrong thing -- which is what this did on its first
         # run, reporting two levels deep because the check before it had
         # opened one.
-        page.evaluate("""(b) => {
+        # Closed, forgotten, then opened -- with a wait in between, or the
+        # book never unmounts and the graph keeps the nodes the check before
+        # this one opened. Clearing the remembered set is not enough on its
+        # own: the live renderer holds its own copy.
+        page.evaluate("""() => {
           const app = window.__jaminApp
-          app.state.settings.graph.open = {}
-          app.state.settings.graph[b] = true
           app.state.ui.book = null
           app.state.ui.progressions = false
+          app.state.settings.graph.open = {}
+        }""")
+        page.wait_for_timeout(400)
+        page.evaluate("""(b) => {
+          const app = window.__jaminApp
+          app.state.settings.graph[b] = true
           app.openBook(b)
         }""", book)
         page.wait_for_timeout(2500)

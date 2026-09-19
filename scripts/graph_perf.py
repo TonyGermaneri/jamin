@@ -100,6 +100,7 @@ async ([which]) => {
 SHOW = """
 async ([which, book]) => {
   const app = window.__jaminApp
+  for (const key of Object.keys(app.timings)) delete app.timings[key]
   const at = performance.now()
   const g = app.state.settings.graph
   g.drums = g.phrases = g.progressions = true
@@ -120,7 +121,12 @@ async ([which, book]) => {
     }
     look()
   })
-  return { ms: Math.round(performance.now() - at), drawn }
+  return {
+    ms: Math.round(performance.now() - at),
+    drawn,
+    spent: Object.fromEntries(Object.entries(app.timings)
+      .map(([what, one]) => [what, { calls: one.calls, ms: Math.round(one.ms) }])),
+  }
 }
 """
 
@@ -222,22 +228,77 @@ async () => {
 FILTER = """
 async ([genre]) => {
   const app = window.__jaminApp
-  const before = (window.__jaminTreeProbe || { showing: () => 0 }).showing()
+  const probe = () => window.__jaminTreeProbe || { showing: () => 0 }
+
+  /*
+   * Quiet first.
+   *
+   * `show` returns when the first node is drawn, and the book is still
+   * counting its facets and fetching its first page behind that. Starting
+   * the clock there charged the filter for the tail of the open -- 1,556ms
+   * of facet counting that a filter change does not do.
+   */
+  const quiet = async () => {
+    for (let i = 0; i < 400; i++) {
+      await new Promise((go) => setTimeout(go, 50))
+      if (!app.state.drumBusy) return true
+    }
+    return false
+  }
+  await quiet()
+  await new Promise((go) => setTimeout(go, 400))
+
+  const book = window.__jaminBookProbe
+  if (!book) return { ms: -1, settled: 0, before: 0, spent: {}, why: 'no book probe' }
+
+  const before = probe().showing()
+  for (const key of Object.keys(app.timings)) delete app.timings[key]
   const at = performance.now()
-  app.state.drumFilters.genre = genre
+  // Through the ref the control is bound to, which is what clicking it does.
+  book.filter('genre', genre)
+
+  /*
+   * Settled, not merely changed.
+   *
+   * Waiting for the count to differ is wrong twice over: a filter that
+   * happens to leave the same number of top-level nodes never satisfies it,
+   * and one that empties the graph never satisfies it either -- which is how
+   * a filter that ran in 655ms was reported as taking two minutes. So this
+   * waits for the picture to stop moving, and reports what it stopped at.
+   */
+  /*
+   * Polled on a timer rather than on frames.
+   *
+   * requestAnimationFrame in a software-rendered browser runs at whatever
+   * rate the software renderer manages, and waiting thirty frames for the
+   * picture to hold still charged the filter six seconds of the harness's
+   * own patience on top of the 1.3 seconds of work it actually did.
+   * Twenty-millisecond polls measure the application instead.
+   */
   const settled = await new Promise((done) => {
-    const give = performance.now() + 120000
+    const give = performance.now() + 30000
+    let was = -1
+    let still = 0
     const look = () => {
-      const probe = window.__jaminTreeProbe
-      if (probe && probe.showing() > 0 && probe.showing() !== before) {
-        return done(probe.showing())
-      }
-      if (performance.now() > give) return done(0)
-      requestAnimationFrame(look)
+      const now = probe().showing()
+      // Busy counts as moving: the picture can be still because the query
+      // behind it has not come back yet.
+      still = now === was && now !== before && !book.busy() ? still + 1 : 0
+      was = now
+      if (still >= 3) return done(now)
+      if (performance.now() > give) return done(now)
+      setTimeout(look, 20)
     }
     look()
   })
-  return { ms: Math.round(performance.now() - at), settled, before }
+  return {
+    ms: Math.round(performance.now() - at),
+    settled,
+    before,
+    found: book.found(),
+    spent: Object.fromEntries(Object.entries(app.timings)
+      .map(([what, one]) => [what, { calls: one.calls, ms: Math.round(one.ms) }])),
+  }
 }
 """
 
@@ -289,7 +350,7 @@ def main():
         book = "drums" if args.which == "drums" else "progressions"
         found["show"] = page.evaluate(SHOW, [args.which, book])
         page.wait_for_timeout(500)
-        found["filter"] = page.evaluate(FILTER, ["rock"])
+        found["filter"] = page.evaluate(FILTER, ["Rock"])
         browser.close()
     httpd.shutdown()
 
@@ -314,6 +375,12 @@ def main():
           f"nodes on screen")
     print(f"  filter    {found['filter']['ms']:,} ms   -> "
           f"{found['filter']['settled']:,} nodes (was {found['filter']['before']:,})")
+    for name, one in (("show", found["show"]), ("filter", found["filter"])):
+        spent = one.get("spent") or {}
+        if spent:
+            print(f"      {name} spent it on: " + ", ".join(
+                f"{what} {it['ms']:,}ms x{it['calls']}"
+                for what, it in sorted(spent.items(), key=lambda kv: -kv[1]["ms"])))
     if trouble:
         print(f"  {len(trouble)} console error(s): {trouble[0][:160]}")
 

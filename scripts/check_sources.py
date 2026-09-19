@@ -144,6 +144,13 @@ DEFINED = re.compile(
     r"^\s*(?:export\s+)?(?:static\s+|async\s+|get\s+|set\s+|\*\s*)*"
     r"(?:function\s+)?([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{", re.M)
 
+# And the same thing written as an arrow. `const timed = async (fn) => ...`
+# in drumStore.js is a local helper that happens to share a name with a store
+# export, and the file was reported for failing to import something it owns.
+ARROWED = re.compile(
+    r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*"
+    r"(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>", re.M)
+
 
 def unimported():
     with open(os.path.join(ROOT, "src", "store.js"), encoding="utf-8") as handle:
@@ -168,7 +175,7 @@ def unimported():
                 if name:
                     bound.add(name)
 
-        mine = set(DEFINED.findall(text))
+        mine = set(DEFINED.findall(text)) | set(ARROWED.findall(text))
         for name in sorted(exported):
             if name in bound or name in mine:
                 continue

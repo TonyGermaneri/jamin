@@ -1025,7 +1025,51 @@ async function refreshTree() {
  * previous version threw "Cannot access 'd' before initialization" and rendered
  * nothing.
  */
-watch([asGraph, () => filtered.value, sortBy, () => state.drumHits], refreshTree)
+/*
+ * The filters themselves, not the page of rows they produced.
+ *
+ * `state.drumHits` was in here because `filtered` is a boolean -- going from
+ * Rock to Jazz does not change it -- and the list changing was a convenient
+ * proxy for the filters changing. It is a bad proxy: the list changes on
+ * every page turn and on every search, so opening the book re-read the whole
+ * stored map three times and the unfiltered map does not depend on the list
+ * at all. Measured: 2,605ms of the 3,393ms it took to open.
+ *
+ * So the watcher reads what the tree is actually built from. @see
+ * scripts/graph_perf.py
+ */
+const graphFilters = computed(() => JSON.stringify([
+  library.value, shelf.value, search.value, kind.value, bars.value,
+  signature.value, genre.value, feel.value, surface.value, partTag.value,
+  era.value, onlyFavourites.value, onlyFitting.value,
+]))
+
+watch([asGraph, graphFilters, sortBy], refreshTree)
+
+/*
+ * A way in for the harness.
+ *
+ * The filters are refs inside this component, not state on the store, so
+ * there is no way to change one from outside -- which meant the performance
+ * harness spent three runs timing a filter it had never actually applied,
+ * and reporting the wait as the cost. Setting them through the same refs the
+ * controls are bound to is exactly what clicking the control does.
+ * @see scripts/graph_perf.py
+ */
+if (typeof window !== 'undefined') {
+  const dials = {
+    genre, kind, bars, signature, feel, surface, partTag, era, shelf, search,
+  }
+  window.__jaminBookProbe = {
+    filter: (name, value) => {
+      if (!dials[name]) return false
+      dials[name].value = value
+      return true
+    },
+    busy: () => Boolean(state.drumBusy || reading.value || facetsBusy.value),
+    found: () => state.drumHits.length,
+  }
+}
 onMounted(refreshTree)
 
 </script>

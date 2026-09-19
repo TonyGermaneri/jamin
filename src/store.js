@@ -2733,11 +2733,37 @@ function boundToImported(bindings) {
  */
 let drumSearches = 0
 
+/**
+ * What the heavy paths cost, and how often they are walked.
+ *
+ * Kept because guessing was tried. Three separate times this session an
+ * end-to-end number said a window was slow and the cause turned out to be
+ * somewhere other than where it pointed -- so the pieces say for themselves,
+ * and `graph_perf.py` reads this rather than inferring.
+ *
+ * Two counters and a clock; it costs nothing worth measuring, and a
+ * performance harness that has to be compiled in specially is a harness
+ * nobody runs.
+ */
+export const timings = {}
+
+export async function timed(what, run) {
+  const at = performance.now()
+  try {
+    return await run()
+  } finally {
+    const spent = performance.now() - at
+    const kept = timings[what] || (timings[what] = { calls: 0, ms: 0 })
+    kept.calls++
+    kept.ms += spent
+  }
+}
+
 export async function searchDrums(filters = null, window = null) {
   drumSearches++
   state.drumBusy = true
   try {
-    return await runDrumSearch(filters, window)
+    return await timed('searchDrums', () => runDrumSearch(filters, window))
   } finally {
     if (--drumSearches <= 0) { drumSearches = 0; state.drumBusy = false }
   }
@@ -2943,7 +2969,9 @@ export async function buildBulkGraph(which, { onProgress = null } = {}) {
   }
 
   await writeGraph(which, graph)
-  return unpackStoredGraph(graph)
+  const made = unpackStoredGraph(graph)
+  graphsHeld.set(which, made)
+  return made
 }
 
 /** The stored shape, as the view wants it. */
@@ -2969,14 +2997,30 @@ function labelFor(which, group) {
   return (set && set.name) || group
 }
 
-/** What has been built, if anything. */
+/**
+ * What has been built, if anything -- read once and kept.
+ *
+ * The map is 932,299 nodes and 77MB, and reading it back is 230ms of
+ * deserialising that answers the same question every time. Opening the drum
+ * book asked three times, which is most of a second spent arriving at an
+ * identical object. It is invalidated where it is written and where it is
+ * forgotten, which are the only two things that can change the answer.
+ */
+const graphsHeld = new Map()
+
 export async function storedGraph(which) {
-  return unpackStoredGraph(await readGraph(which))
+  return timed('storedGraph', async () => {
+    if (graphsHeld.has(which)) return graphsHeld.get(which)
+    const got = unpackStoredGraph(await readGraph(which))
+    graphsHeld.set(which, got)
+    return got
+  })
 }
 
 
 /** The catalogue changed, so the map of it is out of date. */
 export async function forgetCatalogueGraph(which) {
+  graphsHeld.delete(which)
   return forgetGraph(which)
 }
 
@@ -2993,8 +3037,29 @@ export async function forgetCatalogueGraph(which) {
  * one has to be built once and kept.
  */
 export async function drumRowsForGraph(mostRows = 60000) {
-  const found = await searchGrooves(state.drumFilters, { limit: mostRows, offset: 0 })
-  return found.rows.map(unpackGroove)
+  return timed('drumRowsForGraph', async () => {
+    const found = await searchGrooves(state.drumFilters, { limit: mostRows, offset: 0 })
+    /*
+     * The seven fields a tree is built from, not the whole pattern.
+     *
+     * `unpackGroove` turns a stored row into a groove -- name, notes, tags,
+     * every field the book's list and its piano roll want. A tree wants the
+     * library and the path, and the facet fields when somebody has asked to
+     * sort by one. Sixty thousand full grooves to read sixty thousand paths
+     * was most of the cost of changing a filter.
+     * @see core/graphView.js ADAPTERS.drums
+     */
+    return found.rows.map((row) => ({
+      setId: row.s,
+      path: row.p,
+      name: row.n,
+      genre: row.g,
+      bars: row.r,
+      timeSignature: row.t,
+      kind: row.k,
+      tags: row.x || {},
+    }))
+  })
 }
 
 /**
@@ -3010,10 +3075,14 @@ export function treeOf(which, rows, sortBy = '') {
   const adapter = ADAPTERS[which]
   if (!adapter || !rows || !rows.length) return null
 
+  const at = performance.now()
   const tree = buildTree(rows, {
     pathOf: (one) => adapter.treePath(one),
     facetOf: sortBy ? (one) => adapter.facet(one, sortBy) : null,
   })
+  const kept = timings.treeOf || (timings.treeOf = { calls: 0, ms: 0 })
+  kept.calls++
+  kept.ms += performance.now() - at
   return { ...tree, clips: rows.length }
 }
 
@@ -3059,6 +3128,10 @@ function nextPageFrom(offset) {
 
 /** What the filters can offer. No library means across all of them. */
 export async function drumFacetsFor(setId) {
+  return timed('drumFacetsFor', () => readDrumFacets(setId))
+}
+
+async function readDrumFacets(setId) {
   return grooveFacets(setId || null)
 }
 
@@ -4517,7 +4590,13 @@ if (typeof window !== 'undefined') {
     // renderer without a twenty-minute import first. It goes in the same store
     // the plugin reads it back out of, so what is photographed is the real
     // path. @see scripts/shots.py
-    writeGraph,
+    // Through the same door the application uses, so what the harness
+    // writes is what the next read sees rather than a kept copy of what was
+    // there before it. @see storedGraph
+    writeGraph: async (which, graph) => {
+      graphsHeld.delete(which)
+      return writeGraph(which, graph)
+    },
     storedGraph,
     setText,
     // The store's own query layer, so a harness can time it at a realistic
@@ -4529,5 +4608,6 @@ if (typeof window !== 'undefined') {
     grooveFacets,
     materialiseFacets,
     putProgressions,
+    timings,
   }
 }
