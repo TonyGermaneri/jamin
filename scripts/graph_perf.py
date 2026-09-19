@@ -43,15 +43,24 @@ CORPORA = os.path.join(ROOT, "tests", "browser", "corpora")
 BUDGET_MS = 1000
 
 
+class Both(http.server.SimpleHTTPRequestHandler):
+    """dist, with the corpora answered from where they actually live.
+
+    A symlink in dist/ was simpler and was a trap: the plugin's web copy
+    followed it and set about packing 374MB of test corpus into the bundle,
+    which is data jamin may not redistribute. Serving the path instead means
+    nothing the build can see ever points at them.
+    """
+
+    def translate_path(self, path):
+        clean = path.split("?", 1)[0].split("#", 1)[0]
+        if clean.startswith("/corpora/"):
+            return os.path.join(CORPORA, *clean[len("/corpora/"):].split("/"))
+        return super().translate_path(path)
+
+
 def serve():
-    link = os.path.join(ROOT, "dist", "corpora")
-    if os.path.isdir(CORPORA) and not os.path.exists(link):
-        try:
-            os.symlink(CORPORA, link)
-        except OSError as exc:
-            print("note: could not reach the corpora:", exc)
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler,
-                                directory=os.path.join(ROOT, "dist"))
+    handler = functools.partial(Both, directory=os.path.join(ROOT, "dist"))
     httpd = socketserver.TCPServer(("127.0.0.1", 0), handler)
     httpd.allow_reuse_address = True
     threading.Thread(target=httpd.serve_forever, daemon=True).start()

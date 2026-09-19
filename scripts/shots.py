@@ -39,22 +39,29 @@ CORPORA = os.path.join(ROOT, "tests", "browser", "corpora")
 WIDE, TALL = 1920, 1080
 
 
-def serve():
-    """dist, with the corpora hung off it.
+class Both(http.server.SimpleHTTPRequestHandler):
+    """dist, with the corpora answered from where they actually live.
 
-    A symlink rather than a second server: the page fetches them with a plain
-    relative URL and nothing has to know about ports. `vite build` empties
-    dist, so it is made here rather than kept.
+    This was a symlink in dist/, which the page could fetch with a plain
+    relative URL and nothing had to know about ports. It was also a trap: the
+    plugin's web copy globs dist/ into the bundle, followed the link, and set
+    about packing 374MB of test corpus into the plugin -- the drum collection
+    is import-only and Chordonomicon is CC-BY-NC, so neither may ship. It
+    filled the disk before it got that far.
+
+    Answering the path instead means nothing the build can see ever points at
+    them. @see native/cmake/CopyWeb.cmake, which now refuses as well.
     """
-    link = os.path.join(ROOT, "dist", "corpora")
-    if os.path.isdir(CORPORA) and not os.path.exists(link):
-        try:
-            os.symlink(CORPORA, link)
-        except OSError as exc:
-            print("note: could not reach the corpora:", exc)
 
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler,
-                                directory=os.path.join(ROOT, "dist"))
+    def translate_path(self, path):
+        clean = path.split("?", 1)[0].split("#", 1)[0]
+        if clean.startswith("/corpora/"):
+            return os.path.join(CORPORA, *clean[len("/corpora/"):].split("/"))
+        return super().translate_path(path)
+
+
+def serve():
+    handler = functools.partial(Both, directory=os.path.join(ROOT, "dist"))
     httpd = socketserver.TCPServer(("127.0.0.1", 0), handler)
     httpd.allow_reuse_address = True
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
