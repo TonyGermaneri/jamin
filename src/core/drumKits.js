@@ -214,6 +214,24 @@ export const GENERAL_MIDI_IN = {
   45: 'tomMid', 47: 'tomMid',
   48: 'tomHigh', 50: 'tomHigh',
   42: 'hatClosed', 44: 'hatPedal', 46: 'hatOpen',
+
+  /*
+   * And the hi-hat edge, which General MIDI does not define and almost every
+   * drum library sends anyway.
+   *
+   * 22 and 26 are not in the standard -- they sit below its range entirely --
+   * but a hi-hat with a separate edge articulation has to put it somewhere,
+   * and these two are where the industry put it. Measured across the
+   * collection they are 1.5% of every note played, in libraries whose toms
+   * are at General MIDI's numbers: General MIDI kits with a Roland-style hat,
+   * not Roland kits. Read as anything else they are silence.
+   *
+   * Which voice each is, is a judgement jamin has already made once, for the
+   * Roland kit the shipped corpus was played on -- edge-closed and edge-open.
+   * Agreeing with itself is worth more here than a second opinion.
+   * @see TD11_TO_VOICE
+   */
+  22: 'hatClosed', 26: 'hatOpen',
   49: 'crash1', 55: 'crash1',
   52: 'crash2', 57: 'crash2',
   51: 'ride', 59: 'ride', 53: 'rideBell',
