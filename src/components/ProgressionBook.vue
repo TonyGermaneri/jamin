@@ -531,8 +531,26 @@ onMounted(refreshTree)
 
 
 
+                <!--
+                  `v-if`, not `v-else-if`.
+
+                  This was chained to the graph block that used to sit between
+                  it and the filters, and when the graph moved out to the
+                  full-screen map the chain did not break -- it re-attached to
+                  the filter panel above, which has a `v-if` of its own. So the
+                  list rendered only when the filters did *not*, which is to
+                  say only when the library had no genres or decades to offer.
+                  Import anything and the filter panel appears and the list
+                  vanishes: rows, a count, working filters, and nothing to
+                  show for them.
+
+                  Syntactically valid the whole time, which is why lint is
+                  quiet about it and why the screenshot of this view looked
+                  correct -- the harness had no library imported, so the
+                  filters were absent and the list appeared. @see scripts/shots.py
+                -->
                 <v-list
-                  v-else-if="rows.length"
+                  v-if="rows.length"
                   density="compact"
                   class="py-0 jamin-book-scroll"
                   tabindex="0"

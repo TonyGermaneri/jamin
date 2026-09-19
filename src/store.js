@@ -86,7 +86,7 @@ import { CHORDONOMICON } from './core/importers.js'
 import { chordonomiconToChart } from './core/importers.js'
 import {
   countProgressions, pageProgressions, searchProgressions, progressionFacets, clearProgressions,
-  everyProgressionText,
+  everyProgressionText, putProgressions,
 } from './core/progressionStore.js'
 import { importChordonomiconCsv, CHORDONOMICON_CSV } from './core/csvImport.js'
 import { loadChordDictionary, nameForSet } from './core/chordDictionary.js'
@@ -4391,5 +4391,6 @@ if (typeof window !== 'undefined') {
     searchGrooves,
     grooveFacets,
     materialiseFacets,
+    putProgressions,
   }
 }

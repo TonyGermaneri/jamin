@@ -34,6 +34,26 @@ export default [
     },
     rules: {
       'no-undef': 'error',
+
+      /*
+       * And the template equivalent: a branch chained to nothing.
+       *
+       * A `v-else` whose `v-if` has been removed does not error and does not
+       * warn in a build -- it simply never renders, which is the same class of
+       * fault as `no-undef`: silent in the bundle, visible only as a thing
+       * that is not there.
+       *
+       * Worth saying what this does *not* catch, since it was added while
+       * fixing something it cannot see. When the progression list lost its
+       * `v-if`, the `v-else-if` beneath re-attached to the filter panel above
+       * rather than being orphaned -- a perfectly valid chain that rendered
+       * the list only when the filters were absent. No lint rule can know that
+       * was not meant. Only a photograph of the view with a library in it can.
+       * @see scripts/shots.py
+       */
+      'vue/valid-v-else': 'error',
+      'vue/valid-v-else-if': 'error',
+      'vue/valid-v-if': 'error',
     },
   },
   {

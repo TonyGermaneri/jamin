@@ -279,6 +279,33 @@ def openingKeepsIt(page):
             f"{after - before} ({before} -> {after}, never below {lowest})")
 
 
+def withLibrary(page, book):
+    """A catalogue view with something actually in it.
+
+    The empty state and the loaded state are different pictures, and the
+    interesting faults live in the loaded one: the progression list once
+    rendered only when the filter panel did *not*, so it disappeared the
+    moment a library gave the filters some genres to offer. Photographed
+    empty, it looked perfect.
+    """
+    page.evaluate("""async () => {
+      const app = window.__jaminApp
+      const GEN = ['rock', 'pop', 'jazz', 'metal', 'soul', 'country', 'blues', 'folk']
+      const rows = []
+      for (let n = 0; n < 4000; n++) {
+        rows.push({ n, name: `${GEN[n % GEN.length]} ${1950 + (n % 7) * 10}s #${n}`,
+          chords: '<verse_1> C Am F G', bars: [2, 4, 4, 8][n % 4],
+          genre: GEN[n % GEN.length], decade: String(1950 + (n % 7) * 10),
+          source: 'seeded' })
+      }
+      await app.putProgressions(rows)
+      app.state.bulk.count = rows.length
+    }""")
+    page.wait_for_timeout(600)
+    show(page, book)
+    page.wait_for_timeout(1200)
+
+
 def onChart(page, what, small=False):
     """The chart, with one of the pointing affordances open.
 
@@ -312,6 +339,9 @@ VIEWS = [
     ("list-phrases", lambda page: (graph(page, False), show(page, "phrases"))),
     ("list-drums", lambda page: (graph(page, False), show(page, "drums"))),
     ("list-progressions", lambda page: (graph(page, False), show(page, "progressions"))),
+    # The same view with a library in it, which is where the faults are.
+    ("list-progressions-full", lambda page: (graph(page, False),
+                                             withLibrary(page, "progressions"))),
     ("graph-phrases", lambda page: (graph(page, True), show(page, "phrases"))),
     ("graph-drums", lambda page: (graph(page, True), show(page, "drums"))),
     ("graph-progressions", lambda page: (graph(page, True), show(page, "progressions"))),
