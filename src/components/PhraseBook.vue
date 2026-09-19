@@ -508,6 +508,7 @@ const assigningTo = computed(() => {
             <CatalogueMap
               v-if="asGraph"
               :tree="graph"
+              book="phrases"
               :busy="state.licksLoading"
               :found="matches.length"
               label="phrases"

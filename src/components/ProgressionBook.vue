@@ -453,6 +453,7 @@ onMounted(refreshTree)
             <CatalogueMap
               v-if="asGraph"
               :tree="graph"
+              book="progressions"
               :busy="building || reading"
               :found="total"
               label="progressions"

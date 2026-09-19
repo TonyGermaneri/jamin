@@ -1080,6 +1080,7 @@ onMounted(refreshTree)
             <CatalogueMap
               v-if="asGraph"
               :tree="graph"
+              book="drums"
               :busy="building || reading || state.drumBusy"
               :found="found"
               label="patterns"

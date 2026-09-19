@@ -93,6 +93,7 @@ def main():
         print(f"\n  {reachTools(page)}")
         print(f"  {startsSmall(page)}")
         print(f"  {openingKeepsIt(page)}")
+        print(f"  {openingStaysPut(page)}")
         print(f"  {eachCatalogue(page)}\n")
 
         for name, prepare in VIEWS:
@@ -311,6 +312,47 @@ def startsSmall(page):
             f"{named} labelled, {shut} still closed")
 
 
+def openingStaysPut(page):
+    """Opening a node must not move the camera.
+
+    "It should do so instantly, without moving the camera, no reloading the
+    graph." Nothing a screenshot can see: a graph rebuilt around the node you
+    clicked and a graph that grew from it look identical once both have
+    settled. The transform is the difference, so the transform is what is
+    checked -- along with the node count, because a rebuild that happens to
+    leave the camera alone is still a rebuild.
+    """
+    if not page.evaluate("() => Boolean(window.__jaminTreeProbe)"):
+        return "FAIL the graph never drew"
+
+    before = page.evaluate("() => window.__jaminTreeProbe.showing()")
+    was = page.evaluate("() => window.__jaminTreeProbe.camera()")
+    shut = page.evaluate("() => window.__jaminTreeProbe.shutOnes()")
+    if not shut:
+        return "FAIL nothing was left closed to open"
+
+    if not page.evaluate("(l) => window.__jaminTreeProbe.open(l)", shut[0]):
+        return f"FAIL could not open {shut[0]!r}"
+
+    # Through the bloom, sampling as it runs: nothing may vanish on the way.
+    lowest = before
+    for _ in range(20):
+        page.wait_for_timeout(40)
+        lowest = min(lowest, page.evaluate("() => window.__jaminTreeProbe.showing()"))
+    page.wait_for_timeout(600)
+    after = page.evaluate("() => window.__jaminTreeProbe.showing()")
+    now = page.evaluate("() => window.__jaminTreeProbe.camera()")
+
+    if lowest < before:
+        return f"FAIL the picture shrank while opening ({before} -> {lowest} -> {after})"
+    if after <= before:
+        return f"FAIL opening {shut[0]!r} added nothing ({before} -> {after})"
+    if now != was:
+        return f"FAIL the camera moved: {was} -> {now}"
+    return (f"ok   opening {shut[0]!r} grew it {before} -> {after} "
+            f"and left the camera at k={now['k']}")
+
+
 def eachCatalogue(page):
     """The same question of all three, because they are not the same shape.
 
@@ -320,9 +362,17 @@ def eachCatalogue(page):
     """
     out = []
     for book in ("drums", "phrases", "progressions"):
+        # From a clean slate. What a catalogue was left open at is remembered
+        # now, and a check that measures its own predecessor's leftovers is
+        # measuring the wrong thing -- which is what this did on its first
+        # run, reporting two levels deep because the check before it had
+        # opened one.
         page.evaluate("""(b) => {
           const app = window.__jaminApp
+          app.state.settings.graph.open = {}
           app.state.settings.graph[b] = true
+          app.state.ui.book = null
+          app.state.ui.progressions = false
           app.openBook(b)
         }""", book)
         page.wait_for_timeout(2500)

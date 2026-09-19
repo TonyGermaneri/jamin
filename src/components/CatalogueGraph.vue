@@ -40,7 +40,7 @@ export default {}
  */
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { state } from '../store.js'
-import { treeSizes, treeColours, rgba } from '../core/pathTree.js'
+import { rgba } from '../core/pathTree.js'
 import { TreeGraph } from '../canvas/treeGraph.js'
 
 const props = defineProps({
@@ -55,6 +55,8 @@ const props = defineProps({
    * one that nearly does. @see components/CatalogueMap.vue
    */
   bare: { type: Boolean, default: false },
+  /** Which catalogue this is, so what was left open is remembered per book. */
+  book: { type: String, default: '' },
 })
 const emit = defineEmits(['pick'])
 
@@ -82,31 +84,20 @@ const theme = computed(() => state.settings.theme)
 /* ---------------- what the catalogue knows ---------------------------- */
 
 /**
- * The tree, with each node told how big and what colour it is.
+ * The tree, handed over as it came out of the database.
  *
- * Worked out once per tree rather than per frame: size comes from how many
- * clips are under a node and colour from how deep it is, and neither changes
- * because somebody opened a folder.
+ * It used to be "dressed" here first: every node given a size and a colour,
+ * which on a real catalogue meant allocating 932,299 objects and three
+ * Float32Arrays to draw nineteen dots. That was most of the 3.9 seconds the
+ * window took to open. The renderer now works out a node's size and colour at
+ * the moment it becomes visible, so this passes the arrays straight through
+ * and the cost is the size of what is shown.
+ * @see canvas/treeGraph.js, scripts/graph_perf.py
  */
-const dressed = computed(() => {
+const source = computed(() => {
   const tree = props.tree
   if (!tree || !tree.nodes || !tree.nodes.length) return null
-
-  const sizes = treeSizes(tree.nodes, { smallest: 3, largest: 26 })
-  const colours = treeColours(tree.nodes, {
-    from: theme.value.accent, to: theme.value.accentAlt, dim: theme.value.dim,
-  })
-  const to = (v) => Math.round(Math.max(0, Math.min(1, v)) * 255)
-
-  return {
-    parents: tree.parents,
-    nodes: tree.nodes.map((one, at) => ({
-      ...one,
-      size: sizes[at],
-      colour: `rgba(${to(colours[at * 4])},${to(colours[at * 4 + 1])},`
-        + `${to(colours[at * 4 + 2])},${colours[at * 4 + 3].toFixed(3)})`,
-    })),
-  }
+  return tree
 })
 
 /* ---------------- the names over the dots ----------------------------- */
@@ -137,8 +128,8 @@ function refreshLabels() {
    * text on it.
    */
   const order = graph.drawn
-    .filter((one) => !one.leaving)
-    .sort((a, b) => (b.node.data.clips || 0) - (a.node.data.clips || 0))
+    .slice()
+    .sort((a, b) => (b.clips || 0) - (a.clips || 0))
 
   const out = []
   for (const one of order) {
@@ -146,8 +137,7 @@ function refreshLabels() {
     const [x, y] = graph.screenOf(one)
     if (x < -40 || y < -20 || x > wide + 40 || y > tall + 20) continue
 
-    const node = one.node.data
-    const text = String(node.label || '')
+    const text = String(one.label || '')
     if (!text) continue
 
     // A rough box, eye-measured rather than measured per label: measuring a
@@ -162,15 +152,15 @@ function refreshLabels() {
     if (!clear) continue
 
     out.push({
-      key: node.at,
+      key: one.at,
       x: Math.round(x),
       y: Math.round(y),
       wide: room,
       label: text,
-      clips: node.clips,
-      depth: node.depth,
-      shut: Boolean(one.node._children),
-      here: here.value === node,
+      clips: one.clips,
+      depth: one.depth,
+      shut: one.shut,
+      here: here.value === one.at,
     })
   }
 
@@ -192,18 +182,21 @@ function build() {
   engine.value?.destroy?.()
 
   const graph = new TreeGraph(box.value, {
-    onPick: (node) => {
-      here.value = node
-      emit('pick', node, node.at)
+    onPick: (seat) => {
+      here.value = seat.at
+      emit('pick', graph.source.nodes[seat.at], seat.at)
       refreshLabels()
     },
-    onHover: (node) => { hovering.value = node },
-    onOpen: () => refreshLabels(),
+    onHover: (seat) => { hovering.value = seat ? seat.label : null },
+    onOpen: () => { remember(); refreshLabels() },
   })
   graph.look = {
     link: rgba(theme.value.dim, 0.3),
     linkWidth: 0.9,
     ring: theme.value.error,
+    from: theme.value.accent,
+    to: theme.value.accentAlt,
+    dim: theme.value.dim,
   }
   engine.value = graph
 
@@ -219,44 +212,45 @@ function build() {
     window.__jaminTreeProbe = {
       showing: () => graph.drawn.length,
       open: (label) => {
-        const found = graph.root && graph.root.descendants()
-          .find((one) => one.data.label === label && one._children)
-        if (found) graph.toggle(found)
+        const found = graph.drawn.find((one) => one.label === label && one.shut)
+        if (found) graph.toggle(found.at)
         return Boolean(found)
       },
-      shutOnes: () => (graph.root
-        ? graph.root.descendants().filter((one) => one._children).map((one) => one.data.label)
-        : []),
+      shutOnes: () => graph.drawn.filter((one) => one.shut).map((one) => one.label),
       // How far down the picture currently goes, so the harness can say that
       // a catalogue opens at its top level rather than pouring its second
       // level onto the screen.
-      deepest: () => graph.drawn.reduce((most, one) => Math.max(most, one.node.depth), 0),
+      deepest: () => graph.drawn.reduce((most, one) => Math.max(most, one.depth), 0),
       labels: () => labels.value.length,
       // Where each node ended up on screen, which is the only way to tell a
-      // node that is missing from one that is drawn underneath its neighbour
-      // or pushed off the edge by a fit that did not know about the chrome.
+      // node that is missing from one drawn underneath its neighbour, or one
+      // pushed off the edge by a fit that did not know about the chrome.
       places: () => graph.drawn.map((one) => {
         const [x, y] = graph.screenOf(one)
-        return { label: one.node.data.label, x: Math.round(x), y: Math.round(y) }
+        return { label: one.label, x: Math.round(x), y: Math.round(y) }
       }),
+      // Where the camera is, so a check can say that opening a node did not
+      // move it. Nothing else can tell the difference between a graph that
+      // grew and one that was rebuilt around the thing you clicked.
+      camera: () => ({ x: Math.round(graph.at.x), y: Math.round(graph.at.y),
+        k: Math.round(graph.at.k * 1000) / 1000 }),
     }
   }
 
   /*
-   * The top level, and nothing under it.
+   * The top level, and whatever was left open last time.
    *
    * Two levels was chosen so the first sight of a catalogue had some shape to
-   * it rather than being a ring of a dozen words, and on a small library that
-   * is true. On a real one the second level is thousands of nodes: the shape
-   * it gives is a solid band, which is not shape, and every label worth
-   * reading is culled for collision by the ones that are not.
+   * it, and on a small library that is true. On a real one the second level
+   * is thousands of nodes: the shape it gives is a solid band, which is not
+   * shape, and every label worth reading is culled for collision by the ones
+   * that are not.
    *
-   * So the catalogue opens as its top level and grows only where somebody
-   * opens it. Nothing is hidden that was not always one double-click away,
-   * and opening never closes anything -- @see toggle, which touches the one
-   * node it was given and leaves every other branch standing.
+   * So a catalogue opens at its top level, plus whichever nodes were open
+   * when it was last looked at -- somebody who left a folder open comes back
+   * to it open. @see store.js graphOpen
    */
-  if (dressed.value) graph.setTree(dressed.value, { openTo: 1 })
+  if (source.value) graph.setTree(source.value, { open: remembered() })
   refreshLabels()
 }
 
@@ -264,25 +258,14 @@ function build() {
 
 /** One more level, everywhere, for looking around rather than looking for. */
 function openAll() {
-  const graph = engine.value
-  if (!graph || !graph.root) return
-  const shut = graph.root.descendants().filter((one) => one._children)
-  for (const one of shut) { one.children = one._children; one._children = null; one.shut = false }
-  graph.relayout({ animate: true })
+  engine.value?.openMore?.()
+  refreshLabels()
 }
 
 function closeAll() {
-  const graph = engine.value
-  if (!graph || !graph.root) return
-  graph.root.each((one) => {
-    if (one.depth >= 1 && one.children) {
-      one._children = one.children
-      one.children = null
-      one.shut = true
-    }
-  })
   here.value = null
-  graph.relayout({ animate: true })
+  engine.value?.closeAll?.()
+  refreshLabels()
 }
 
 function fit() {
@@ -291,21 +274,44 @@ function fit() {
 
 /** The way back up, as a line of names. */
 const where = computed(() => {
-  if (!here.value || !engine.value || !engine.value.root) return []
-  const found = engine.value.root.descendants().find((one) => one.data === here.value)
-  if (!found) return []
-  return found.ancestors().reverse()
-    .filter((one) => one.data.at >= 0)
-    .map((one) => ({ node: one, label: one.data.label, clips: one.data.clips }))
+  const graph = engine.value
+  if (here.value === null || !graph || !graph.source) return []
+  return graph.ancestorsOf(here.value).map((at) => ({
+    at,
+    label: graph.source.nodes[at].label,
+    clips: graph.source.nodes[at].clips,
+  }))
 })
 
-function jump(node) {
+function jump(at) {
   const graph = engine.value
   if (!graph) return
-  here.value = node.data
-  graph.chosen = node
-  graph.zoomToPoint?.(node)
-  emit('pick', node.data, node.data.at)
+  here.value = at
+  graph.chosen = at
+  graph.zoomToPoint?.(at)
+  emit('pick', graph.source.nodes[at], at)
+}
+
+/* ---------------- what was left open ----------------------------------
+ *
+ * A catalogue is somewhere somebody is working, not a picture they glance
+ * at: having opened three folders down to the shelf they are auditioning
+ * from, closing the window and losing it is the same as never having opened
+ * it. The open set is the whole of the state -- it is what `setTree` takes
+ * back -- so remembering it is remembering the arrangement.
+ */
+function remembered() {
+  const kept = state.settings.graph.open || {}
+  const mine = kept[props.book]
+  return Array.isArray(mine) ? mine : null
+}
+
+function remember() {
+  const graph = engine.value
+  if (!graph || !props.book) return
+  const kept = { ...(state.settings.graph.open || {}) }
+  kept[props.book] = [...graph.open]
+  state.settings.graph.open = kept
 }
 
 /* ---------------- wiring ----------------------------------------------
@@ -317,11 +323,11 @@ function jump(node) {
  */
 onMounted(() => { build(); followLabels() })
 
-watch(dressed, (next) => {
+watch(source, (next) => {
   const graph = engine.value
   if (!graph) return
   here.value = null
-  if (next) graph.setTree(next, { openTo: 1 })
+  if (next) graph.setTree(next, { open: remembered() })
   refreshLabels()
 })
 
@@ -347,7 +353,7 @@ onBeforeUnmount(() => {
           class="jamin-graph-crumb"
           :class="{ 'is-here': n === where.length - 1 }"
           :title="`${one.clips.toLocaleString()} beneath this`"
-          @click="jump(one.node)"
+          @click="jump(one.at)"
         >{{ one.label }}</button>
       </template>
       <span v-else class="jamin-graph-hint">

@@ -30,6 +30,8 @@ const props = defineProps({
   found: { type: Number, default: 0 },
   /** What this catalogue is called, for the corner. */
   label: { type: String, default: '' },
+  /** Which catalogue, so what was left open is remembered per book. */
+  book: { type: String, default: '' },
 })
 
 const emit = defineEmits(['pick'])
@@ -52,6 +54,7 @@ const waiting = computed(() => Boolean(props.busy))
     <CatalogueGraph
       class="jamin-map-canvas"
       :tree="tree"
+      :book="book"
       bare
       @pick="(node, at) => emit('pick', node, at)"
     />

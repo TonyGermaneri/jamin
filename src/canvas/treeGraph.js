@@ -1,41 +1,44 @@
 /**
  * A catalogue's tree, explored by opening it.
  *
- * Not a force graph. The previous renderer was one, and almost everything it
- * offered was something this view does not want: it ran a physics simulation
- * over positions that are computed rather than settled into, so the simulation
- * had to be switched off in four places and the one that was missed made the
- * graph drift away from under the pointer; it took its configuration as a bag
- * of strings and silently ignored the keys it did not know, so the link
- * styling never once applied; and it drew a million points, which a picture
- * nobody can read does not need.
+ * Two measurements decide everything in this file.
  *
- * What this is instead is the collapsible tree: d3-hierarchy for the layout,
- * and enter/update/exit for the interaction. That is the difference between a
- * graph that happens to contain a hierarchy and one made for exploring it:
+ * The first: a real catalogue is 932,299 nodes and the screen holds about
+ * fifty. The previous version handed the whole tree to the layout and built a
+ * d3 hierarchy over all of it -- three full passes with an object allocated
+ * per node -- in order to draw nineteen dots. That was 3.9 seconds to open a
+ * window inside a DAW, which is several seconds longer than anybody waits for
+ * a plugin before deciding it is broken. So nothing is materialised until it
+ * is shown: the arrays are held exactly as the database gave them, and a node
+ * becomes an object at the moment somebody opens its parent.
+ * @see scripts/graph_perf.py, where those numbers come from.
  *
- *   * opening a node never clears the picture. Everything already on screen
- *     stays on screen and moves to where it now belongs.
- *   * children grow out of their parent, from the exact point it occupies, so
- *     where they came from is visible rather than inferred.
- *   * closing a node collapses its children back into it rather than deleting
- *     them, so it reads as the same gesture undone.
+ * The second: opening a node must not rearrange the picture. A tidy tree
+ * cannot do that -- keeping the tree tidy is exactly what makes every sibling
+ * move when one node gains children, which is right for a tidy tree and wrong
+ * for exploring one. So the layout is a force simulation. Children are born
+ * at the point their parent occupies and bloom out of it, whatever is in the
+ * way is nudged rather than re-placed, and the camera is not touched at all:
+ * where you were looking is where you stay.
  *
- * Canvas rather than SVG because a wide level of a real catalogue is a few
- * thousand nodes and that many DOM elements is a scroll of jank; d3 does the
- * layout and the arithmetic and this does the painting.
+ * Canvas rather than SVG, because a wide level of a real catalogue is a few
+ * thousand nodes and that many DOM elements is a scroll of jank.
  */
 import { select } from 'd3-selection'
 import { zoom, zoomIdentity } from 'd3-zoom'
 import { quadtree } from 'd3-quadtree'
-import { hierarchy, tree as tidyTree } from 'd3-hierarchy'
+import {
+  forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY,
+} from 'd3-force'
 
 /** How near the pointer must be to a node to count as on it, in screen pixels. */
 const GRAB = 14
-/** How long opening or closing takes. Long enough to follow with an eye. */
-const UNFOLD = 420
 
-const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2)
+/** How far a ring of children sits from its parent, before the forces argue. */
+const REACH = 90
+
+/** The heat a bloom starts with. Enough to move, not enough to throw. */
+const BLOOM = 0.7
 
 export class TreeGraph {
   constructor(box, { onPick = null, onHover = null, onOpen = null } = {}) {
@@ -49,27 +52,68 @@ export class TreeGraph {
     box.appendChild(this.canvas)
     this.ctx = this.canvas.getContext('2d')
 
-    this.root = null
-    this.drawn = []              // every node with a place, including those leaving
-    this.look = { link: 'rgba(128,140,180,0.26)', linkWidth: 0.8, ring: 'rgba(255,255,255,0.9)' }
+    /** `{ nodes, parents, childAt, childList }`, held, never copied. */
+    this.source = null
+    /** Which nodes are open, by index. The whole of what is remembered. */
+    this.open = new Set()
+    /** Index -> the object standing for it on screen. Only the visible ones. */
+    this.live = new Map()
+    /** The same as an array, which is what painting and hit-testing walk. */
+    this.drawn = []
+    this.links = []
+
+    this.look = {
+      link: 'rgba(128,140,180,0.26)',
+      linkWidth: 0.8,
+      ring: 'rgba(255,255,255,0.9)',
+      from: '#7c5cff',
+      to: '#22d3ee',
+      dim: '#5b6480',
+    }
     this.hovered = -1
-    this.chosen = null
+    this.chosen = -1
     this.at = zoomIdentity
     this.frame = 0
-    this.moving = 0
     this.dpr = 1
-    this.spread = 1
+    this.width = 1
+    this.height = 1
+    this.biggest = 1
+    this.deepest = 1
 
     /*
      * The transform is the only thing panning changes.
      *
      * Positions are never touched by looking at the graph, which is what makes
-     * it impossible for reading it to move it -- the failure the last renderer
-     * had, where every zoom nudged the simulation.
+     * it impossible for reading it to move it.
      */
     this.zoom = zoom().scaleExtent([0.02, 40])
       .on('zoom', (event) => { this.at = event.transform; this.paintSoon() })
     select(this.canvas).call(this.zoom)
+
+    /*
+     * The forces, and what each one is for.
+     *
+     * link     holds a child at arm's length from its parent, closer the
+     *          deeper it is, so a branch reads as a branch.
+     * charge   is the bloom: children born on top of one another push apart
+     *          into the ring a force graph is recognised by.
+     * collide  is "push other nodes a bit if they are in the way". It acts on
+     *          the drawn radius, so a big node takes the room it occupies.
+     * x, y     pull each node gently towards its parent -- weak enough not to
+     *          fight the bloom, strong enough that a branch stays with its
+     *          branch rather than wandering off across the map.
+     */
+    this.sim = forceSimulation([])
+      .force('link', forceLink([]).id((one) => one.at)
+        .distance((one) => REACH / Math.max(1, one.target.depth || 1))
+        .strength(0.7))
+      .force('charge', forceManyBody().strength(-220).distanceMax(700))
+      .force('collide', forceCollide().radius((one) => one.r + 5).iterations(2))
+      .force('x', forceX((one) => one.homeX).strength(0.04))
+      .force('y', forceY((one) => one.homeY).strength(0.04))
+      .stop()
+
+    this.sim.on('tick', () => { this.tree = null; this.paint() })
 
     this.canvas.addEventListener('mousemove', this.onMove)
     this.canvas.addEventListener('mouseleave', this.onLeave)
@@ -84,252 +128,293 @@ export class TreeGraph {
   /* ---------------- the tree ---------------- */
 
   /**
-   * Take a catalogue's tree, and open it down to `openTo`.
+   * Take a catalogue's tree, and show its top level.
    *
-   * One level, for a real catalogue: the level below it is thousands of nodes
-   * and reads as a solid band. @see components/CatalogueGraph.vue
+   * The arrays arrive as the database holds them: `parents`, plus the
+   * `childAt`/`childList` pair, which is a compressed child index and the
+   * reason a node's children can be found without walking anything. Nothing
+   * is copied, and nothing below what is open is looked at.
    *
-   * `{ nodes, parents }` in, a d3 hierarchy out. Collapsed children live on
-   * `_children`, which is the convention every collapsible-tree example uses
-   * and the reason d3's layout simply does not see them.
+   * `open` is a list of node indexes to restore, so a map comes back the way
+   * it was left. @see components/CatalogueGraph.vue
    */
-  setTree(source, { openTo = 1 } = {}) {
+  setTree(source, { open = null } = {}) {
+    this.source = null
+    this.live.clear()
+    this.open.clear()
+    this.chosen = -1
+    this.hovered = -1
+
     if (!source || !source.nodes || !source.nodes.length) {
-      this.root = null
       this.drawn = []
+      this.links = []
+      this.sim.nodes([])
+      this.sim.force('link').links([])
       this.paintSoon()
       return
     }
 
-    const made = source.nodes.map((one, at) => ({ ...one, at, children: [] }))
-    const tops = []
-    source.parents.forEach((parent, at) => {
-      if (parent < 0) tops.push(made[at])
-      else if (made[parent]) made[parent].children.push(made[at])
-    })
+    this.source = source
 
-    // One root above the libraries when there are several, so the layout has
-    // something to hang them from. It is never drawn.
-    const top = tops.length === 1 ? tops[0] : { label: '', at: -1, clips: 0, children: tops }
-    this.root = hierarchy(top)
-    this.root.each((node) => {
-      node.shut = false
-      if (node.depth >= openTo && node.children) {
-        node._children = node.children
-        node.children = null
-        node.shut = true
+    /*
+     * One numeric pass for the two things a node's look depends on.
+     *
+     * Over a million numbers this is a few milliseconds. It was never the
+     * scanning that was expensive -- it was allocating an object per node,
+     * which is exactly what is no longer done.
+     */
+    let biggest = 1
+    let deepest = 1
+    for (const one of source.nodes) {
+      if (one.clips > biggest) biggest = one.clips
+      if (one.depth > deepest) deepest = one.depth
+    }
+    this.biggest = Math.log1p(biggest)
+    this.deepest = Math.max(1, deepest)
+
+    /*
+     * What is open to begin with: whatever was left open, or the top level.
+     *
+     * "The top level" means the roots' *contents*, not the roots themselves.
+     * A catalogue with one library in it has exactly one root, and showing
+     * only that is a single dot in the middle of an empty window -- which is
+     * technically the top level and is useless. Opening the roots gives the
+     * ring of genres or libraries somebody came to look at.
+     */
+    let asked = 0
+    if (open) {
+      for (const at of open) {
+        if (Number.isInteger(at) && at >= 0 && at < source.nodes.length) {
+          this.open.add(at)
+          asked++
+        }
       }
-    })
+    }
+    if (!asked) {
+      /*
+       * One root is a library, and a library on its own is a dot in an empty
+       * window -- so it is opened, and what you see is the ring of genres
+       * inside it. Forty-nine roots are already a top level: opening them all
+       * put 700 nodes on screen, which is the thing that was complained
+       * about, and cost four seconds to settle.
+       */
+      const tops = this.roots()
+      if (tops.length === 1 && this.hasChildren(tops[0])) this.open.add(tops[0])
+    }
 
-    this.relayout({ animate: false })
+    this.rebuild({ settle: true })
     this.fitView()
   }
 
-  /** Open or close one node, and travel to the new shape. */
-  toggle(node) {
-    if (!node) return
-    if (node.children) {
-      node._children = node.children
-      node.children = null
-      node.shut = true
-    } else if (node._children) {
-      node.children = node._children
-      node._children = null
-      node.shut = false
-    } else {
-      return
+  /** Every node with no parent: the level a catalogue opens at. */
+  roots() {
+    const out = []
+    const parents = this.source.parents
+    for (let at = 0; at < parents.length; at++) if (parents[at] < 0) out.push(at)
+    return out
+  }
+
+  /** One node's children, straight out of the compressed index. */
+  childrenOf(at) {
+    const source = this.source
+    if (!source || !source.childAt || at < 0 || at + 1 >= source.childAt.length) return []
+    const out = []
+    for (let i = source.childAt[at]; i < source.childAt[at + 1]; i++) {
+      out.push(source.childList[i])
     }
-    if (this.onOpen) this.onOpen(node.data, !node.shut)
-    this.relayout({ animate: true })
+    return out
+  }
+
+  hasChildren(at) {
+    const source = this.source
+    if (!source || !source.childAt || at < 0 || at + 1 >= source.childAt.length) return false
+    return source.childAt[at + 1] > source.childAt[at]
   }
 
   /**
-   * Where everything goes, and how it gets there.
+   * Which nodes should be on screen, and what each one looks like.
    *
-   * A radial tidy tree: d3 gives each node an angle and a depth, and the
-   * radius is the depth times whatever spacing the open part of the tree
-   * needs. Recomputed whenever the shape changes, because in a tidy tree
-   * opening a node genuinely does move its siblings -- that is what keeps it
-   * tidy, and the transition is what makes it readable rather than jarring.
+   * Breadth-first from the roots, following only what is open, so the cost is
+   * the size of what is shown rather than the size of the catalogue. A node
+   * already on screen keeps the position it has -- that is what makes opening
+   * one leave the others where they were -- and a new one is born at its
+   * parent's point, so the bloom starts from the thing it came out of.
    */
-  relayout({ animate }) {
-    if (!this.root) return
+  rebuild({ settle = false, heat = BLOOM } = {}) {
+    if (!this.source) return
 
-    const was = new Map()
-    for (const one of this.drawn) was.set(one.node, { x: one.x, y: one.y })
-
-    const open = this.root.descendants()
-    const deepest = open.reduce((most, one) => Math.max(most, one.depth), 0)
-    const ring = Math.max(90, Math.min(260, 1400 / Math.max(1, deepest)))
-
-    tidyTree()
-      .size([Math.PI * 2, deepest * ring])
-      .separation((a, b) => (a.parent === b.parent ? 1 : 2) / Math.max(1, a.depth))(this.root)
-
-    /*
-     * Closing the circle, which a tidy tree does not know it is drawing.
-     *
-     * d3 lays a tree out along a line and places the first and last leaf at
-     * the two ends of it. Bent into a ring those two ends are the same place,
-     * so the first node and the last are drawn exactly on top of one another
-     * -- invisible in a catalogue of two hundred, and the whole picture in a
-     * catalogue of two, where the phrase book drew one dot and appeared to
-     * have lost half its contents. It also quietly cost two labels on every
-     * graph, culled for colliding with a node underneath them.
-     *
-     * So the leaves are spread over the ring rather than along it: `L` of
-     * them at the centres of `L` equal arcs, leaving the same gap between the
-     * last and the first as between any other pair. The remap is affine, so
-     * the parents -- which d3 has already placed at the midpoints of their
-     * children -- stay at the midpoints of them.
-     */
-    const leaves = open.reduce((many, one) => many + (one.children ? 0 : 1), 0)
-    if (leaves > 1) {
-      const squeeze = (leaves - 1) / leaves
-      const shift = Math.PI / leaves
-      for (const one of open) one.x = one.x * squeeze + shift
+    const wanted = this.roots()
+    for (let i = 0; i < wanted.length; i++) {
+      const at = wanted[i]
+      if (!this.open.has(at)) continue
+      for (const child of this.childrenOf(at)) wanted.push(child)
     }
 
-    const next = open.map((node) => {
-      const radius = node.depth * ring
-      const x = Math.cos(node.x - Math.PI / 2) * radius
-      const y = Math.sin(node.x - Math.PI / 2) * radius
-      return { node, x, y, fromX: x, fromY: y, fade: 1 }
-    })
+    const keep = new Set(wanted)
+    for (const at of [...this.live.keys()]) if (!keep.has(at)) this.live.delete(at)
 
-    const real = (one) => one.node.depth > 0 || one.node.data.at >= 0
+    const spread = Math.max(1, wanted.length)
+    for (const at of wanted) if (!this.live.has(at)) this.live.set(at, this.bornAt(at, spread))
 
-    if (!animate) {
-      this.drawn = next.filter(real)
-      this.tree = null
+    // Where each node is pulled towards: its parent, or the middle.
+    for (const seat of this.live.values()) {
+      const up = this.live.get(this.source.parents[seat.at])
+      seat.homeX = up ? up.x : 0
+      seat.homeY = up ? up.y : 0
+      seat.shut = this.hasChildren(seat.at) && !this.open.has(seat.at)
+    }
+
+    this.drawn = [...this.live.values()]
+    this.links = []
+    for (const seat of this.drawn) {
+      const up = this.source.parents[seat.at]
+      if (up >= 0 && this.live.has(up)) this.links.push({ source: up, target: seat.at })
+    }
+
+    this.tree = null
+    this.sim.nodes(this.drawn)
+    this.sim.force('link').links(this.links)
+
+    if (settle) {
+      /*
+       * The first sight of a catalogue is not an animation of it arriving.
+       *
+       * Run to rest before the first paint, so the window opens with a
+       * picture in it rather than with a picture forming. Only here: every
+       * later change is a bloom, which is the part worth watching.
+       */
+      this.sim.alpha(1)
+      for (let i = 0; i < 180; i++) this.sim.tick()
+      this.sim.stop()
       this.paintSoon()
       return
     }
 
-    /*
-     * Where each node starts from.
-     *
-     * One that was already on screen starts where it was. A new one starts at
-     * the place its parent occupied a moment ago -- so it is seen coming out
-     * of the thing that was opened, rather than appearing somewhere and being
-     * connected by a line after the fact.
-     */
-    for (const one of next) {
-      const before = was.get(one.node)
-      if (before) { one.fromX = before.x; one.fromY = before.y; continue }
-      let up = one.node.parent
-      let seed = null
-      while (up && !seed) { seed = was.get(up) || null; up = up.parent }
-      one.fromX = seed ? seed.x : one.x
-      one.fromY = seed ? seed.y : one.y
-      one.fade = 0
-    }
-
-    /*
-     * And the ones leaving do not simply go.
-     *
-     * A closed node's children collapse into it and fade as they travel, so
-     * closing reads as the same gesture as opening, undone. Deleting them
-     * outright is what makes a tree feel like it is being rebuilt rather than
-     * folded.
-     */
-    const here = new Set(next.map((one) => one.node))
-    const going = []
-    for (const one of this.drawn) {
-      if (here.has(one.node)) continue
-      let up = one.node.parent
-      let seat = null
-      while (up && !seat) {
-        const found = next.find((two) => two.node === up)
-        seat = found || null
-        up = up.parent
-      }
-      if (!seat) continue
-      going.push({ node: one.node, x: seat.x, y: seat.y, fromX: one.x, fromY: one.y, fade: 1, leaving: true })
-    }
-
-    this.travel([...next.filter(real), ...going])
+    this.sim.alpha(heat).restart()
   }
 
   /**
-   * Walk every node from where it was to where it belongs.
+   * A node's first appearance: on top of its parent, barely nudged.
    *
-   * Nothing is added or removed while this runs -- the whole cast, arriving,
-   * staying and leaving, is on screen for the entire journey. That is the
-   * difference between a tree that opens and one that is rebuilt.
+   * Barely, but not exactly. A dozen children born at the identical point
+   * have no direction to separate in, and a perfectly symmetric pile is
+   * something a force simulation cannot break on its own. The nudge comes
+   * from the node's own index, so it is the same every time -- a map rebuilt
+   * from the same tree comes out the same way round, which is what lets
+   * somebody recognise it.
    */
-  travel(all) {
-    cancelAnimationFrame(this.moving)
-    const began = performance.now()
+  bornAt(at, spread) {
+    const node = this.source.nodes[at]
+    const up = this.live.get(this.source.parents[at])
+    const angle = ((at % 997) / 997) * Math.PI * 2
+    const push = up ? 6 : (REACH * Math.sqrt(spread)) / 2
 
-    const step = () => {
-      const through = Math.min(1, (performance.now() - began) / UNFOLD)
-      const much = ease(through)
-      for (const one of all) {
-        one.drawX = one.fromX + (one.toX - one.fromX) * much
-        one.drawY = one.fromY + (one.toY - one.fromY) * much
-        one.alpha = one.leaving ? 1 - much : (one.fade === 0 ? much : 1)
-      }
-      this.tree = null
-      this.paint()
-      if (through < 1) { this.moving = requestAnimationFrame(step); return }
-
-      // Landed. The ones that were leaving have gone, and everything else is
-      // exactly where the layout put it.
-      this.moving = 0
-      this.drawn = all.filter((one) => !one.leaving)
-      for (const one of this.drawn) {
-        one.drawX = one.toX
-        one.drawY = one.toY
-        one.x = one.toX
-        one.y = one.toY
-        one.alpha = 1
-      }
-      this.tree = null
-      this.paint()
+    return {
+      at,
+      depth: node.depth,
+      clips: node.clips,
+      label: node.label,
+      leaf: node.leaf,
+      r: this.radiusOf(node),
+      colour: this.colourOf(node),
+      x: (up ? up.x : 0) + Math.cos(angle) * push,
+      y: (up ? up.y : 0) + Math.sin(angle) * push,
+      homeX: up ? up.x : 0,
+      homeY: up ? up.y : 0,
+      shut: this.hasChildren(at) && !this.open.has(at),
     }
+  }
 
-    for (const one of all) {
-      one.toX = one.x
-      one.toY = one.y
-      one.drawX = one.fromX
-      one.drawY = one.fromY
+  radiusOf(node) {
+    const where = Math.log1p(Math.max(1, node.clips)) / Math.max(1e-6, this.biggest)
+    return Math.max(2.5, 2.5 + where * 11)
+  }
+
+  colourOf(node) {
+    const down = node.depth / this.deepest
+    const [from, to, dim] = this.ramp()
+    const towards = node.leaf ? 0.5 : down * 0.25
+    const mix = [0, 1, 2].map((i) => {
+      const along = from[i] + (to[i] - from[i]) * down
+      return Math.round(along + (dim[i] - along) * towards)
+    })
+    return `rgb(${mix[0]},${mix[1]},${mix[2]})`
+  }
+
+  ramp() {
+    const read = (css) => {
+      const hex = String(css || '').replace('#', '')
+      const full = hex.length === 3 ? hex.split('').map((one) => one + one).join('') : hex
+      const n = Number.parseInt(full, 16)
+      return Number.isFinite(n) ? [(n >> 16) & 255, (n >> 8) & 255, n & 255] : [124, 92, 255]
     }
-    this.drawn = all
-    this.moving = requestAnimationFrame(step)
+    return [read(this.look.from), read(this.look.to), read(this.look.dim)]
   }
 
-  /* ---------------- looking at it ---------------- */
+  /* ---------------- opening and closing ---------------- */
 
-  placeOf(one) {
-    return [one.drawX ?? one.x, one.drawY ?? one.y]
+  /**
+   * Open one node, or close it. Nothing else on screen is disturbed.
+   *
+   * No camera move and no rebuild of anything already placed: the children
+   * appear where their parent is and the simulation is given enough heat to
+   * bloom them out. Closing takes them away and lets the gap shut.
+   */
+  toggle(at) {
+    if (!this.source || !Number.isInteger(at) || at < 0) return false
+    if (this.open.has(at)) this.open.delete(at)
+    else if (this.hasChildren(at)) this.open.add(at)
+    else return false
+
+    this.rebuild()
+    if (this.onOpen) this.onOpen(at, this.open.has(at))
+    return true
   }
 
-  /** A node's place on the screen, for putting a label over it. */
-  screenOf(one) {
-    const [x, y] = this.placeOf(one)
-    return this.at.apply([x, y])
+  /** Everything one more level down, for looking around rather than for. */
+  openMore() {
+    if (!this.source) return
+    for (const seat of [...this.drawn]) if (this.hasChildren(seat.at)) this.open.add(seat.at)
+    this.rebuild({ heat: 0.9 })
+    if (this.onOpen) this.onOpen(-1, true)
   }
+
+  closeAll() {
+    if (!this.source) return
+    this.open.clear()
+    this.chosen = -1
+    this.rebuild({ heat: 0.4 })
+    if (this.onOpen) this.onOpen(-1, false)
+  }
+
+  /** The way back up, as node indexes from the root down. */
+  ancestorsOf(at) {
+    const out = []
+    let here = at
+    let guard = 0
+    while (this.source && here >= 0 && guard++ < 64) {
+      out.unshift(here)
+      here = this.source.parents[here]
+    }
+    return out
+  }
+
+  /* ---------------- where things are ---------------- */
+
+  placeOf(seat) { return [seat.x, seat.y] }
+
+  screenOf(seat) { return this.at.apply([seat.x, seat.y]) }
 
   /**
    * How much of the canvas is actually clear.
    *
-   * The canvas runs the whole window and the interface floats on top of it:
-   * a bar of filters across the top, a detail panel down the right, a count
-   * along the bottom. Fitting to the canvas therefore fits to a box a third
-   * of which cannot be seen, and with only two nodes to place it put one of
-   * them squarely behind the detail panel -- a graph that looked like it had
-   * lost half its contents and had not.
-   *
-   * Each floating piece is measured here rather than declared as a number,
-   * because the bar is one row or two depending on how many filters a
-   * catalogue has and the panel is only there once something is picked -- but
-   * it says for itself which edge it is on, as `data-keep-clear="right"`.
-   * Working that out from the geometry instead was tried and was wrong: a
-   * panel down the right-hand side sits against the bottom edge as snugly as
-   * it does the right one, the tie went the wrong way, and the graph was
-   * squeezed into the top corner with half of it behind the panel -- which is
-   * the fault this was written to fix.
+   * The canvas runs the whole window and the interface floats on top of it: a
+   * bar of filters across the top, a detail panel down the right, a count
+   * along the bottom. Fitting to the canvas fits to a box a third of which
+   * cannot be seen. Each floating piece says which edge it is on, because
+   * working that out from the geometry was tried and was wrong -- a panel
+   * down the right-hand side sits against the bottom edge as snugly as the
+   * right one, and the graph ended up squeezed into a corner.
    */
   clearArea() {
     const box = { top: 0, right: 0, bottom: 0, left: 0 }
@@ -352,8 +437,6 @@ export class TreeGraph {
         : side === 'bottom' ? mine.bottom - there.top
           : side === 'left' ? there.right - mine.left
             : mine.right - there.left
-      // Never more than half, so a panel that has grown to fill the window
-      // leaves a graph rather than a sliver.
       const most = (side === 'top' || side === 'bottom' ? mine.height : mine.width) * 0.5
       box[side] = Math.max(box[side], Math.min(deep, most))
     }
@@ -364,11 +447,10 @@ export class TreeGraph {
     if (!this.drawn.length || !this.width) return
     let lowX = Infinity; let lowY = Infinity; let highX = -Infinity; let highY = -Infinity
     for (const one of this.drawn) {
-      const [x, y] = this.placeOf(one)
-      if (x < lowX) lowX = x
-      if (x > highX) highX = x
-      if (y < lowY) lowY = y
-      if (y > highY) highY = y
+      if (one.x < lowX) lowX = one.x
+      if (one.x > highX) highX = one.x
+      if (one.y < lowY) lowY = one.y
+      if (one.y > highY) highY = one.y
     }
     const wide = Math.max(1, highX - lowX)
     const tall = Math.max(1, highY - lowY)
@@ -376,7 +458,6 @@ export class TreeGraph {
     const clear = this.clearArea()
     const room = Math.max(120, this.width - clear.left - clear.right - padding * 2)
     const high = Math.max(120, this.height - clear.top - clear.bottom - padding * 2)
-    // The middle of what can be seen, which is not the middle of the canvas.
     const midX = clear.left + (this.width - clear.left - clear.right) / 2
     const midY = clear.top + (this.height - clear.top - clear.bottom) / 2
 
@@ -388,22 +469,18 @@ export class TreeGraph {
   }
 
   /** Put one node in the middle, at a readable size. */
-  zoomToPoint(node, scale = 1.4) {
-    const seat = this.drawn.find((one) => one.node === node)
+  zoomToPoint(at, scale = 1.4) {
+    const seat = this.live.get(at)
     if (!seat) return
-    const [x, y] = this.placeOf(seat)
     select(this.canvas).call(this.zoom.transform, zoomIdentity
       .translate(this.width / 2, this.height / 2)
       .scale(Math.max(0.02, Math.min(40, scale)))
-      .translate(-x, -y))
+      .translate(-seat.x, -seat.y))
   }
 
   index() {
     if (this.tree) return this.tree
-    this.tree = quadtree()
-      .x((one) => this.placeOf(one)[0])
-      .y((one) => this.placeOf(one)[1])
-      .addAll(this.drawn.filter((one) => !one.leaving))
+    this.tree = quadtree().x((one) => one.x).y((one) => one.y).addAll(this.drawn)
     return this.tree
   }
 
@@ -420,32 +497,43 @@ export class TreeGraph {
 
   onMove = (event) => {
     const found = this.spotOf(event)
-    const which = found ? found.node : null
+    const which = found ? found.at : -1
     if (which === this.hovered) return
     this.hovered = which
-    this.canvas.style.cursor = which ? 'pointer' : 'default'
-    if (this.onHover) this.onHover(which ? which.data : null)
+    this.canvas.style.cursor = which >= 0 ? 'pointer' : 'default'
+    if (this.onHover) this.onHover(found || null)
     this.paintSoon()
   }
 
   onLeave = () => {
-    if (!this.hovered) return
-    this.hovered = null
+    if (this.hovered < 0) return
+    this.hovered = -1
     if (this.onHover) this.onHover(null)
     this.paintSoon()
   }
 
+  /**
+   * One click picks it and opens it.
+   *
+   * It used to take a double-click, on the reasoning that a single click is
+   * for choosing and a double for opening. Nobody double-clicks a graph node:
+   * one that does nothing when clicked reads as a picture rather than as a
+   * control, which is what "clicking, double clicking, does nothing" was
+   * describing. So a click does both, and clicking again closes it.
+   */
   onTap = (event) => {
     const found = this.spotOf(event)
     if (!found) return
-    this.chosen = found.node
-    if (this.onPick) this.onPick(found.node.data)
+    this.chosen = found.at
+    if (this.onPick) this.onPick(found)
+    this.toggle(found.at)
     this.paintSoon()
   }
 
   onDoubleTap = (event) => {
-    const found = this.spotOf(event)
-    if (found) this.toggle(found.node)
+    // The two clicks of a double have already opened it and closed it again.
+    // Swallowed rather than acted on a third time.
+    event.preventDefault()
   }
 
   /* ---------------- painting it ---------------- */
@@ -461,7 +549,7 @@ export class TreeGraph {
   }
 
   paintSoon() {
-    if (this.frame || this.moving) return
+    if (this.frame) return
     this.frame = requestAnimationFrame(() => { this.frame = 0; this.paint() })
   }
 
@@ -477,58 +565,39 @@ export class TreeGraph {
     ctx.translate(x, y)
     ctx.scale(k, k)
 
-    /*
-     * Every edge in one path and one stroke.
-     *
-     * With the seats in a map rather than searched for: a tree has an edge per
-     * node, and finding each parent by scanning the list is quadratic -- two
-     * thousand nodes is four million comparisons a frame, sixty times a
-     * second, for an answer that does not change during a frame.
-     */
-    const seats = new Map()
-    for (const one of this.drawn) seats.set(one.node, one)
-
+    // Every edge in one path and one stroke. d3's link force replaces the
+    // indexes with the nodes themselves, so this reads either.
     ctx.beginPath()
-    for (const one of this.drawn) {
-      const up = one.node.parent
-      if (!up) continue
-      const seat = seats.get(up)
-      if (!seat) continue
-      const [ax, ay] = this.placeOf(one)
-      const [bx, by] = this.placeOf(seat)
-      ctx.moveTo(ax, ay)
-      ctx.lineTo(bx, by)
+    for (const link of this.links) {
+      const from = typeof link.source === 'object' ? link.source : this.live.get(link.source)
+      const to = typeof link.target === 'object' ? link.target : this.live.get(link.target)
+      if (!from || !to) continue
+      ctx.moveTo(from.x, from.y)
+      ctx.lineTo(to.x, to.y)
     }
     ctx.strokeStyle = this.look.link
     ctx.lineWidth = this.look.linkWidth / k
     ctx.stroke()
 
     for (const one of this.drawn) {
-      const [px, py] = this.placeOf(one)
-      const radius = Math.max(0.8, (one.node.data.size || 5) / 2) / k
-      ctx.globalAlpha = one.alpha ?? 1
       ctx.beginPath()
-      ctx.arc(px, py, radius, 0, Math.PI * 2)
-      ctx.fillStyle = one.node.data.colour || 'rgba(140,155,205,0.92)'
+      ctx.arc(one.x, one.y, one.r, 0, Math.PI * 2)
+      ctx.fillStyle = one.colour
       ctx.fill()
       // A node with more inside it says so, rather than looking like a leaf.
-      if (one.node._children) {
+      if (one.shut) {
         ctx.lineWidth = 1.4 / k
         ctx.strokeStyle = 'rgba(255,255,255,0.55)'
         ctx.stroke()
       }
     }
-    ctx.globalAlpha = 1
 
-    for (const [node, colour] of [[this.hovered, 'rgba(255,255,255,0.7)'],
-                                  [this.chosen, this.look.ring]]) {
-      if (!node) continue
-      const seat = seats.get(node)
+    for (const [at, colour] of [[this.hovered, 'rgba(255,255,255,0.7)'],
+      [this.chosen, this.look.ring]]) {
+      const seat = this.live.get(at)
       if (!seat) continue
-      const [px, py] = this.placeOf(seat)
-      const radius = Math.max(0.8, (node.data.size || 5) / 2) / k
       ctx.beginPath()
-      ctx.arc(px, py, radius + 3.5 / k, 0, Math.PI * 2)
+      ctx.arc(seat.x, seat.y, seat.r + 3.5 / k, 0, Math.PI * 2)
       ctx.strokeStyle = colour
       ctx.lineWidth = 1.8 / k
       ctx.stroke()
@@ -539,7 +608,7 @@ export class TreeGraph {
 
   destroy() {
     cancelAnimationFrame(this.frame)
-    cancelAnimationFrame(this.moving)
+    this.sim.stop()
     this.watching.disconnect()
     this.canvas.removeEventListener('mousemove', this.onMove)
     this.canvas.removeEventListener('mouseleave', this.onLeave)
