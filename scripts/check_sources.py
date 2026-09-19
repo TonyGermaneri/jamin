@@ -133,6 +133,17 @@ def control_characters():
 # store's own export list finds this and nothing else.
 EXPORTED = re.compile(r"^export (?:async )?(?:function|const|let) (\w+)", re.M)
 
+# A name the file declares for itself, which is therefore not the store's.
+#
+# `setHolding(on) {` opening a class method reads exactly like a bare call to
+# the pattern above, so the player was reported for failing to import a
+# function it defines. Anything of the shape `name(args) {` at the start of a
+# line is a declaration -- a method, a shorthand method, a function -- and a
+# real call is never followed by a brace.
+DEFINED = re.compile(
+    r"^\s*(?:export\s+)?(?:static\s+|async\s+|get\s+|set\s+|\*\s*)*"
+    r"(?:function\s+)?([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{", re.M)
+
 
 def unimported():
     with open(os.path.join(ROOT, "src", "store.js"), encoding="utf-8") as handle:
@@ -157,8 +168,9 @@ def unimported():
                 if name:
                     bound.add(name)
 
+        mine = set(DEFINED.findall(text))
         for name in sorted(exported):
-            if name in bound:
+            if name in bound or name in mine:
                 continue
             # A call, not a mention: `state.foo(` and `this.foo(` are somebody
             # else's foo.

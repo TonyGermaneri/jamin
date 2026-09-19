@@ -104,6 +104,19 @@ public:
      */
     int takeHeardNotes (juce::Array<juce::var>& into);
 
+    /**
+        A note the page wants sounded now, and left sounding.
+
+        `tapNote` is a drum audition: struck and released inside the same
+        block. This is for Mr. Accompany Me, which answers a chord somebody is
+        playing on the keys -- that cannot be compiled in advance, because it
+        has not been played yet, so it is the one part of jamin that has to
+        leave the page in real time. The page releases it. Anything still
+        sounding is released with everything else on a stop, a locate or a
+        mute, so the page losing interest cannot strand it.
+    */
+    void sendNote (int note, int velocity, int channel, bool on);
+
     /** Mute or solo any instance in this host, quantised as the settings say. */
     void setInstanceMuted (const juce::String& id, bool muted);
     void setInstanceSoloed (const juce::String& id, bool soloed);
@@ -279,6 +292,10 @@ public:
     {
         uint8_t bytes[3] {};
         uint8_t length {};
+        /** Struck and released inside the block (auditioning a drum), or sent
+            exactly as written and left to the page to release (a chord
+            somebody is playing right now). @see tapNote, sendNote */
+        bool held {};
     };
 
     juce::AbstractFifo heardFifo { 512 };

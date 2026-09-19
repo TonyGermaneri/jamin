@@ -289,6 +289,9 @@ export const state = reactive({
     /** The drum mark the drum book is changing, as a token index. */
     assignDrumTo: -1,
     learningAccent: false,
+    learningHold: false,
+    /** The chord is latched: the hands can come off it. @see setHolding */
+    holding: false,
     fetching: false,
     fetchProgress: '',
     toast: null,
@@ -393,17 +396,52 @@ engine.onNoteIn = (note, velocity, on) => player.noteIn(note, velocity, on)
  * edge only, so holding a sustain pedal down does not machine-gun.
  */
 let accentHeld = false
-engine.onControl = (controller, value) => {
+export function controlIn(controller, value) {
   if (state.ui.learningAccent) {
     state.settings.midi.accentCc = controller
     state.ui.learningAccent = false
     toast(`Accent bound to CC ${controller}`)
     return
   }
+  /*
+   * Hold, which is the sustain pedal unless somebody has said otherwise.
+   *
+   * Not a rising edge like the accent: Hold is a state and the pedal is
+   * already the right shape for it. Down latches the chord, up lets it go --
+   * and letting go while the keys are still down does nothing, because the
+   * hands have not stopped playing it. @see core/player.js setHolding
+   */
+  if (state.ui.learningHold) {
+    state.settings.midi.holdCc = controller
+    state.ui.learningHold = false
+    toast(`Hold bound to CC ${controller}`)
+    return
+  }
+  if (state.settings.accompany.listen
+      && state.settings.midi.holdCc !== null
+      && controller === state.settings.midi.holdCc) {
+    setHolding(value >= 64)
+  }
+
   if (state.settings.midi.accentCc === null || controller !== state.settings.midi.accentCc) return
   const down = value >= 64
   if (down && !accentHeld) triggerAccent()
   accentHeld = down
+}
+engine.onControl = controlIn
+
+/**
+ * Latch the chord being played, or let it go.
+ *
+ * Kept in `ui` rather than in the settings: it is a thing somebody does with
+ * their foot in the middle of a bar, not a preference, and it should not come
+ * back on tomorrow because it happened to be on when they closed the window.
+ */
+export function setHolding(on) {
+  const next = Boolean(on)
+  if (state.ui.holding === next) return
+  state.ui.holding = next
+  player.setHolding(next)
 }
 
 engine.onPortsChanged = (inputs, outputs) => {
@@ -574,10 +612,40 @@ async function adoptHost() {
   onHost('jaminHeard', (notes) => {
     if (!Array.isArray(notes)) return
     for (const item of notes) {
-      if (!item || typeof item.note !== 'number') continue
+      if (!item) continue
+      // A control change says so rather than arriving as a note, because CC
+      // 64 and note 64 are both numbers and one of them is an E.
+      if (typeof item.controller === 'number') {
+        controlIn(item.controller, item.value | 0)
+        continue
+      }
+      if (typeof item.note !== 'number') continue
       player.noteIn(item.note, item.velocity | 0, Boolean(item.on))
     }
   })
+
+  /*
+   * And where a heard chord goes out.
+   *
+   * Everything the chart plays is compiled and performed by the processor,
+   * so the page sends none of it. A chord somebody is playing this moment
+   * cannot be compiled -- it has not happened yet -- so Mr. Accompany Me is
+   * the one part that leaves the page in real time, through the block the
+   * host is about to collect. Without this it made no sound in a plugin at
+   * all: the page has no MIDI output of its own there, so every note-on was
+   * refused by an engine with nothing bound to it.
+   * @see native/plugin/PluginProcessor.cpp sendNote
+   */
+  player.liveOut = {
+    noteOn: (out, channel, note, velocity) => {
+      callHost('jaminSendNote', note, channel, velocity, true).catch(() => {})
+      return true
+    },
+    noteOff: (out, channel, note) => {
+      callHost('jaminSendNote', note, channel, 0, false).catch(() => {})
+      return true
+    },
+  }
 
   // Another window asked this instance to play something. Only this instance
   // can act on it: the catalogue the name is looked up in is here.
@@ -3728,7 +3796,11 @@ export function bindPhrase(phraseName, tokenIndex) {
   }
   const token = state.score.tokens[tokenIndex ?? currentTokenIndex()]
   if (!token) {
-    toast('No chord to bind to')
+    // Nothing written down to bind it to -- an empty notepad, which is where
+    // somebody sits when they have opened jamin to play rather than to read.
+    // Choosing an articulation there is choosing it for whatever they play,
+    // so it becomes the song's rather than being refused. @see getLivePhrase
+    setSongPhrase(phraseName)
     return
   }
   const next = bindPhraseInText(state.text, token, phraseName)

@@ -601,4 +601,158 @@ for (let p = 41; p <= 120; p++) player.tick(p)
 check('released on the port it was sounded on',
       ringing(ports.log).filter((one) => one.includes('out/')), [])
 
+/* ---------------- Mr. Accompany Me with nothing written down ------------
+ *
+ * The state somebody is in when they open jamin to play rather than to read.
+ * `tick` used to return on an empty score before it reached the live path, so
+ * the one button whose whole job is to answer what you play did nothing at
+ * all until you had typed a chart first.
+ */
+{
+  const arp = {
+    id: 'arp', name: 'arp', over: 'C', sourcePcs: [0, 4, 7], sourceChord: 'C',
+    lengthPulses: 96,
+    notes: [{ at: 0, note: 60, velocity: 100, duration: 48 },
+            { at: 48, note: 64, velocity: 100, duration: 48 }],
+  }
+  const bare = new FakeEngine()
+  // Monitoring off, or the keys passing through would answer this on their
+  // own and the check would pass with the live path doing nothing.
+  const set = makeSettings({ accompany: { listen: true, liveBars: 1, monitor: false } })
+  const p = new Player(bare, set)
+  p.getLivePhrase = () => arp            // the last articulation chosen
+  p.setScore(parseScore('', { beatsPerBar: 4 }))
+
+  p.noteIn(60, 100, true, 1000)
+  p.noteIn(64, 100, true, 1001)
+  p.noteIn(67, 100, true, 1002)
+  p.hearTick(1200)
+  for (let pulse = 1; pulse <= 60; pulse++) p.tick(pulse)
+
+  check('an empty notepad still answers what is played',
+        bare.log.filter((l) => l[0] === 'on').length > 0, true)
+
+  // And letting go ends it, because Hold is off.
+  p.noteIn(60, 0, false, 2000)
+  p.noteIn(64, 0, false, 2001)
+  p.noteIn(67, 0, false, 2002)
+  p.hearTick(2100)
+  check('and stops when the hands come off', p.liveHeld.size, 0)
+}
+
+/* ---------------- Hold: the hands can come off -------------------------- */
+{
+  const pad = {
+    id: 'pad', name: 'pad', over: 'C', sourcePcs: [0, 4, 7], sourceChord: 'C',
+    lengthPulses: 96,
+    notes: [{ at: 0, note: 60, velocity: 100, duration: 96 }],
+  }
+  const out = new FakeEngine()
+  const set = makeSettings({ accompany: { listen: true, monitor: false } })
+  const p = new Player(out, set)
+  p.getLivePhrase = () => pad
+  p.setScore(parseScore('', { beatsPerBar: 4 }))
+
+  p.noteIn(60, 100, true, 1000)
+  p.noteIn(64, 100, true, 1001)
+  p.noteIn(67, 100, true, 1002)
+  p.hearTick(1200)
+  for (let pulse = 1; pulse <= 20; pulse++) p.tick(pulse)
+  check('the chord is answered', p.liveHeld.size > 0, true)
+
+  p.setHolding(true)
+  p.noteIn(60, 0, false, 2000)
+  p.noteIn(64, 0, false, 2001)
+  p.noteIn(67, 0, false, 2002)
+  p.hearTick(2100)
+  for (let pulse = 21; pulse <= 40; pulse++) p.tick(pulse)
+  check('holding, the hands come off and it plays on', p.liveHeld.size > 0, true)
+
+  // A new chord still takes over -- that is what makes it playable, the left
+  // hand moving while the right stays free.
+  p.noteIn(65, 100, true, 3000)
+  p.noteIn(69, 100, true, 3001)
+  p.noteIn(72, 100, true, 3002)
+  p.hearTick(3200)
+  check('a new chord takes over while held', p.live.heard && p.live.heard.rootPc, 5)
+  p.noteIn(65, 0, false, 4000)
+  p.noteIn(69, 0, false, 4001)
+  p.noteIn(72, 0, false, 4002)
+  p.hearTick(4100)
+  check('and is held in its turn', p.live.heard !== null, true)
+
+  // Letting go of Hold with the hands already off ends it.
+  p.setHolding(false)
+  check('letting go of Hold ends it', p.liveHeld.size, 0)
+}
+
+/* Lifting the pedal while the keys are still down is not the end of the
+   chord: the hands have not stopped playing it, and taking it away would be
+   a hole in the middle of a bar. */
+{
+  const pad = {
+    id: 'pad', name: 'pad', over: 'C', sourcePcs: [0, 4, 7], sourceChord: 'C',
+    lengthPulses: 96,
+    notes: [{ at: 0, note: 60, velocity: 100, duration: 96 }],
+  }
+  const out = new FakeEngine()
+  const p = new Player(out, makeSettings({ accompany: { listen: true, monitor: false } }))
+  p.getLivePhrase = () => pad
+  p.setScore(parseScore('', { beatsPerBar: 4 }))
+  p.noteIn(60, 100, true, 1000)
+  p.noteIn(64, 100, true, 1001)
+  p.noteIn(67, 100, true, 1002)
+  p.hearTick(1200)
+  for (let pulse = 1; pulse <= 20; pulse++) p.tick(pulse)
+  p.setHolding(true)
+  p.setHolding(false)
+  check('the pedal comes up but the keys are still down', p.live.heard !== null, true)
+}
+
+/* A stop is not the hands moving. A chord left latched across one would come
+   back sounding on its own. */
+{
+  const pad = {
+    id: 'pad', name: 'pad', over: 'C', sourcePcs: [0, 4, 7], sourceChord: 'C',
+    lengthPulses: 96,
+    notes: [{ at: 0, note: 60, velocity: 100, duration: 96 }],
+  }
+  const out = new FakeEngine()
+  const p = new Player(out, makeSettings({ accompany: { listen: true, monitor: false } }))
+  p.getLivePhrase = () => pad
+  p.setScore(parseScore('', { beatsPerBar: 4 }))
+  p.noteIn(60, 100, true, 1000)
+  p.noteIn(64, 100, true, 1001)
+  p.hearTick(1200)
+  for (let pulse = 1; pulse <= 20; pulse++) p.tick(pulse)
+  p.setHolding(true)
+  p.transport('stop')
+  check('a stop clears the latch', p.holding, false)
+  check('and nothing is left sounding', p.liveHeld.size, 0)
+}
+
+/* The live path has its own way out, because inside a plugin the page has no
+   MIDI output and a heard chord is the one thing that cannot be compiled in
+   advance. Everything else still goes through the engine. */
+{
+  const engineOut = new FakeEngine()
+  const elsewhere = new FakeEngine()
+  const pad = {
+    id: 'pad', name: 'pad', over: 'C', sourcePcs: [0, 4, 7], sourceChord: 'C',
+    lengthPulses: 96,
+    notes: [{ at: 0, note: 60, velocity: 100, duration: 96 }],
+  }
+  const p = new Player(engineOut,
+                       makeSettings({ accompany: { listen: true, monitor: false } }))
+  p.liveOut = elsewhere
+  p.getLivePhrase = () => pad
+  p.setScore(parseScore('', { beatsPerBar: 4 }))
+  p.noteIn(60, 100, true, 1000)
+  p.noteIn(64, 100, true, 1001)
+  p.hearTick(1200)
+  for (let pulse = 1; pulse <= 20; pulse++) p.tick(pulse)
+  check('a heard chord leaves by the live route', elsewhere.log.length > 0, true)
+  check('and not through the engine', engineOut.log.length, 0)
+}
+
 console.log(failed === 0 ? 'player: all checks passed' : `player: ${failed} FAILED`)

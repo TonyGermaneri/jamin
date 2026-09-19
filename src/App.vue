@@ -18,6 +18,7 @@ import {
   rollSong,
   runToastAction,
   setSends,
+  setHolding,
 } from './store.js'
 
 const idle = ref(false)
@@ -125,10 +126,28 @@ function openMidi() {
 function toggleListen() {
   const accompany = state.settings.accompany
   accompany.listen = !accompany.listen
+  // Nothing is being listened to any more, so nothing can be latched.
+  if (!accompany.listen) setHolding(false)
   toast(accompany.listen
     ? `Listening — ${accompany.liveMode === 'override' ? 'your chords win' : 'over the chart'}`
     : 'Not listening')
 }
+
+/**
+ * Hold: the hands can come off the chord.
+ *
+ * Only offered while Mr. Accompany Me is listening, because there is nothing
+ * to hold otherwise. The foot is the ordinary way to reach it -- the sustain
+ * pedal, unless somebody has bound it elsewhere -- and this is for the times
+ * there is no pedal, and so you can see whether it is on.
+ */
+const holdTitle = computed(() => {
+  const cc = state.settings.midi.holdCc
+  const how = cc === null ? 'no pedal bound' : `pedal CC ${cc}`
+  return state.ui.holding
+    ? `Holding the chord — let go (${how})`
+    : `Hold the chord, so your hands can come off it (${how})`
+})
 </script>
 
 <template>
@@ -209,6 +228,17 @@ function toggleListen() {
           :color="state.settings.accompany.listen ? 'primary' : undefined"
           title="Mr. Accompany Me — hear what you play and answer it"
           @click="toggleListen"
+        />
+        <!-- Only while there is something to hold. A button that does
+             nothing is a lie about what the program can do. -->
+        <v-btn
+          v-if="state.settings.accompany.listen"
+          :icon="state.ui.holding ? 'mdi-pause-circle' : 'mdi-pause-circle-outline'"
+          size="small"
+          variant="text"
+          :color="state.ui.holding ? 'primary' : undefined"
+          :title="holdTitle"
+          @click="setHolding(!state.ui.holding)"
         />
         <!-- Only when there is a network to be on. A chart shared with nobody
              should not carry an indicator saying so. -->

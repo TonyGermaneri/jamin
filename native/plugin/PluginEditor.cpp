@@ -175,6 +175,19 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                                                (int) args[1]);
                            complete (juce::var (true));
                        })
+                   .withNativeFunction ("jaminSendNote",
+                       [this] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // Mr. Accompany Me, answering a chord that is being
+                           // played this moment. It cannot be compiled ahead
+                           // of time because it has not happened yet, so this
+                           // is the one thing the page sends in real time.
+                           // @see JaminProcessor::sendNote
+                           if (args.size() >= 4)
+                               plugin.sendNote ((int) args[0], (int) args[2],
+                                                (int) args[1], (bool) args[3]);
+                           complete (juce::var (true));
+                       })
                    .withNativeFunction ("jaminRoster",
                        [this] (const juce::Array<juce::var>&, auto complete)
                        {

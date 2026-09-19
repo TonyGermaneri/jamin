@@ -14,6 +14,7 @@ import {
   deletePhrase,
   renamePhrase,
   usePhrase,
+  setHolding,
   bindPhrase,
   currentToken,
   toast,
@@ -770,6 +771,38 @@ const assigningTo = computed(() => {
                 <div class="text-caption text-medium-emphasis mt-1">
                   A written chord knows how long it lasts because the bar says so. A held one lasts
                   until your hands move, so it is given a length and comes round again.
+                </div>
+
+                <!-- Hold. The foot is the ordinary way to reach it, so the
+                     binding sits with the thing it holds rather than in a
+                     list of controllers somewhere else. -->
+                <div class="d-flex align-center flex-wrap ga-2 mt-4">
+                  <v-btn
+                    size="small"
+                    :variant="state.ui.holding ? 'flat' : 'tonal'"
+                    :color="state.ui.holding ? 'primary' : undefined"
+                    class="text-none"
+                    @click="setHolding(!state.ui.holding)"
+                  >{{ state.ui.holding ? 'Holding — let go' : 'Hold the chord' }}</v-btn>
+                  <v-btn
+                    size="small"
+                    :variant="state.ui.learningHold ? 'flat' : 'text'"
+                    :color="state.ui.learningHold ? 'secondary' : undefined"
+                    class="text-none"
+                    @click="state.ui.learningHold = !state.ui.learningHold"
+                  >{{ state.ui.learningHold ? 'Move a control…' : 'Bind to MIDI' }}</v-btn>
+                  <span v-if="state.settings.midi.holdCc !== null" class="text-caption">
+                    CC {{ state.settings.midi.holdCc }}<span
+                      v-if="state.settings.midi.holdCc === 64"> — the sustain pedal</span>
+                    <v-btn size="x-small" variant="text" class="text-none"
+                           @click="state.settings.midi.holdCc = null">clear</v-btn>
+                  </span>
+                </div>
+                <div class="text-caption text-medium-emphasis mt-1">
+                  Your hands can come off the chord and it goes on playing, so the other one is
+                  free. A new chord takes over and is held in its turn; letting go of Hold is what
+                  ends it. Lifting the pedal while the keys are still down does nothing — you have
+                  not stopped playing the chord.
                 </div>
               </div>
             </div>

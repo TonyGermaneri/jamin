@@ -69,6 +69,15 @@ export function defaultSettings() {
       velocity: 90,
       // A control change that fires the accent, from any input. null until bound.
       accentCc: null,
+      /**
+       * The controller that latches a heard chord, so the hands can come off it.
+       *
+       * 64 is the sustain pedal, which is the pedal already under somebody's
+       * foot and does nothing else here -- jamin's own pedal output follows the
+       * chart rather than the player. Rebindable, because not every controller
+       * has a spare pedal socket. @see store.controlIn
+       */
+      holdCc: 64,
     },
     transport: {
       beatsPerBar: 4,

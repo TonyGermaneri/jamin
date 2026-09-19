@@ -329,12 +329,24 @@ int JaminProcessor::takeHeardNotes (juce::Array<juce::var>& into)
         for (int i = 0; i < size; ++i)
         {
             const auto& slot = heardRing[(size_t) (start + i)];
+            const bool control = (slot.bytes[0] & 0xf0) == 0xb0;
             const bool isOn = (slot.bytes[0] & 0xf0) == 0x90 && slot.bytes[2] > 0;
 
             auto* object = new juce::DynamicObject();
-            object->setProperty ("note", (int) slot.bytes[1]);
-            object->setProperty ("on", isOn);
-            object->setProperty ("velocity", (int) slot.bytes[2]);
+            if (control)
+            {
+                // Said differently so the page cannot mistake CC 64 for
+                // note 64, which is an E and would be heard as part of a
+                // chord.
+                object->setProperty ("controller", (int) slot.bytes[1]);
+                object->setProperty ("value", (int) slot.bytes[2]);
+            }
+            else
+            {
+                object->setProperty ("note", (int) slot.bytes[1]);
+                object->setProperty ("on", isOn);
+                object->setProperty ("velocity", (int) slot.bytes[2]);
+            }
             into.add (juce::var (object));
         }
     };
@@ -355,9 +367,27 @@ void JaminProcessor::tapNote (int note, int velocity, int channel)
 
     auto& slot = tapRing[(size_t) scope.startIndex1];
     slot.length = 3;
+    slot.held = false;
     slot.bytes[0] = (uint8_t) (0x90 | (channel & 0x0f));
     slot.bytes[1] = (uint8_t) note;
     slot.bytes[2] = (uint8_t) juce::jlimit (1, 127, velocity);
+}
+
+void JaminProcessor::sendNote (int note, int velocity, int channel, bool on)
+{
+    if (note < 0 || note > 127 || tapFifo.getFreeSpace() <= 0)
+        return;
+
+    const auto scope = tapFifo.write (1);
+    if (scope.blockSize1 <= 0)
+        return;
+
+    auto& slot = tapRing[(size_t) scope.startIndex1];
+    slot.length = 3;
+    slot.held = true;
+    slot.bytes[0] = (uint8_t) ((on ? 0x90 : 0x80) | (channel & 0x0f));
+    slot.bytes[1] = (uint8_t) note;
+    slot.bytes[2] = (uint8_t) (on ? juce::jlimit (1, 127, velocity) : 0);
 }
 
 void JaminProcessor::setInstanceMuted (const juce::String& id, bool muted)
@@ -426,7 +456,12 @@ void JaminProcessor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBu
             continue;
 
         const auto status = (uint8_t) (metadata.data[0] & 0xf0);
-        if (status != 0x90 && status != 0x80)
+        // Notes for working out a chord, and control changes because the
+        // page binds things to them -- Hold to the sustain pedal, the accent
+        // to whatever somebody chose. Everything else stays out: letting the
+        // lot through filled the ring with clock and aftertouch and pushed
+        // the notes out of it.
+        if (status != 0x90 && status != 0x80 && status != 0xb0)
             continue;
 
         const auto scope = heardFifo.write (1);
@@ -451,11 +486,35 @@ void JaminProcessor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBu
             {
                 const auto& slot = tapRing[(size_t) (start + i)];
                 const int channel = (slot.bytes[0] & 0x0f) + 1;
-                midi.addEvent (juce::MidiMessage::noteOn (channel, slot.bytes[1],
+                const int note = slot.bytes[1];
+
+                if (slot.held)
+                {
+                    // A chord somebody is playing right now, answered. Left
+                    // sounding, because the page decides when it ends -- but
+                    // written into `sounding` so a stop, a locate or a mute
+                    // releases it like anything else. The page going away
+                    // cannot strand it.
+                    const bool on = (slot.bytes[0] & 0xf0) == 0x90 && slot.bytes[2] > 0;
+                    if (on)
+                    {
+                        midi.addEvent (juce::MidiMessage::noteOn (channel, note,
+                                                                  (juce::uint8) slot.bytes[2]), 0);
+                        sounding[channel - 1][note] = true;
+                    }
+                    else
+                    {
+                        midi.addEvent (juce::MidiMessage::noteOff (channel, note), 0);
+                        sounding[channel - 1][note] = false;
+                    }
+                    continue;
+                }
+
+                midi.addEvent (juce::MidiMessage::noteOn (channel, note,
                                                           (juce::uint8) slot.bytes[2]), 0);
                 // Struck, not held: the note-off goes at the end of the same
                 // block so nothing is left sounding if the editor closes.
-                midi.addEvent (juce::MidiMessage::noteOff (channel, slot.bytes[1]),
+                midi.addEvent (juce::MidiMessage::noteOff (channel, note),
                                juce::jmax (1, getBlockSize() - 1));
             }
         };

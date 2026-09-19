@@ -60,26 +60,33 @@ const PEDAL_LIFT_PULSES = 1
  * others. @see core/midi.js panic
  */
 class Held {
-  constructor(engine) {
-    this.engine = engine
+  /**
+   * @param where a function returning what to send through. A function
+   *   rather than the thing itself because the live path's way out changes:
+   *   in a browser it is the MIDI engine, and inside a plugin the page has no
+   *   MIDI output at all and it is a call into the processor.
+   */
+  constructor(where) {
+    this.where = typeof where === 'function' ? where : () => where
     this.notes = new Map()
   }
 
   /** @returns {boolean} whether it reached a port, and was therefore kept. */
   on(out, channel, note, velocity) {
-    if (!this.engine.noteOn(out, channel, note, velocity)) return false
+    if (!this.where().noteOn(out, channel, note, velocity)) return false
     this.notes.set(`${out}:${channel}:${note}`, { out, channel, note })
     return true
   }
 
   off(out, channel, note) {
-    this.engine.noteOff(out, channel, note)
+    this.where().noteOff(out, channel, note)
     this.notes.delete(`${out}:${channel}:${note}`)
   }
 
   /** Everything, released where it was sent. */
   release() {
-    for (const one of this.notes.values()) this.engine.noteOff(one.out, one.channel, one.note)
+    const to = this.where()
+    for (const one of this.notes.values()) to.noteOff(one.out, one.channel, one.note)
     this.notes.clear()
   }
 
@@ -146,7 +153,27 @@ export class Player {
       startPulse: 0,
       lengthPulses: 0,
     }
-    this.liveHeld = new Held(engine)
+    /*
+     * Where a heard chord goes out.
+     *
+     * The chart's own notes are not sent from here when jamin is a plugin --
+     * the page compiles the song and the processor performs it -- but a chord
+     * somebody is playing right now cannot be compiled in advance, so the
+     * live path is the one thing that has to leave the page in real time. In
+     * a browser that is the MIDI engine; in a plugin the application points
+     * this at the processor. @see store.js liveOutput
+     */
+    this.liveOut = engine
+    this.liveHeld = new Held(() => this.liveOut)
+
+    /**
+     * Latched: the hands can come off and the chord goes on.
+     *
+     * The "Chord Hold" of an arranger keyboard -- what lets somebody take a
+     * hand off the chord and play over it. Bound to the sustain pedal by
+     * default, which is the pedal already under their foot.
+     */
+    this.holding = false
     /**
      * Which part this instance is playing: `phrases` or `drums`.
      *
@@ -248,17 +275,35 @@ export class Player {
   /* ---------------- clock ---------------- */
 
   tick(rawPulse) {
-    // An emptied chart, which used to return before anything was released --
-    // so clearing the text while it played left the last chord ringing.
+    const transport = this.settings.transport
+    const offset = transport.latencyPulses || 0
+
+    /*
+     * A chart with nothing in it is still a clock, and somebody may be
+     * playing into it.
+     *
+     * This used to return here, which made Mr. Accompany Me useless on an
+     * empty notepad -- the one state somebody is in when they open jamin to
+     * play rather than to read. The chord is heard, named and articulated
+     * against the bare clock, through the last articulation chosen; there is
+     * no chart to take a phrase from, and `liveSlot` has always known how
+     * long a bar is without one.
+     *
+     * The release is the other half: clearing the text while it played used
+     * to leave the last chord ringing, because this returned before it
+     * looked at what was held.
+     */
     if (!this.score || !this.score.events.length) {
       if (this.chordHeld.size || this.phraseHeld.size || this.droneHeld.size
           || this.drumHeld.size) {
         this.stopAll()
       }
+      this.position = Math.max(0, rawPulse + offset)
+      this.lastPosition = this.position
+      this.hearTick()
+      this.flushLive(this.position)
       return
     }
-    const transport = this.settings.transport
-    const offset = transport.latencyPulses || 0
     const position = wrapPulse(this.score, rawPulse + offset, transport.loop)
     const wrapped = position < this.lastPosition
     this.lastPosition = position
@@ -729,6 +774,16 @@ export class Player {
    * same voice leading -- over a slot of its own making. @see buildPhraseQueue
    */
   hearChord(heard) {
+    /*
+     * Latched, so the hands coming off is not the chord ending.
+     *
+     * Only the hands lifting is ignored. A new chord still replaces the old
+     * one and is held in its turn, which is what makes this playable: the
+     * left hand moves from chord to chord and the right is free the whole
+     * time. Letting go of Hold is what ends it. @see setHolding
+     */
+    if (!heard && this.holding && this.live.heard) return
+
     this.stopLive()
     this.live.heard = heard || null
 
@@ -826,9 +881,30 @@ export class Player {
     this.live.cursor = 0
   }
 
+  /**
+   * Hold, pressed or let go.
+   *
+   * Letting go only ends the chord if the hands are already off it. Somebody
+   * lifting their foot while still holding the keys has not stopped playing
+   * the chord, and taking it away from under them would be a hole in the
+   * middle of a bar.
+   */
+  setHolding(on) {
+    const next = Boolean(on)
+    if (next === this.holding) return
+    this.holding = next
+    if (!next && !this.listener.holding) this.hearChord(null)
+  }
+
   /** The hands are off, whatever the keyboard thinks. A locate or a stop. */
   forgetHeld() {
+    // Including a latched chord. A stop is not the hands moving -- it is the
+    // music ending -- and a chord left latched across it would come back
+    // sounding on its own.
+    this.holding = false
     this.listener.clear()
+    this.live.heard = null
+    this.live.queue = []
     this.stopLive()
     this.live.heard = null
     this.live.queue = []
