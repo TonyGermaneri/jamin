@@ -14,7 +14,8 @@ import { hosted, hostData, callHost, callHostSlowly, onHost, HostClock } from '.
 import { nodeAvailable, Session, httpTransport, hostTransport, localTransport } from './core/net.js'
 import { loadDrums, loadedDrums, drumReport, buildDrumTrack, matchingFill, fitsBars } from './core/drums.js'
 import {
-  kitById, cleanKitMap, classifyFolders, mapDrumNotes, DRUM_VOICES,
+  kitById, cleanKitMap, cleanInMap, classifyFolders, learnInbound,
+  mapDrumNotes, DRUM_VOICES,
 } from './core/drumKits.js'
 import {
   readGrooveFile, describeSet, packGroove, unpackGroove, spread, planPacks, slashes, reservoir, walkLibrary,
@@ -2130,6 +2131,13 @@ async function importOnePack(pack, progress, reader = hostReader) {
 
   const { folderKits, setKit, reason } = classifyFolders(perFolder)
   const drawn = samples.take()
+  /*
+   * And what the library's own folder names say about the notes the kit
+   * cannot read -- gathered now, while every shelf and its note counts are
+   * still in hand. Doing it later would mean reading the library again.
+   * @see core/drumKits.js learnInbound
+   */
+  const learned = learnInbound(perFolder, kitById(setKit || 'gm').in)
 
   await putSet({
     id: pack.id,
@@ -2149,7 +2157,13 @@ async function importOnePack(pack, progress, reader = hostReader) {
     // is not a kit and cannot be classified as one, and saying so is more use
     // than an empty box.
     kitReason: setKit ? '' : reason,
-    facts: drawn.length ? describeSet(drawn, { pitches: [...pitches.keys()].sort((a, b) => a - b), uses: pitches }) : {},
+    // Nothing yet: what somebody tells jamin these notes mean. Its seed is
+    // `learned`, which is evidence rather than an answer.
+    inMap: {},
+    inLearned: learned,
+    facts: drawn.length
+      ? describeSet(drawn, { pitches: [...pitches.keys()].sort((a, b) => a - b), uses: pitches })
+      : {},
     count: kept,
     addedAt: Date.now(),
   })
@@ -2389,6 +2403,9 @@ export async function importDrumFolder(files, name) {
     id: setId, name: name || 'library', kit: setKit, customMap: {},
     folderKits, folders: perFolder.size,
     kitReason: setKit ? '' : reason,
+    // What its own folder names say about the notes the kit cannot read.
+    inMap: {},
+    inLearned: learnInbound(perFolder, kitById(setKit || 'gm').in),
     partial: Boolean(progress.cancel || progress.trouble),
     // Now with every pitch rather than the sample's, which is only knowable
     // once the whole library has gone past.
@@ -3040,8 +3057,74 @@ export function inboundMapFor(groove) {
   if (!groove || !groove.setId) return null
   const set = state.drumSets.find((row) => row.id === groove.setId)
   if (!set) return null
-  const shelf = (set.folderKits || {})[groove.folder]
-  return kitById(shelf || set.kit || 'gm').in || null
+  return inboundFor(set, groove.folder)
+}
+
+/**
+ * How one library's notes are read, shelf by shelf, with its own corrections
+ * on top.
+ *
+ * Three layers, each narrower than the last. The kit the shelf was judged to
+ * be written for answers most of it; a shelf that disagrees with the rest of
+ * the library says so in `folderKits`; and `inMap` is whatever somebody has
+ * had to tell jamin themselves, which wins over both.
+ *
+ * That last layer exists because sampled libraries hang their own
+ * articulations off note numbers no standard defines and no table anywhere
+ * lists. Superior Drummer's Latin percussion puts congas on 90 and 94 to 97,
+ * its cajon on 10 to 14, its timbales on 17 to 23; those are 8% of that
+ * library's notes and they played as silence, and jamin has no business
+ * inventing what they mean. So it asks, and remembers the answer against the
+ * library it was given for.
+ */
+export function inboundFor(set, folder) {
+  if (!set) return null
+  const shelf = (set.folderKits || {})[folder]
+  const base = kitById(shelf || set.kit || 'gm').in || {}
+  const mine = cleanInMap(set.inMap)
+  return Object.keys(mine).length ? { ...base, ...mine } : base
+}
+
+/**
+ * Teach this library what one of its notes means.
+ *
+ * `voice` of `''` forgets the correction rather than storing an empty one, so
+ * the note goes back to whatever the kit says -- which for these notes is
+ * nothing, and that is the honest state to return to.
+ */
+export async function setDrumSetInbound(id, note, voice) {
+  const set = state.drumSets.find((row) => row.id === id)
+  if (!set) return
+  const pitch = Math.round(Number(note))
+  if (!Number.isFinite(pitch) || pitch < 0 || pitch > 127) return
+
+  const inMap = { ...cleanInMap(set.inMap) }
+  if (voice) inMap[pitch] = voice
+  else delete inMap[pitch]
+
+  try {
+    await putSet(plain({ ...set, inMap }))
+  } catch (error) {
+    noteError(error, 'saving the note map for ' + (set.name || id))
+    toast(`Could not save the note map for ${set.name || 'that library'}`)
+    return
+  }
+  await refreshDrumSets()
+  refreshDrums()
+}
+
+/** Every correction for a library, forgotten at once. */
+export async function clearDrumSetInbound(id) {
+  const set = state.drumSets.find((row) => row.id === id)
+  if (!set) return
+  try {
+    await putSet(plain({ ...set, inMap: {} }))
+  } catch (error) {
+    noteError(error, 'clearing the note map for ' + (set.name || id))
+    return
+  }
+  await refreshDrumSets()
+  refreshDrums()
 }
 
 /** What a library's notes are being read as, for the interface to say so. */

@@ -622,3 +622,145 @@ export function classifyFolders(perFolder) {
 
   return { folderKits, setKit, reason: setKit ? '' : reasons[0] || '' }
 }
+
+/**
+ * A library's own reading of its notes, sanitised.
+ *
+ * The mirror of `cleanKitMap`, pointing the other way: that one says which
+ * note a voice comes out on, this one says which voice a note read *in* means.
+ * Notes arrive as object keys and are therefore strings; they leave as
+ * strings too, because that is what an object key is, and every lookup
+ * against them is by note number, which coerces.
+ */
+export function cleanInMap(map) {
+  const out = {}
+  for (const [note, voice] of Object.entries(map || {})) {
+    const pitch = Math.round(Number(note))
+    if (!Number.isFinite(pitch) || pitch < 0 || pitch > 127) continue
+    if (!VOICE_IDS.has(voice)) continue
+    out[pitch] = voice
+  }
+  return out
+}
+
+/**
+ * Instrument words, as a library might spell them in a folder name.
+ *
+ * Used to *suggest* -- never to decide. A sampled library hangs its own
+ * articulations off note numbers nobody standardised, and there is no table
+ * for them anywhere; but a folder of two hundred patterns that is 90% note 63
+ * and is called `48@TIMBALES / 05@SALSA` has been labelled by the people who
+ * made it, and that is evidence rather than a guess.
+ *
+ * Deliberately conservative about which voice a word maps to. A folder called
+ * `CONGAS` says congas and does not say which of the three -- muted, high,
+ * low -- so it offers the open one and leaves the correction to somebody who
+ * can hear it. Where a library distinguishes them it usually says so, and the
+ * longer words are tried first for exactly that reason.
+ */
+export const VOICE_WORDS = [
+  ['sidestick', 'sideStick'], ['side stick', 'sideStick'], ['cross stick', 'sideStick'],
+  ['rimshot', 'snareRim'], ['snare rim', 'snareRim'],
+  ['hihat', 'hatClosed'], ['hi hat', 'hatClosed'], ['hat closed', 'hatClosed'],
+  ['closed hat', 'hatClosed'], ['hats closed', 'hatClosed'],
+  ['hat open', 'hatOpen'], ['open hat', 'hatOpen'], ['hats open', 'hatOpen'],
+  ['hat pedal', 'hatPedal'], ['pedal hat', 'hatPedal'], ['foot hat', 'hatPedal'],
+  ['ride bell', 'rideBell'], ['bell', 'rideBell'],
+  ['floor tom', 'tomFloor'], ['rack tom', 'tomHigh'],
+  ['kick', 'kick'], ['bass drum', 'kick'],
+  ['snare', 'snare'], ['ride', 'ride'], ['crash', 'crash1'], ['splash', 'crash1'],
+  ['china', 'crash2'], ['tom', 'tomMid'],
+
+  ['tambourine', 'tambourine'], ['tamborine', 'tambourine'],
+  ['cowbell', 'cowbell'], ['vibraslap', 'vibraslap'],
+  ['bongo', 'bongoHigh'], ['conga', 'congaHigh'], ['tumba', 'congaLow'],
+  ['timbale', 'timbaleHigh'], ['agogo', 'agogoHigh'],
+  ['cabasa', 'cabasa'], ['afuche', 'cabasa'], ['shekere', 'cabasa'],
+  ['shaker', 'cabasa'], ['caxixi', 'cabasa'],
+  ['maraca', 'maracas'], ['whistle', 'whistleLong'], ['apito', 'whistleLong'],
+  ['guiro', 'guiroLong'], ['clave', 'claves'], ['castanet', 'claves'],
+  ['woodblock', 'woodBlockHigh'], ['wood block', 'woodBlockHigh'],
+  ['cuica', 'cuicaOpen'], ['triangle', 'triangleOpen'],
+  ['clap', 'clap'], ['handclap', 'clap'],
+  ['surdo', 'tomFloor'], ['cajon', 'kick'], ['udu', 'kick'], ['frame drum', 'tomFloor'],
+].sort((a, b) => b[0].length - a[0].length)
+
+/**
+ * What a library's own folder names say about the notes no map can read.
+ *
+ * `perFolder` is what the import already has in hand: every shelf, and how
+ * many times each note was struck on it. For each note with no voice this
+ * works out where in the library it lives, and -- where the place has an
+ * instrument's name on it and the note is most of what is played there --
+ * what that place says it is.
+ *
+ * Two things come back and they are not the same kind of thing. `hints` is a
+ * suggestion -- `{ voice, share, against }`, where `share` is how much of the
+ * evidence agreed and `against` how many other instruments were named -- to
+ * be offered in the interface for somebody to accept or overrule. `where` is
+ * not a suggestion at all: it is the three places each note is most used,
+ * which is the evidence a person needs to decide when no word was found, and
+ * no word is found more often than not, because the commonest way a library
+ * names a folder is after the groove rather than after the drum.
+ */
+export function learnInbound(perFolder, inbound = GENERAL_MIDI_IN) {
+  const votes = new Map()          // note -> Map(voice -> weight)
+  const places = new Map()         // note -> [{ shelf, hits, share }]
+
+  for (const [shelf, hist] of perFolder) {
+    const counts = Object.entries(hist || {})
+    const total = counts.reduce((sum, [, n]) => sum + n, 0)
+    if (!total) continue
+
+    const words = String(shelf).toLowerCase().replace(/[^a-z]+/g, ' ')
+    const found = VOICE_WORDS.find(([word]) => words.includes(word))
+
+    for (const [note, hits] of counts) {
+      const pitch = Number(note)
+      if (inbound[pitch]) continue
+
+      const share = hits / total
+      const seen = places.get(pitch) || []
+      seen.push({ shelf, hits, share })
+      places.set(pitch, seen)
+
+      // Most of what a folder plays, or the folder's name is about the
+      // groove and not about this note. Half is the bar because a percussion
+      // folder is usually one instrument and a kit folder never is.
+      if (!found || share < 0.5) continue
+      const slate = votes.get(pitch) || new Map()
+      slate.set(found[1], (slate.get(found[1]) || 0) + hits)
+      votes.set(pitch, slate)
+    }
+  }
+
+  /*
+   * And only where the library agrees with itself.
+   *
+   * Note 24 on the Superior Drummer download is struck forty-five thousand
+   * times across eleven thousand shelves; some of those shelves are called
+   * `HATS_OPEN_VARIATIONS` and some are called `Snare Roughs`, and the
+   * majority is not the truth, it is the majority. A suggestion made out of
+   * a contested vote is a wrong drum offered with the same confidence as a
+   * right one, so a contested vote makes no suggestion at all -- and the
+   * three folders the note is most played in are reported either way, which
+   * is what somebody who knows the library can actually use.
+   */
+  const hints = {}
+  for (const [note, slate] of votes) {
+    const ranked = [...slate.entries()].sort((a, b) => b[1] - a[1])
+    const all = ranked.reduce((sum, [, weight]) => sum + weight, 0)
+    const [voice, weight] = ranked[0]
+    const share = all ? weight / all : 0
+    if (share < 0.6) continue
+    hints[note] = { voice, share: Math.round(share * 100), against: ranked.length - 1 }
+  }
+
+  const where = {}
+  for (const [note, seen] of places) {
+    where[note] = seen.sort((a, b) => b.hits - a.hits).slice(0, 3)
+      .map((one) => ({ shelf: one.shelf, share: Math.round(one.share * 100) }))
+  }
+
+  return { hints, where }
+}

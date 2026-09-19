@@ -36,7 +36,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { readGrooveFile, describeSet, spread } from 'SRC/core/drumImport.js'
 import {
-  classifyFolders, kitById, mapDrumNote, mapDrumNotes, DRUM_KITS, DEFAULT_KIT,
+  classifyFolders, kitById, mapDrumNote, mapDrumNotes, learnInbound, cleanInMap,
+  DRUM_KITS, DEFAULT_KIT,
 } from 'SRC/core/drumKits.js'
 
 const ROOT = process.argv[2]
@@ -94,6 +95,19 @@ for (const [, list] of byShelf) {
 }
 
 const { folderKits, setKit, reason } = classifyFolders(perFolder)
+
+/*
+ * And the corrections a person would be offered for the notes no kit reads.
+ *
+ * The library screen puts these in front of somebody with the evidence
+ * beside them, one press each. Here they are all accepted at once, which is
+ * the best case rather than the likely one -- what it measures is how much
+ * of the gap the library's own folder names can close without anybody
+ * inventing anything. @see components/DrumLibraryNotes.vue
+ */
+const learned = learnInbound(perFolder, kitById(setKit || DEFAULT_KIT).in)
+const taught = cleanInMap(Object.fromEntries(
+  Object.entries(learned.hints).map(([note, one]) => [note, one.voice])))
 const facts = describeSet(grooves.slice(0, 120),
   { pitches: [...uses.keys()].sort((a, b) => a - b), uses })
 const set = { id: 'probe', name: NAME, kit: setKit, folderKits, facts }
@@ -113,36 +127,37 @@ const badge = (inboundOf, outboundOf) => {
 /* ---- what playing actually does ----------------------------------------
    The real path, once per playback kit: inbound from the shelf the pattern
    sits on, outbound from the drum instrument on the track. */
-const inboundFor = (groove) =>
-  kitById(folderKits[groove.folder] || set.kit || DEFAULT_KIT).in
+const inboundFor = (groove, withTaught) => {
+  const base = kitById(folderKits[groove.folder] || set.kit || DEFAULT_KIT).in
+  return withTaught ? { ...base, ...taught } : base
+}
 
-const played = []
-for (const kit of DRUM_KITS) {
+const runThrough = (kit, withTaught) => {
   let notesIn = 0
   let notesOut = 0
   let silentClips = 0
   const lostPitch = new Map()
   for (const groove of grooves) {
-    const out = mapDrumNotes(groove.notes, kitById(kit.id).map, inboundFor(groove))
+    const inbound = inboundFor(groove, withTaught)
+    const out = mapDrumNotes(groove.notes, kitById(kit).map, inbound)
     notesIn += groove.notes.length
     notesOut += out.length
     if (!out.length) silentClips++
     if (out.length < groove.notes.length) {
-      const kept = new Set()
       for (const note of groove.notes) {
-        if (mapDrumNote(note.note, kitById(kit.id).map, inboundFor(groove)) !== null) kept.add(note.note)
-      }
-      for (const note of groove.notes) {
-        if (!kept.has(note.note)) lostPitch.set(note.note, (lostPitch.get(note.note) || 0) + 1)
+        if (mapDrumNote(note.note, kitById(kit).map, inbound) === null) {
+          lostPitch.set(note.note, (lostPitch.get(note.note) || 0) + 1)
+        }
       }
     }
   }
-  played.push({
-    kit: kit.id, name: kit.name, notesIn, notesOut, silentClips,
-    clips: grooves.length,
-    lost: [...lostPitch.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10),
-  })
+  return { notesIn, notesOut, silentClips, clips: grooves.length,
+           lost: [...lostPitch.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10) }
 }
+
+const played = DRUM_KITS.map((kit) =>
+  ({ kit: kit.id, name: kit.name, ...runThrough(kit.id, false) }))
+const afterTeaching = runThrough(DEFAULT_KIT, true)
 
 process.stdout.write(JSON.stringify({
   name: NAME, files: files.length, read, skipped,
@@ -156,6 +171,10 @@ process.stdout.write(JSON.stringify({
   badgeNow: badge(() => kitById(set.kit || DEFAULT_KIT).in,
                   () => kitById(DEFAULT_KIT).map),
   played,
+  // And with every suggestion the library's own folder names can make.
+  taught: Object.entries(taught).sort((a, b) => Number(a[0]) - Number(b[0])),
+  asked: Object.keys(learned.where).length,
+  afterTeaching,
 }))
 """
 
@@ -211,6 +230,10 @@ def main():
     if now["silent"]:
         print(f"            still silent: {', '.join(str(n) for n in now['silent'][:24])}")
 
+    print(f"  asked     {found['asked']} notes have no voice; the library's own folder "
+          f"names answer {len(found['taught'])} of them")
+    if found["taught"]:
+        print("            " + ", ".join(f"{n}->{v}" for n, v in found["taught"][:14]))
     print("  playing every pattern through each kit:")
     for one in found["played"]:
         share = one["notesOut"] / one["notesIn"] if one["notesIn"] else 0
@@ -218,6 +241,14 @@ def main():
               f"({share:.1%}), {one['silentClips']:,} of {one['clips']:,} clips silent")
         if one["lost"]:
             print("      lost: " + ", ".join(f"{n}x{c:,}" for n, c in one["lost"][:6]))
+
+    after = found["afterTeaching"]
+    before = next(o for o in found["played"] if o["kit"] == "gm")
+    wasShare = before["notesOut"] / before["notesIn"] if before["notesIn"] else 0
+    nowShare = after["notesOut"] / after["notesIn"] if after["notesIn"] else 0
+    print(f"  taught    {after['notesOut']:,} of {after['notesIn']:,} notes "
+          f"({nowShare:.1%}, was {wasShare:.1%}), "
+          f"{after['silentClips']:,} clips silent (was {before['silentClips']:,})")
 
     failures = []
 
@@ -255,6 +286,13 @@ def main():
     claimed = now["percent"] / 100
     check("the badge agrees with what is heard", abs(claimed - worst) < 0.03,
           f"badge says {claimed:.0%} lost, playing loses at most {worst:.0%}")
+
+    # Suggesting is allowed to find nothing -- most libraries name their
+    # folders after grooves. Suggesting something *worse* is not: a correction
+    # can only ever add a voice to a note that had none, so the number of
+    # notes that play can never fall.
+    check("accepting the suggestions never loses a note", nowShare >= wasShare,
+          f"{wasShare:.1%} before, {nowShare:.1%} after")
 
     print(f"\n  {'all checks passed' if not failures else str(len(failures)) + ' FAILED'}")
     raise SystemExit(1 if failures else 0)

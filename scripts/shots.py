@@ -357,6 +357,80 @@ def eachCatalogue(page):
     return "  |  ".join(out)
 
 
+def libraryNotes(page):
+    """The table that asks what a library's own notes mean.
+
+    Seeded with the shape the real thing has -- the Superior Drummer
+    download's note tallies and the folders those notes live in -- because
+    the question this screen has to answer well is what forty rows of it look
+    like, and a library with three notes in it cannot say.
+    """
+    page.evaluate("""() => {
+      const app = window.__jaminApp
+      return app.putSet({
+        id: 'shot-sd2',
+        name: 'Superior Drummer 2 Drum Midi',
+        root: '/Volumes/external/800k-drums/Superior Drummer 2 Drum Midi',
+        byReference: true,
+        kit: 'gm', customMap: {}, folderKits: {}, folders: 11040,
+        count: 404685, addedAt: Date.now(),
+        inMap: { 94: 'congaHigh' },
+        inLearned: {
+          hints: {
+            17: { voice: 'timbaleHigh', share: 100, against: 0 },
+            25: { voice: 'hatOpen', share: 74, against: 1 },
+            90: { voice: 'congaLow', share: 88, against: 0 },
+            103: { voice: 'congaHigh', share: 100, against: 0 },
+          },
+          where: {
+            24: [{ shelf: '401@SONGS/150-S0803@HATS_OPEN', share: 91 },
+                 { shelf: '000004@DFH/Snare Roughs/Ruffs on the beat', share: 88 }],
+            17: [{ shelf: '48@TIMBALES/05@SALSA', share: 96 },
+                 { shelf: '48@TIMBALES/02@CASCARA', share: 94 }],
+            10: [{ shelf: '16@FILLS/01@SOFT_FILLS_8TH', share: 62 }],
+            90: [{ shelf: '000045@EZX_LATIN_PERCUSSION/00@_CONGAS', share: 71 }],
+            94: [{ shelf: '000045@EZX_LATIN_PERCUSSION/02@MARVIN_FUNK_SWING', share: 58 }],
+            95: [{ shelf: '000045@EZX_LATIN_PERCUSSION/01@TUMBAO_SWING', share: 63 }],
+            96: [{ shelf: '000045@EZX_LATIN_PERCUSSION/06@RUMBA', share: 54 }],
+            97: [{ shelf: '000045@EZX_LATIN_PERCUSSION/04@MARTILLO', share: 66 }],
+            103: [{ shelf: '34@CONGA', share: 81 }],
+            25: [{ shelf: '105@STRAIGHT_4#4/123-S273@HATS_OPEN_VARIATIONS', share: 77 }],
+            11: [{ shelf: '000045@EZX_LATIN_PERCUSSION/12@_CAJON', share: 55 }],
+            12: [{ shelf: '000045@EZX_LATIN_PERCUSSION/12@_CAJON', share: 51 }],
+          },
+        },
+        facts: {
+          range: '0-127',
+          kit: 'wider than General MIDI',
+          pitchUse: {
+            36: 12489949, 42: 12032974, 38: 9309522, 51: 4257003, 44: 2196419,
+            24: 44885, 17: 42985, 25: 37078, 21: 23446, 29: 22303, 10: 18908,
+            11: 6527, 12: 6988, 90: 6441, 94: 4560, 95: 6357, 96: 7171,
+            97: 9008, 103: 2362, 116: 11271, 33: 7910, 34: 7764, 82: 4108,
+          },
+          pitches: [10, 11, 12, 17, 21, 24, 25, 29, 33, 34, 36, 38, 42, 44, 51,
+                    82, 90, 94, 95, 96, 97, 103, 116],
+        },
+      }).then(() => app.refreshDrumSets())
+    }""")
+    page.wait_for_timeout(600)
+    drive(page, "app.state.ui.book = null; app.state.ui.settings = true")
+    page.wait_for_timeout(700)
+    # The libraries live behind a tab of Settings; which one it is called has
+    # changed twice, so try the names rather than an index.
+    for label in ("Drums", "Libraries", "Drum libraries"):
+        tab = page.locator(f".v-tab:has-text('{label}')").first
+        if tab.count():
+            tab.click()
+            page.wait_for_timeout(500)
+            break
+    button = page.locator("button:has-text('Tell jamin what they are')").first
+    if not button.count():
+        raise Missing("no library row offered the note table")
+    button.click()
+    page.wait_for_timeout(800)
+
+
 def withLibrary(page, book):
     """A catalogue view with something actually in it.
 
@@ -425,6 +499,7 @@ VIEWS = [
     ("graph-progressions", lambda page: (graph(page, True), show(page, "progressions"))),
     # At the size somebody's own collection actually is. Only when the corpora
     # are there: they are downloaded, gitignored and thrown away afterwards.
+    ("library-notes", libraryNotes),
     ("chart-tools", lambda page: onChart(page, "tools")),
     ("chart-picker-roots", lambda page: onChart(page, "picker")),
     ("chart-picker-colours", lambda page: onChart(page, "colours")),

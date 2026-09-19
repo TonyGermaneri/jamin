@@ -22,10 +22,12 @@ import {
   setDrumSetKit,
   countEachDrumSet,
   kitMapFor,
+  inboundFor,
   buildIndexes,
   indexesAreCurrent,
 } from '../store.js'
 import { DRUM_KITS, DEFAULT_KIT, kitById, mapDrumNote } from '../core/drumKits.js'
+import DrumLibraryNotes from './DrumLibraryNotes.vue'
 import InfoTip from './InfoTip.vue'
 
 const settings = computed(() => state.settings.drums)
@@ -34,6 +36,16 @@ const settings = computed(() => state.settings.drums)
 const defaultKitId = DEFAULT_KIT
 
 const folderInput = ref(null)
+
+/**
+ * Which library is being taught its own notes, by id.
+ *
+ * A dialog rather than a row that grows: the table is one line per library
+ * and this is forty lines of questions, and a table that expands to forty
+ * times its height is a table nobody can find their place in again.
+ */
+const teaching = ref('')
+const beingTaught = computed(() => state.drumSets.find((set) => set.id === teaching.value))
 
 /** Bytes, as somebody would say them. */
 function inGigabytes(bytes) {
@@ -72,7 +84,7 @@ function unplayable(set) {
   const pitches = (set.facts && set.facts.pitches) || []
   if (!pitches.length) return null
 
-  const inbound = kitById(set.kit || defaultKitId).in
+  const inbound = inboundFor(set)
   const out = kitMapFor()
   const lost = pitches.filter((pitch) => mapDrumNote(pitch, out, inbound) === null)
 
@@ -371,8 +383,13 @@ async function bringIndexesUpToDate() {
                 {{ unplayable(set).lost }} of {{ unplayable(set).total }} sounds
                 have nowhere to go on this kit
               </template>
-              <span v-if="unplayable(set).percent > 10">— try another map</span>
             </span>
+            <!-- The way out of it, next to the number that says it is
+                 needed. Another map is the answer when the library is
+                 written in somebody's numbering; when it is written in
+                 its own, no map is, and this is. -->
+            <v-btn size="x-small" variant="text" class="text-none ml-1 px-1"
+                   @click="teaching = set.id">Tell jamin what they are</v-btn>
           </div>
           <!-- Why, when the classifier gave up. A pack of chromatic
                runs is how a sample library indexes itself and is not a
@@ -477,6 +494,21 @@ async function bringIndexesUpToDate() {
       where they are.
     </span>
   </div>
+
+  <!-- What this library's own notes mean, when no standard says. -->
+  <v-dialog :model-value="Boolean(beingTaught)" max-width="1100" scrollable
+            @update:model-value="teaching = ''">
+    <v-card v-if="beingTaught">
+      <v-card-title class="text-body-1">Notes with no drum</v-card-title>
+      <v-card-text>
+        <DrumLibraryNotes :set="beingTaught" />
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn class="text-none" @click="teaching = ''">Done</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
 
 <!-- Kit: where the drums actually are -------------------------- -->
 </template>

@@ -176,3 +176,66 @@ for (const kit of DRUM_KITS) {
     }
   }
 }
+
+/* ---------------- a library's own reading of its notes ------------------ *
+ *
+ * The kit says which numbering a library is written in, and for a library
+ * that is written in somebody's numbering that is the whole question. A
+ * sampled library is written in its own: Superior Drummer's Latin percussion
+ * has congas at 94 to 97 and a cajon at 10 to 14, which no standard defines
+ * and no published table lists. jamin asks rather than guessing, and this is
+ * where the answer is kept.
+ */
+check('a correction is kept', cleanInMap({ 94: 'congaHigh' }), { 94: 'congaHigh' })
+check('a note outside MIDI is not', cleanInMap({ 128: 'kick', '-1': 'kick' }), {})
+check('nor a voice that does not exist', cleanInMap({ 94: 'triangleFlat' }), {})
+check('and the note comes back as a number', Object.keys(cleanInMap({ '94': 'kick' })), ['94'])
+
+/* ---------------- what a library's folder names say --------------------- *
+ *
+ * Evidence, not inference: a folder that is almost entirely one note and is
+ * named after an instrument has been labelled by the people who made it. A
+ * folder named after a groove has not, and must not be read as though it had
+ * -- which is the whole reason the share matters.
+ */
+const shelves = new Map([
+  // Named after the instrument, and almost all one note: this is a label.
+  ['48@TIMBALES/05@SALSA', { 17: 90, 38: 10 }],
+  // Named after the instrument, but the note is a tenth of what is played:
+  // the folder is about the groove that happens to include it.
+  ['19@_BONGOS/20@MARVIN_FUNK', { 29: 10, 36: 50, 38: 40 }],
+  // Named after nothing in particular. Evidence of where, not of what.
+  ['02@MARVIN_FUNK_SWING/13@GROOVE_13', { 94: 80, 36: 20 }],
+])
+const learnt = learnInbound(shelves, GENERAL_MIDI_IN)
+
+check('a folder named after an instrument names its note',
+      learnt.hints[17].voice, 'timbaleHigh')
+check('and says how much of the evidence agreed', learnt.hints[17].share, 100)
+check('but not when the note is a tenth of what it plays',
+      learnt.hints[29], undefined)
+check('and a folder named after a groove names nothing',
+      learnt.hints[94], undefined)
+check('a note the kit already reads is not asked about',
+      learnt.hints[36], undefined)
+
+// The half that is never a guess: where each unreadable note is played, which
+// is what somebody who knows the library needs in order to recognise it.
+check('where the note lives is recorded either way',
+      learnt.where[94].map((one) => one.shelf),
+      ['02@MARVIN_FUNK_SWING/13@GROOVE_13'])
+check('with how much of that folder it is',
+      learnt.where[94][0].share, 80)
+check('and a note the kit reads is not listed at all',
+      learnt.where[36], undefined)
+
+/* A note the library cannot agree with itself about makes no suggestion.
+   Note 24 on the real Superior Drummer download lives in folders called
+   `HATS_OPEN_VARIATIONS` and in folders called `Snare Roughs`; the majority
+   of forty-five thousand hits is not the truth, it is the majority. */
+const argued = learnInbound(new Map([
+  ['150-S0803@HATS_OPEN', { 24: 95, 38: 5 }],
+  ['Snare Roughs/Ruffs on the beat', { 24: 90, 38: 10 }],
+]), GENERAL_MIDI_IN)
+check('a contested note is not suggested', argued.hints[24], undefined)
+check('but where it lives is still reported', argued.where[24].length, 2)
