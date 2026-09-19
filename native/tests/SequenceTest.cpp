@@ -82,9 +82,94 @@ void handoverTest()
     check ("the sequence survives the storm", last && ! last.get()->events.empty());
 }
 
+/**
+    What a swap strands, and what it must leave alone.
+
+    Every one of these was a note held in the DAW until the track was
+    disarmed. The one that was reported: switch the phrase under a chord
+    while it plays, and the note sounding at that moment was owed a note-off
+    that went away with the old sequence.
+*/
+void orphanTest()
+{
+    // Sounding: note 60 on channel 0, struck at pulse 0, and the pedal down.
+    SequencePlayer::Ringing held;
+    held.note[0][60] = true;
+    held.pedal[0] = true;
+
+    SequencePlayer::Ringing go;
+
+    // The new sequence still releases it at the same place -- which is what a
+    // keystroke somewhere else in the chart produces, and by far the common
+    // case. Releasing it anyway would chop up the part while somebody types.
+    Sequence same;
+    same.lengthPulses = 192;
+    same.events = { { 90, 0x80, 60, 0 }, { 90, 0xb0, 64, 0 } };
+    SequencePlayer::orphans (same, 1.0, held, go);          // pulse 24
+    check ("a note the new sequence still releases is left alone", ! go.note[0][60]);
+    check ("and so is the pedal", ! go.pedal[0]);
+
+    // The phrase was swapped for one that never plays that note. Nothing in
+    // the new sequence answers for it, so it has to go now.
+    Sequence other;
+    other.lengthPulses = 192;
+    other.events = { { 48, 0x90, 67, 100 }, { 90, 0x80, 67, 0 } };
+    SequencePlayer::orphans (other, 1.0, held, go);
+    check ("a note nothing answers for is released", go.note[0][60]);
+    check ("and a pedal nothing lifts is lifted", go.pedal[0]);
+
+    // Re-struck before it is released: two note-ons and one note-off is a
+    // note left on, so the one in the air is released first.
+    Sequence restruck;
+    restruck.lengthPulses = 192;
+    restruck.events = { { 48, 0x90, 60, 100 }, { 90, 0x80, 60, 0 } };
+    SequencePlayer::orphans (restruck, 1.0, held, go);
+    check ("a note re-struck before its release is released now", go.note[0][60]);
+
+    // Its note-off is behind the playhead, so it only comes round on the next
+    // pass: a note held for a whole song is a hung note with a timer on it.
+    SequencePlayer::orphans (same, 6.0, held, go);          // pulse 144, past 90
+    check ("a release only in the next pass does not count", go.note[0][60]);
+
+    // The channel matters. Same note number, different channel, is a
+    // different note and answers for nothing.
+    Sequence elsewhere;
+    elsewhere.lengthPulses = 192;
+    elsewhere.events = { { 90, 0x80, 60, 0 } };
+    elsewhere.events[0].status = 0x81;
+    SequencePlayer::orphans (elsewhere, 1.0, held, go);
+    check ("a release on another channel does not count", go.note[0][60]);
+
+    // A note-on at velocity nought is a note-off and always was.
+    Sequence zeroed;
+    zeroed.lengthPulses = 192;
+    zeroed.events = { { 90, 0x90, 60, 0 } };
+    SequencePlayer::orphans (zeroed, 1.0, held, go);
+    check ("a note-on at velocity nought releases it", ! go.note[0][60]);
+
+    // Nothing sounding is the commonest swap of all -- one while stopped --
+    // and it must not walk the sequence or report anything.
+    SequencePlayer::Ringing quiet, none;
+    SequencePlayer::orphans (other, 1.0, quiet, none);
+    bool anything = false;
+    for (int channel = 0; channel < 16; ++channel)
+    {
+        anything = anything || none.pedal[channel];
+        for (int note = 0; note < 128; ++note)
+            anything = anything || none.note[channel][note];
+    }
+    check ("a swap with nothing sounding releases nothing", ! anything);
+
+    // An empty sequence answers for nothing at all.
+    Sequence nothing;
+    SequencePlayer::orphans (nothing, 1.0, held, go);
+    check ("an emptied chart releases what it was playing", go.note[0][60]);
+}
+
 void sequenceTests()
 {
     handoverTest();
+    orphanTest();
 
     const auto song = twoBars();
     std::vector<SequencePlayer::Emitted> out;

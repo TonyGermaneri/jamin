@@ -74,6 +74,94 @@ void SequencePlayer::collect (const Sequence& seq,
     }
 }
 
+void SequencePlayer::orphans (const Sequence& next,
+                              double ppqNow,
+                              const Ringing& held,
+                              Ringing& release) noexcept
+{
+    release = {};
+
+    // Nothing is sounding, so nothing can be stranded. The commonest case by
+    // far -- a swap while the transport is stopped -- and it costs one pass
+    // over a small array rather than a walk of the sequence.
+    int waiting = 0;
+    for (int channel = 0; channel < 16; ++channel)
+    {
+        if (held.pedal[channel])
+            ++waiting;
+        for (int note = 0; note < 128; ++note)
+            if (held.note[channel][note])
+                ++waiting;
+    }
+    if (waiting == 0)
+        return;
+
+    // Everything is stranded until the new sequence is seen to answer for it.
+    // Starting from that assumption is what makes an early exit safe: whatever
+    // the walk has not reached is released, which is the harmless direction.
+    release = held;
+
+    // Where the playhead is within the current pass, worked out exactly as
+    // collect() does it -- the two have to agree about where "now" is or the
+    // walk starts on the wrong side of an event.
+    double from = ppqNow * Sequence::pulsesPerQuarter;
+    if (next.lengthPulses > 0)
+    {
+        const auto length = static_cast<double> (next.lengthPulses);
+        from = std::fmod (from, length);
+        if (from < 0.0)
+            from += length;      // fmod keeps the sign of the numerator
+    }
+
+    // Only to the end of this pass. A note-off that comes round again on the
+    // next time through the loop is a note held for a whole song, which is a
+    // hung note with a timer on it rather than a note that gets released.
+    const auto first = std::lower_bound (next.events.begin(), next.events.end(), from,
+                                         [] (const Sequence::Event& e, double p)
+                                         { return static_cast<double> (e.pulse) < p; });
+
+    Ringing settled;             // decided one way or the other; stop looking
+    int read = 0;
+
+    for (auto it = first; it != next.events.end() && waiting > 0; ++it)
+    {
+        if (++read > scanLimit)
+            break;
+
+        const int channel = it->status & 0x0f;
+        const int kind = it->status & 0xf0;
+
+        if (kind == 0x90 || kind == 0x80)
+        {
+            const int note = it->data1 & 0x7f;
+            if (! held.note[channel][note] || settled.note[channel][note])
+                continue;
+
+            // A note-off first: the new sequence answers for this one, so it
+            // is left alone and will stop where the new sequence says. A
+            // note-on first: the note in the air was never answered for, and
+            // letting it stand would leave two note-ons and one note-off.
+            const bool off = kind == 0x80 || it->data2 == 0;
+            if (off)
+                release.note[channel][note] = false;
+
+            settled.note[channel][note] = true;
+            --waiting;
+        }
+        else if (kind == 0xb0 && (it->data1 & 0x7f) == 64)
+        {
+            if (! held.pedal[channel] || settled.pedal[channel])
+                continue;
+
+            if (it->data2 == 0)
+                release.pedal[channel] = false;
+
+            settled.pedal[channel] = true;
+            --waiting;
+        }
+    }
+}
+
 std::unique_ptr<Sequence> SequenceHolder::swap (std::unique_ptr<Sequence> next)
 {
     while (busy.test_and_set (std::memory_order_acquire))

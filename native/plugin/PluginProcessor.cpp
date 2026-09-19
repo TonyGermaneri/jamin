@@ -559,6 +559,11 @@ void JaminProcessor::processBlock (juce::AudioBuffer<float>& audio, juce::MidiBu
 
     const double ppqPerSample = bpm / (60.0 * currentSampleRate);
 
+    // Before anything the new sequence has to say: whatever the one it
+    // replaced left ringing, if the new one does not answer for it.
+    if (sequenceSwapped.exchange (false, std::memory_order_acquire))
+        releaseStranded (*song.get(), ppq, midi);
+
     scratch.clear();
     jamin::SequencePlayer::collect (*song.get(), ppq, ppqPerSample, numSamples, scratch);
 
@@ -620,6 +625,58 @@ void JaminProcessor::setSequence (std::unique_ptr<jamin::Sequence> next)
     // could still be inside it.
     const auto previous = sequence.swap (std::move (next));
     juce::ignoreUnused (previous);
+
+    /*
+     * And tell the audio thread that what it is holding may now be owed to
+     * nobody.
+     *
+     * A compiled song carries its own note-offs, so a note sounding when the
+     * song is replaced is waiting for an answer that left with the old
+     * sequence. Nothing else turned it off: `allNotesOff` runs on a stop, a
+     * locate and a mute, none of which is an edit, so a note stranded by a
+     * chart change rang until the transport stopped. Switching the phrase
+     * under a chord is exactly that, and it is a thing somebody does while
+     * listening.
+     *
+     * The release itself belongs to the audio thread -- this is the message
+     * thread and has no MIDI buffer to put anything in -- so this is only the
+     * flag. @see releaseStranded
+     */
+    sequenceSwapped.store (true, std::memory_order_release);
+}
+
+void JaminProcessor::releaseStranded (const jamin::Sequence& next, double ppqNow,
+                                      juce::MidiBuffer& out)
+{
+    jamin::SequencePlayer::Ringing held;
+    for (int channel = 0; channel < 16; ++channel)
+    {
+        held.pedal[channel] = pedalHeld[channel];
+        for (int note = 0; note < 128; ++note)
+            held.note[channel][note] = sounding[channel][note];
+    }
+
+    jamin::SequencePlayer::Ringing release;
+    jamin::SequencePlayer::orphans (next, ppqNow, held, release);
+
+    for (int channel = 0; channel < 16; ++channel)
+    {
+        // The pedal first, as on a stop: a note-off under a held sustain is
+        // not a note that stops, and releasing the notes without lifting the
+        // pedal leaves exactly the ring this exists to prevent.
+        if (release.pedal[channel])
+        {
+            out.addEvent (juce::MidiMessage::controllerEvent (channel + 1, 64, 0), 0);
+            pedalHeld[channel] = false;
+        }
+
+        for (int note = 0; note < 128; ++note)
+            if (release.note[channel][note])
+            {
+                out.addEvent (juce::MidiMessage::noteOff (channel + 1, note), 0);
+                sounding[channel][note] = false;
+            }
+    }
 }
 
 bool JaminProcessor::setNetworking (bool shouldRun, const juce::String& secret)

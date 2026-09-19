@@ -298,6 +298,11 @@ private:
     void timerCallback() override;
     void allNotesOff (juce::MidiBuffer& out, int sampleOffset);
 
+    /** Release what the sequence just swapped out was still holding.
+        @see jamin::SequencePlayer::orphans */
+    void releaseStranded (const jamin::Sequence& next, double ppqNow,
+                          juce::MidiBuffer& out);
+
     TransportView view;
 
     // @see jamin::SequenceHolder for why this is a try-lock and not a pointer
@@ -310,6 +315,10 @@ private:
     // Which notes this instance started, so they can be stopped on a locate, a
     // stop, or a swap. Nothing else in the chain knows they are ours.
     bool sounding[16][128] {};
+
+    /// A new sequence has been swapped in and the audio thread has not yet
+    /// looked at what the old one left sounding. @see releaseStranded
+    std::atomic<bool> sequenceSwapped { false };
 
     // And whether the sustain pedal is down on each channel. Without this, a
     // stop under a held pedal sends note-offs to an instrument that is still

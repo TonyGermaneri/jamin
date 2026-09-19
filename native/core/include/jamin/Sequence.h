@@ -88,6 +88,54 @@ public:
                          int numSamples,
                          std::vector<Emitted>& out);
 
+    /** What is sounding, and whether the pedal is down, per channel. */
+    struct Ringing
+    {
+        bool note[16][128] {};
+        bool pedal[16] {};
+    };
+
+    /**
+        What a swap would strand, given what is already sounding.
+
+        A compiled song is a flat list of note-ons and the note-offs that
+        answer them, and the answer is only in the sequence that contained the
+        question. Swap a new one in halfway through a note and the note-off it
+        was owed goes with the old sequence: nothing turns that note off until
+        the transport stops, which in a DAW is a note held until the track is
+        disarmed. Editing the chart while it plays is the ordinary way to use
+        jamin, so this is the ordinary case rather than an edge.
+
+        It is not enough to release everything on every swap. The page
+        recompiles on every keystroke, and most keystrokes are somewhere else
+        in the chart -- the note-off for whatever is sounding is still there,
+        at the same pulse, in the new sequence. Releasing it anyway would make
+        typing chop up the part being played.
+
+        So this asks the new sequence what it intends to do. Walking forward
+        from where the playhead is, a note-off before any re-strike means the
+        new sequence will release that note itself and it can be left alone; a
+        re-strike first, or nothing at all, means it is stranded and has to be
+        released now. Same for the pedal, which hangs a chord just as
+        thoroughly and is easier to miss.
+
+        Real-time safe: no allocation, and the walk stops after `scanLimit`
+        events. Giving up early errs towards releasing, which is a re-struck
+        note rather than a hung one.
+
+        @param next      the sequence about to be played
+        @param ppqNow    the playhead, in quarter notes from song start
+        @param held      what this instance currently has sounding
+        @param release   filled in: what must be turned off now
+    */
+    static void orphans (const Sequence& next,
+                         double ppqNow,
+                         const Ringing& held,
+                         Ringing& release) noexcept;
+
+    /** How far the orphan walk reads before it gives up and releases. */
+    static constexpr int scanLimit = 8192;
+
 private:
     double cursor { 0.0 };
     bool located { false };
