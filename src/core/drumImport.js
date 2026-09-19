@@ -233,7 +233,9 @@ export function reservoir(size, seed = 1) {
  * the *pattern's* name differs in every file and tells you nothing about the
  * folder; one that is the library's name is the same in all of them.
  */
-export function describeSet(samples, { agreement = 0.6, limit = 12, pitches: exact = null } = {}) {
+export function describeSet(samples,
+                            { agreement = 0.6, limit = 12, pitches: exact = null,
+                              uses = null } = {}) {
   const counts = new Map()
 
   for (const groove of samples) {
@@ -269,11 +271,23 @@ export function describeSet(samples, { agreement = 0.6, limit = 12, pitches: exa
               : 'wider than General MIDI'
   }
 
-  // Kept so the interface can say, against whichever kit is chosen, how much of
-  // this library that kit has no drum for. A pack written for one sampler and
-  // played through another loses notes silently, and a number is the only way
-  // anybody would know.
-  return { ...facts, pitches: [...pitches].sort((a, b) => a - b) }
+  /*
+   * Kept so the interface can say, against whichever kit is chosen, how much of
+   * this library that kit has no drum for. A pack written for one sampler and
+   * played through another loses notes silently, and a number is the only way
+   * anybody would know.
+   *
+   * And how often each is struck, because the list alone answers the wrong
+   * question. A Superior Drummer download touches a hundred and twenty-eight
+   * distinct notes and plays four fifths of them a handful of times each: by
+   * the list, seventy-nine of its sounds have nowhere to go, which reads as a
+   * library in ruins; by the playing, eight per cent of its notes do, which is
+   * the truth and is a footnote. Counted rather than sampled, when the caller
+   * has been counting.
+   */
+  const out = { ...facts, pitches: [...pitches].sort((a, b) => a - b) }
+  if (uses) out.pitchUse = Object.fromEntries([...uses].sort((a, b) => a[0] - b[0]))
+  return out
 }
 
 /** Whatever the platform's separator is, one separator. Windows hands back

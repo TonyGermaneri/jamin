@@ -323,9 +323,25 @@ export const DRUM_KITS = [
   {
     id: 'vdrums',
     name: 'Roland V-Drums (TD-11)',
-    // The kit the shipped corpus was played on, so its own table is what reads
-    // a note coming in.
-    in: { ...TD11_TO_VOICE },
+    /*
+     * The kit the shipped corpus was played on, so its own table is what reads
+     * a note coming in -- but only where it has something to say.
+     *
+     * A TD-11 has twenty pads and that table has twenty notes in it. Used
+     * alone it is not a map of the kit, it is a map of the *kit's pads*, and
+     * everything a pattern plays that is not one of those pads reads as
+     * nothing: a conga at 63, a kick at 35, a clap at 39. Superior Drummer
+     * shelves get classified here on the strength of their hat edges at 22 and
+     * 26 -- correctly, that is where those notes live -- and then lost every
+     * other note they had, which is a two-bar funk groove of thirty-two hits
+     * arriving completely silent.
+     *
+     * So General MIDI underneath and the TD-11's own pads on top. Where Roland
+     * disagrees with the standard, Roland wins -- 58 is a floor tom rim here
+     * and a vibraslap there, and a shelf judged to be a Roland kit means the
+     * former. Where Roland is silent, the standard answers instead of nobody.
+     */
+    in: { ...GENERAL_MIDI_IN, ...TD11_TO_VOICE },
     // The kit the corpus was recorded on: playing a groove straight back at one
     // is the one case where nothing should be translated at all.
     map: {
@@ -567,4 +583,42 @@ export function cleanKitMap(map) {
     if (Number.isFinite(pitch) && pitch >= 0 && pitch <= 127) out[voice] = pitch
   }
   return out
+}
+
+/**
+ * The commonest verdict per shelf, and the library's own.
+ *
+ * A pack is rarely of one mind: a Superior Drummer download has the kit
+ * grooves in one shelf and the hand percussion in another, and those are
+ * genuinely written in different numbering. So each shelf is judged on its own
+ * notes and the library takes whichever verdict the most shelves reached; a
+ * shelf that agrees with the library is dropped from the table, because the
+ * table exists to record disagreement.
+ *
+ * Lives here rather than beside the import that calls it so that a checker
+ * driving a real library gets the same answer the program does. @see
+ * scripts/play_check.py, which had to reimplement this once and got it wrong.
+ */
+export function classifyFolders(perFolder) {
+  const folderKits = {}
+  const tally = new Map()
+  const reasons = []
+  for (const [shelf, hist] of perFolder) {
+    const verdict = classifyKit(hist)
+    folderKits[shelf] = verdict.kit
+    tally.set(verdict.kit, (tally.get(verdict.kit) || 0) + 1)
+    if (!verdict.kit && verdict.reason && !reasons.includes(verdict.reason)) {
+      reasons.push(verdict.reason)
+    }
+  }
+
+  const known = [...tally.entries()].filter(([kit]) => kit)
+  const majority = known.sort((a, b) => b[1] - a[1])[0]
+  const setKit = majority ? majority[0] : ''
+
+  for (const shelf of Object.keys(folderKits)) {
+    if (!folderKits[shelf] || folderKits[shelf] === setKit) delete folderKits[shelf]
+  }
+
+  return { folderKits, setKit, reason: setKit ? '' : reasons[0] || '' }
 }

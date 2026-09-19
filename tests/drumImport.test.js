@@ -138,6 +138,28 @@ check('and the verdict follows the exact list',
       describeSet([{ meta: {}, notes: [{ note: 36 }] }], { pitches: [36, 42, 99] }).kit,
       'wider than General MIDI')
 
+/*
+ * And how often each note is struck, which is the difference between a
+ * warning and a footnote.
+ *
+ * The library screen used to count sounds: a Superior Drummer download
+ * reaches a hundred and twenty-eight distinct notes, seventy-nine of which
+ * have no voice, and it said so -- "79 of 128 sounds have nowhere to go" --
+ * about a library that plays ninety-two per cent of its notes correctly,
+ * because the seventy-nine are rare articulations struck a handful of times
+ * each. The tally is what lets the screen say the eight per cent instead.
+ */
+const tallied = describeSet([{ meta: {}, notes: [{ note: 36 }] }],
+                            { pitches: [36, 99], uses: new Map([[36, 900], [99, 3]]) })
+check('the strikes are kept beside the list', tallied.pitchUse, { 36: 900, 99: 3 })
+check('so a rare unplayable note is rare rather than half the list',
+      Math.round(100 * tallied.pitchUse[99]
+        / Object.values(tallied.pitchUse).reduce((sum, n) => sum + n, 0)),
+      0)
+check('a library that was never tallied says nothing rather than guessing',
+      describeSet([{ meta: {}, notes: [{ note: 36 }] }], { pitches: [36] }).pitchUse,
+      undefined)
+
 /* ---------------- a collection of collections --------------------------- */
 // The real shape of somebody's accumulated library: fifty vendors' packs side
 // by side, two of them holding most of the files. Importing that as one library

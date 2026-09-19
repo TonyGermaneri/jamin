@@ -145,3 +145,34 @@ for (const [pitch, hit] of Object.entries(TD11)) {
 }
 
 console.log(failed ? `drum-map: ${failed} FAILED` : 'drum-map: all checks passed')
+
+/* ---------------- reading a V-Drums shelf ------------------------------- *
+ *
+ * The TD-11's table is a map of its twenty pads, and used alone as a *reading*
+ * map that is what it does: everything not on a pad reads as nothing. Shelves
+ * get classified as V-Drums on the strength of their hat edges at 22 and 26,
+ * which no General MIDI kit defines -- and a Latin percussion shelf that does
+ * that then lost its congas, its shakers and its kick, arriving as a two-bar
+ * funk groove of thirty-two hits with no notes in it at all.
+ *
+ * So the kit reads General MIDI underneath and its own pads on top. Roland
+ * wins where the two disagree, because the shelf was judged to be Roland.
+ */
+const vdrumsIn = DRUM_KITS.find((kit) => kit.id === 'vdrums').in
+check('a V-Drums shelf still reads its own floor tom rim', vdrumsIn[58], 'tomFloor')
+check('and its own tom rims', [vdrumsIn[50], vdrumsIn[47]], ['tomHigh', 'tomMid'])
+check('but a conga on it is a conga, not silence', vdrumsIn[63], 'congaHigh')
+check('and a bass drum at 35 is a kick', vdrumsIn[35], 'kick')
+check('and a clap is a clap', vdrumsIn[39], 'clap')
+
+/* Every kit must be able to read at least what General MIDI defines: a kit
+   that reads less than the standard turns a correct classification into
+   silence, which is the fault above. */
+for (const kit of DRUM_KITS) {
+  for (const pitch of Object.keys(GENERAL_MIDI_IN)) {
+    if (!kit.in[pitch]) {
+      failed++
+      console.log(`FAIL ${kit.id} cannot read note ${pitch}, which General MIDI defines`)
+    }
+  }
+}

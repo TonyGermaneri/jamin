@@ -13,7 +13,9 @@ import { MidiEngine } from './core/midi.js'
 import { hosted, hostData, callHost, callHostSlowly, onHost, HostClock } from './core/host.js'
 import { nodeAvailable, Session, httpTransport, hostTransport, localTransport } from './core/net.js'
 import { loadDrums, loadedDrums, drumReport, buildDrumTrack, matchingFill, fitsBars } from './core/drums.js'
-import { kitById, cleanKitMap, classifyKit, mapDrumNotes, DRUM_VOICES } from './core/drumKits.js'
+import {
+  kitById, cleanKitMap, classifyFolders, mapDrumNotes, DRUM_VOICES,
+} from './core/drumKits.js'
 import {
   readGrooveFile, describeSet, packGroove, unpackGroove, spread, planPacks, slashes, reservoir, walkLibrary,
 } from './core/drumImport.js'
@@ -2037,7 +2039,9 @@ async function importOnePack(pack, progress, reader = hostReader) {
   // Spread over the whole library rather than the first shelf of it. @see
   // reservoir, and the same mistake caught once before in spread().
   const samples = reservoir(120, hashOf(pack.id))
-  const pitches = new Set()
+  // Note by note, not merely which notes: how often each is struck is what
+  // says whether a gap in the map matters. @see describeSet
+  const pitches = new Map()
   let index = 0
   let batch = []
   let kept = 0
@@ -2073,7 +2077,7 @@ async function importOnePack(pack, progress, reader = hostReader) {
       if (!hist) { hist = {}; perFolder.set(groove.folder, hist) }
       for (const note of groove.notes) {
         hist[note.note] = (hist[note.note] || 0) + 1
-        pitches.add(note.note)
+        pitches.set(note.note, (pitches.get(note.note) || 0) + 1)
       }
 
       // Without the notes: this row is a pointer, not a copy.
@@ -2145,7 +2149,7 @@ async function importOnePack(pack, progress, reader = hostReader) {
     // is not a kit and cannot be classified as one, and saying so is more use
     // than an empty box.
     kitReason: setKit ? '' : reason,
-    facts: drawn.length ? describeSet(drawn, { pitches: [...pitches].sort((a, b) => a - b) }) : {},
+    facts: drawn.length ? describeSet(drawn, { pitches: [...pitches.keys()].sort((a, b) => a - b), uses: pitches }) : {},
     count: kept,
     addedAt: Date.now(),
   })
@@ -2272,30 +2276,6 @@ function unreadable(groove, why) {
   return { ...groove, notes: [], unreadable: why }
 }
 
-/** The commonest verdict per shelf, and the library's own. @see classifyKit */
-function classifyFolders(perFolder) {
-  const folderKits = {}
-  const tally = new Map()
-  const reasons = []
-  for (const [shelf, hist] of perFolder) {
-    const verdict = classifyKit(hist)
-    folderKits[shelf] = verdict.kit
-    tally.set(verdict.kit, (tally.get(verdict.kit) || 0) + 1)
-    if (!verdict.kit && verdict.reason && !reasons.includes(verdict.reason)) {
-      reasons.push(verdict.reason)
-    }
-  }
-
-  const known = [...tally.entries()].filter(([kit]) => kit)
-  const majority = known.sort((a, b) => b[1] - a[1])[0]
-  const setKit = majority ? majority[0] : ''
-
-  for (const shelf of Object.keys(folderKits)) {
-    if (!folderKits[shelf] || folderKits[shelf] === setKit) delete folderKits[shelf]
-  }
-
-  return { folderKits, setKit, reason: setKit ? '' : reasons[0] || '' }
-}
 
 /** A library, read. `files` is whatever a directory picker handed over. */
 export async function importDrumFolder(files, name) {
@@ -2360,7 +2340,9 @@ export async function importDrumFolder(files, name) {
   // Every pitch the library uses, not every pitch the sample uses. It is what
   // says how much of a library the chosen kit has no drum for, and a sample
   // would understate it. @see describeSet
-  const pitches = new Set()
+  // Note by note, not merely which notes: how often each is struck is what
+  // says whether a gap in the map matters. @see describeSet
+  const pitches = new Map()
 
   for (const file of list) {
     if (progress.cancel) break
@@ -2375,7 +2357,7 @@ export async function importDrumFolder(files, name) {
       if (!hist) { hist = {}; perFolder.set(shelf, hist) }
       for (const note of groove.notes) {
         hist[note.note] = (hist[note.note] || 0) + 1
-        pitches.add(note.note)
+        pitches.set(note.note, (pitches.get(note.note) || 0) + 1)
       }
     } else {
       progress.skipped++
@@ -2411,7 +2393,7 @@ export async function importDrumFolder(files, name) {
     // Now with every pitch rather than the sample's, which is only knowable
     // once the whole library has gone past.
     facts: samples.length
-      ? describeSet(samples, { pitches: [...pitches].sort((a, b) => a - b) })
+      ? describeSet(samples, { pitches: [...pitches.keys()].sort((a, b) => a - b), uses: pitches })
       : facts,
     count, addedAt: Date.now(),
   })

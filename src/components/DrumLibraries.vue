@@ -21,6 +21,7 @@ import {
   prepareDrumFilters,
   setDrumSetKit,
   countEachDrumSet,
+  kitMapFor,
   buildIndexes,
   indexesAreCurrent,
 } from '../store.js'
@@ -28,7 +29,6 @@ import { DRUM_KITS, DEFAULT_KIT, kitById, mapDrumNote } from '../core/drumKits.j
 import InfoTip from './InfoTip.vue'
 
 const settings = computed(() => state.settings.drums)
-const chosenKit = computed(() => kitById(settings.value.kit))
 
 /** What a library written before kits were always named falls back to. */
 const defaultKitId = DEFAULT_KIT
@@ -41,10 +41,10 @@ function inGigabytes(bytes) {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`
 }
 
-/** Everything the sampling found, minus the pitch list, which is machinery
+/** Everything the sampling found, minus the note tallies, which are machinery
     rather than something to read. */
 function setFacts(set) {
-  const { pitches, ...rest } = set.facts || {}
+  const { pitches, pitchUse, ...rest } = set.facts || {}
   return rest
 }
 
@@ -55,15 +55,57 @@ function setFacts(set) {
  * silence: nothing errors, the pattern is simply thinner than it should be. The
  * pitches the sampling saw are kept for exactly this, so the number is live
  * against whichever kit the library is set to.
+ *
+ * Both halves of the journey, in the right order, which is the whole of what
+ * was wrong with it: the library's own numbering reads the note *in* to a
+ * voice, and the drum instrument on the track writes that voice *out* to a
+ * note. It had the library's outbound map standing in for the instrument's,
+ * and no inbound map at all -- so `mapDrumNote` fell back on its default,
+ * which is the twenty pads of a TD-11. Every library read as "106 of 128
+ * sounds have nowhere to go" no matter which map was picked, because the map
+ * being picked was not the one being consulted.
+ *
+ * @see core/drumKits.js mapDrumNote, store.js inboundMapFor / kitMapFor --
+ * which is what playing a groove really does, and what this now mirrors.
  */
 function unplayable(set) {
   const pitches = (set.facts && set.facts.pitches) || []
   if (!pitches.length) return null
 
-  const map = set.kit ? kitById(set.kit).map : chosenKit.value.map
-  const lost = pitches.filter((pitch) => mapDrumNote(pitch, map) === null)
-  return { lost: lost.length, total: pitches.length,
-           percent: Math.round(100 * lost.length / pitches.length) }
+  const inbound = kitById(set.kit || defaultKitId).in
+  const out = kitMapFor()
+  const lost = pitches.filter((pitch) => mapDrumNote(pitch, out, inbound) === null)
+
+  /*
+   * How much of the *playing* is lost, not how much of the list.
+   *
+   * These are wildly different numbers and only one of them is worth showing.
+   * A sampled library reaches a hundred and twenty-eight distinct notes
+   * because it hangs a dozen rare articulations off the far ends of the
+   * keyboard; counting those equally with the kick says "seventy-nine of your
+   * hundred and twenty-eight sounds have nowhere to go", which sounds like a
+   * broken library and sent somebody off to change a map that was correct.
+   * Weighted by how often each note is actually struck the same library loses
+   * eight per cent, which is the truth and is worth a footnote rather than a
+   * warning.
+   *
+   * Libraries imported before the tallies were kept have the list and not the
+   * counts; those fall back to the old reading, which is the only one their
+   * record can support.
+   */
+  const uses = (set.facts && set.facts.pitchUse) || null
+  const struck = uses ? Object.values(uses).reduce((sum, n) => sum + n, 0) : 0
+  const missed = uses
+    ? lost.reduce((sum, pitch) => sum + (uses[pitch] || 0), 0)
+    : 0
+
+  return {
+    lost: lost.length,
+    total: pitches.length,
+    weighed: Boolean(struck),
+    percent: struck ? Math.round(100 * missed / struck)
+                    : Math.round(100 * lost.length / pitches.length),
+  }
 }
 
 function pickFolder() {
@@ -310,11 +352,25 @@ async function bringIndexesUpToDate() {
         <td class="text-caption text-medium-emphasis">
           <!-- The number that says whether the kit above is right.
                A library played through the wrong map loses notes in
-               silence; nothing else would tell you. -->
-          <div v-if="unplayable(set)" class="mb-1">
-            <span :class="unplayable(set).percent > 10 ? 'text-warning' : ''">
-              {{ unplayable(set).lost }} of {{ unplayable(set).total }} sounds
-              have nowhere to go on this kit
+               silence; nothing else would tell you.
+
+               Said as a share of the playing, because that is the
+               question somebody is asking. The count of sounds is
+               kept beside it in the tooltip for anybody who wants to
+               go looking, but it is not the headline: it was, and it
+               read 106 of 128 on a library that played fine. -->
+          <div v-if="unplayable(set) && unplayable(set).lost" class="mb-1">
+            <span :class="unplayable(set).percent > 10 ? 'text-warning' : ''"
+                  :title="`${unplayable(set).lost} of ${unplayable(set).total} distinct `
+                    + `notes in this library have no voice in jamin's vocabulary`">
+              <template v-if="unplayable(set).weighed">
+                {{ unplayable(set).percent }}% of this library’s notes have
+                nowhere to go on this kit
+              </template>
+              <template v-else>
+                {{ unplayable(set).lost }} of {{ unplayable(set).total }} sounds
+                have nowhere to go on this kit
+              </template>
               <span v-if="unplayable(set).percent > 10">— try another map</span>
             </span>
           </div>
