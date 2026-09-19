@@ -109,7 +109,7 @@ live.p.noteIn(65, 0, false, 2001)
 live.p.noteIn(69, 0, false, 2002)
 live.p.hearTick(2100)
 check('letting go is heard too', heard, ['D-', null])
-check('and nothing of it is left sounding', live.p.live.sounding.size, 0)
+check('and nothing of it is left sounding', live.p.liveHeld.size, 0)
 
 // --- merge: two parts, which is what a second player in the room is ---
 live = listening({ liveMode: 'merge' })
@@ -514,5 +514,91 @@ player.tick(1)
 const droneEvents = engine.log.filter((l) => l[0] === 'on' && l[1] === 48)
 check('the drone sounded', droneEvents.length, 1)
 check('on the bass channel, not the accompaniment one', droneEvents[0][2], 3)
+
+/* ---------------- nothing is left hanging --------------------------------
+ *
+ * Editing a chart while it plays is the ordinary way to use this program,
+ * and every one of these used to leave notes on in the DAW until the track
+ * was disarmed. The shape was always the same: the event that owed the
+ * note-offs was forgotten before they were sent, and then either the next
+ * tick collected the debt or nothing ever did.
+ *
+ * A note-on with no matching note-off is the whole of what is being checked,
+ * so the engine is asked directly rather than the player being asked what it
+ * thinks it is holding. @see core/player.js Held
+ */
+function ringing(log) {
+  const on = new Map()
+  for (const [what, note, channel] of log) {
+    const key = `${channel}:${note}`
+    if (what === 'on') on.set(key, (on.get(key) || 0) + 1)
+    else on.set(key, (on.get(key) || 0) - 1)
+  }
+  return [...on.entries()].filter(([, n]) => n > 0).map(([key]) => key).sort()
+}
+
+// The chord under the playhead, deleted. There is no next event to start and
+// nothing else was ever going to send these.
+engine = new FakeEngine(); settings = makeSettings(); player = new Player(engine, settings)
+player.setScore(parseScore('C', { beatsPerBar: 4 }))
+for (let p = 1; p <= 40; p++) player.tick(p)
+check('the chord is sounding', ringing(engine.log), ['0:60', '0:64', '0:67'])
+player.setScore(parseScore('', { beatsPerBar: 4 }))
+check('deleting the whole chart releases it', ringing(engine.log), [])
+
+// The same, with a tick afterwards -- which is the case that used to return
+// before it looked at what was held.
+engine = new FakeEngine(); settings = makeSettings(); player = new Player(engine, settings)
+player.setScore(parseScore('C', { beatsPerBar: 4 }))
+for (let p = 1; p <= 40; p++) player.tick(p)
+player.setScore(parseScore('', { beatsPerBar: 4 }))
+for (let p = 41; p <= 60; p++) player.tick(p)
+check('and an empty chart keeps it released', ringing(engine.log), [])
+
+// A chord replaced by a different one, with the transport stopped: no tick
+// follows to clean up after it.
+engine = new FakeEngine(); settings = makeSettings(); player = new Player(engine, settings)
+player.setScore(parseScore('C G', { beatsPerBar: 4 }))
+for (let p = 1; p <= 40; p++) player.tick(p)
+player.setScore(parseScore('Ab G', { beatsPerBar: 4 }))
+check('changing the chord under the playhead releases the old one',
+      ringing(engine.log), [])
+
+// The chord survives the edit but what is bound to it does not. The queue in
+// hand belongs to the old phrase: its remaining note-offs are for notes the
+// new one never sounded, and the notes actually ringing have none at all.
+const longPhrase = {
+  id: 'one', name: 'one', over: 'C', sourcePcs: [0, 4, 7], sourceChord: 'C',
+  lengthPulses: 96,
+  // One long note, still down when the edit lands.
+  notes: [{ at: 0, note: 60, velocity: 100, duration: 96 }],
+}
+engine = new FakeEngine(); settings = makeSettings({ accompany: { enabled: true } })
+player = new Player(engine, settings)
+player.getPhrase = (name) => (name === 'one' ? longPhrase : null)
+player.setScore(parseScore('.C{one} F', { beatsPerBar: 4, perChordPhrases: true }))
+for (let p = 1; p <= 40; p++) player.tick(p)
+check('the phrase is sounding', ringing(engine.log).length > 0, true)
+// The chord is untouched; only what is bound to it changes.
+player.setScore(parseScore('.C F', { beatsPerBar: 4, perChordPhrases: true }))
+check('unbinding the phrase releases what it was holding', ringing(engine.log), [])
+
+// And the note-off goes where the note-on went, not where the settings point
+// by the time it is released. Moving the accompaniment to another port used
+// to send the release to the new one and leave the old one ringing.
+class PortEngine {
+  constructor() { this.log = [] }
+  noteOn(out, ch, note) { this.log.push(['on', `${out}/${note}`, ch]); return true }
+  noteOff(out, ch, note) { this.log.push(['off', `${out}/${note}`, ch]); return true }
+}
+const ports = new PortEngine()
+settings = makeSettings()
+player = new Player(ports, settings)
+player.setScore(parseScore('C G', { beatsPerBar: 4 }))
+for (let p = 1; p <= 40; p++) player.tick(p)
+settings.midi.chordOutputId = 'somewhere else'
+for (let p = 41; p <= 120; p++) player.tick(p)
+check('released on the port it was sounded on',
+      ringing(ports.log).filter((one) => one.includes('out/')), [])
 
 console.log(failed === 0 ? 'player: all checks passed' : `player: ${failed} FAILED`)

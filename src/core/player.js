@@ -40,6 +40,55 @@ const SUSTAIN = 64
  */
 const PEDAL_LIFT_PULSES = 1
 
+/**
+ * Notes that are on, and the port and channel each one went out on.
+ *
+ * Every hung note this program has produced has had the same shape: a
+ * note-on was sent, something changed, and the note-off went somewhere else
+ * or was never sent at all. Remembering only the pitch is what makes that
+ * possible -- releasing it means asking the settings where it *would* go now,
+ * and "now" is after whatever changed.
+ *
+ * So the address is remembered with the note. A note released through this is
+ * released where it was sounded, whatever has happened to the settings since:
+ * the accompaniment moved to another port, the channel changed, the part
+ * switched from phrases to drums. None of those can strand it any more.
+ *
+ * The engine keeps its own ledger for the panic button, which is a different
+ * thing: that one is every note *any* part turned on, and is the last resort.
+ * This one is per part, so one part can be silenced without silencing the
+ * others. @see core/midi.js panic
+ */
+class Held {
+  constructor(engine) {
+    this.engine = engine
+    this.notes = new Map()
+  }
+
+  /** @returns {boolean} whether it reached a port, and was therefore kept. */
+  on(out, channel, note, velocity) {
+    if (!this.engine.noteOn(out, channel, note, velocity)) return false
+    this.notes.set(`${out}:${channel}:${note}`, { out, channel, note })
+    return true
+  }
+
+  off(out, channel, note) {
+    this.engine.noteOff(out, channel, note)
+    this.notes.delete(`${out}:${channel}:${note}`)
+  }
+
+  /** Everything, released where it was sent. */
+  release() {
+    for (const one of this.notes.values()) this.engine.noteOff(one.out, one.channel, one.note)
+    this.notes.clear()
+  }
+
+  get size() { return this.notes.size }
+
+  /** The pitches, for anything that wants to know what is ringing. */
+  pitches() { return [...this.notes.values()].map((one) => one.note) }
+}
+
 export class Player {
   constructor(engine, settings) {
     this.engine = engine
@@ -54,13 +103,14 @@ export class Player {
     this.local = 0
 
     this.chordNotes = [] // last voicing, remembered for voice leading
-    this.soundingNotes = [] // what is actually held down right now
-    this.droneNotes = [] // the held root under the accompaniment, if asked for
+    // What is actually held down right now, and where each note went. @see Held
+    this.chordHeld = new Held(engine)
+    this.droneHeld = new Held(engine)  // the held root under the accompaniment
     this.accent = null // armed, waiting for the next chord: { phrase, index }
     this.activePhrase = null
     this.phraseQueue = []
     this.phraseCursor = 0
-    this.phraseSounding = new Set()
+    this.phraseHeld = new Held(engine)
     // The phrase as it sounded over the last chord, so the next chord places it
     // in the register nearest to where it just was.
     this.lastPhraseNotes = null
@@ -74,7 +124,7 @@ export class Player {
     // beat by beat. It depends on nothing that happens at play time.
     this.drumTrack = []
     this.drumCursor = 0
-    this.drumSounding = new Set()
+    this.drumHeld = new Held(engine)
     /** Armed, waiting for the next section. @see armDrumAccent */
     this.drumAccent = null
 
@@ -95,8 +145,8 @@ export class Player {
       cursor: 0,
       startPulse: 0,
       lengthPulses: 0,
-      sounding: new Set(),
     }
+    this.liveHeld = new Held(engine)
     /**
      * Which part this instance is playing: `phrases` or `drums`.
      *
@@ -146,7 +196,22 @@ export class Player {
     this.rebuildDrums()
 
     const event = previous ? eventAtPulse(score, this.position, this.settings.transport.loop) : null
-    if (event && sameChord(event.chord, previous.chord)) {
+    const stays = Boolean(event && sameChord(event.chord, previous.chord))
+    /*
+     * Whatever is bound to this chord has to still be the thing that is
+     * playing, or what is playing has to stop.
+     *
+     * The chord surviving an edit is not enough. Point the same chord at a
+     * different phrase and the queue in hand belongs to the old one -- every
+     * note-off still to come is for notes the new phrase never sounded, and
+     * the notes actually ringing have no note-off anywhere at all. Same for
+     * an accent armed or spent. So the binding is compared as well as the
+     * chord, and a change is treated as a change.
+     */
+    const rebound = stays
+      && (event.phraseId !== previous.phraseId || event.pedal !== previous.pedal)
+
+    if (stays && !rebound) {
       this.current = event
       this.currentIndex = event.index
       // The slot may have moved or changed length; re-place the phrase cursor
@@ -156,16 +221,42 @@ export class Player {
       while (this.phraseCursor < this.phraseQueue.length && this.phraseQueue[this.phraseCursor].at <= local) {
         this.phraseCursor++
       }
-    } else {
-      this.current = null
-      this.currentIndex = -1
+      return
     }
+
+    /*
+     * And this is where the notes were left hanging.
+     *
+     * Forgetting the current event without releasing what it sounded meant
+     * the note-offs were owed to an event that no longer existed. Sometimes
+     * the next tick collected the debt -- `startEvent` stops everything
+     * first -- and sometimes nothing ever did: delete the chord under the
+     * playhead and there is no next event to start; delete the last one and
+     * `tick` returns before it looks; stop the transport and there is no
+     * next tick at all. In a DAW that is a note held until the track is
+     * disarmed.
+     *
+     * Editing a chart while it plays is the ordinary way to use this
+     * program, so the ordinary case has to be right rather than usually
+     * right.
+     */
+    this.stopAll()
+    this.current = null
+    this.currentIndex = -1
   }
 
   /* ---------------- clock ---------------- */
 
   tick(rawPulse) {
-    if (!this.score || !this.score.events.length) return
+    // An emptied chart, which used to return before anything was released --
+    // so clearing the text while it played left the last chord ringing.
+    if (!this.score || !this.score.events.length) {
+      if (this.chordHeld.size || this.phraseHeld.size || this.droneHeld.size
+          || this.drumHeld.size) {
+        this.stopAll()
+      }
+      return
+    }
     const transport = this.settings.transport
     const offset = transport.latencyPulses || 0
     const position = wrapPulse(this.score, rawPulse + offset, transport.loop)
@@ -288,15 +379,12 @@ export class Player {
 
     const playBlock = !phrase || accompany.mode === 'layer'
     this.chordNotes = voicing.notes.slice()
-    this.soundingNotes = []
     if (playBlock) {
-      // Only remember notes that actually reached a port. With no output bound
-      // yet, recording them anyway would fire note-offs for notes that were
-      // never turned on the moment a port is chosen.
+      // Only notes that actually reached a port are remembered. With no output
+      // bound yet, recording them anyway would fire note-offs for notes that
+      // were never turned on the moment a port is chosen.
       for (const note of voicing.notes) {
-        if (this.engine.noteOn(midi.chordOutputId, midi.chordChannel, note, midi.velocity)) {
-          this.soundingNotes.push(note)
-        }
+        this.chordHeld.on(midi.chordOutputId, midi.chordChannel, note, midi.velocity)
       }
     }
 
@@ -355,7 +443,7 @@ export class Player {
 
     for (const note of wanted) {
       if (note < 0 || note > 127) continue
-      if (this.engine.noteOn(outputId, midi.bassChannel, note, midi.velocity)) this.droneNotes.push(note)
+      this.droneHeld.on(outputId, midi.bassChannel, note, midi.velocity)
     }
   }
 
@@ -447,24 +535,17 @@ export class Player {
       // exactly where a bar line would have put it for every pattern that
       // strikes it on the one. @see store.setDrumVoiceMuted
       if (this.mutedNotes && this.mutedNotes.has(hit.note)) continue
-      if (this.engine.noteOn(outputId, channel, hit.note, hit.velocity)) {
-        this.drumSounding.add(hit.note)
-      }
+      this.drumHeld.on(outputId, channel, hit.note, hit.velocity)
     }
 
     // Drums are struck, not held: the note-off is a formality the instrument
     // ignores, but leaving them on would stack a hundred held notes on one
     // channel and some samplers do count them.
-    for (const note of this.drumSounding) this.engine.noteOff(outputId, channel, note)
-    this.drumSounding.clear()
+    this.drumHeld.release()
   }
 
   stopDrums() {
-    const midi = this.settings.midi
-    const outputId = midi.drumOutputId || midi.chordOutputId
-    const channel = midi.drumChannel ?? 9
-    for (const note of this.drumSounding) this.engine.noteOff(outputId, channel, note)
-    this.drumSounding.clear()
+    this.drumHeld.release()
   }
 
   /**
@@ -555,24 +636,19 @@ export class Player {
       if (item.at > local) break
       this.phraseCursor++
       if (item.on) {
-        if (this.engine.noteOn(outputId, channel, item.note, item.velocity)) this.phraseSounding.add(item.note)
+        this.phraseHeld.on(outputId, channel, item.note, item.velocity)
       } else {
-        this.engine.noteOff(outputId, channel, item.note)
-        this.phraseSounding.delete(item.note)
+        this.phraseHeld.off(outputId, channel, item.note)
       }
     }
   }
 
   stopAll() {
-    const midi = this.settings.midi
-    for (const note of this.soundingNotes) this.engine.noteOff(midi.chordOutputId, midi.chordChannel, note)
-    this.soundingNotes = []
-    const accompOut = midi.accompOutputId || midi.chordOutputId
-    for (const note of this.phraseSounding) this.engine.noteOff(accompOut, midi.accompChannel, note)
-    this.phraseSounding.clear()
-    const bassOut = midi.bassOutputId || midi.chordOutputId
-    for (const note of this.droneNotes) this.engine.noteOff(bassOut, midi.bassChannel, note)
-    this.droneNotes = []
+    // Each to the port and channel it was sounded on, which is not necessarily
+    // where the settings point now. @see Held
+    this.chordHeld.release()
+    this.phraseHeld.release()
+    this.droneHeld.release()
     // What the hands are holding is *not* stopped here. stopAll() runs on every
     // chord change and the hands do not answer to chords -- the same rule the
     // drums follow. A real stop goes through transport(), which calls
@@ -739,23 +815,14 @@ export class Player {
       const item = this.live.queue[this.live.cursor]
       if (item.at > local) break
       this.live.cursor++
-      if (item.on) {
-        if (this.engine.noteOn(outputId, channel, item.note, item.velocity)) {
-          this.live.sounding.add(item.note)
-        }
-      } else {
-        this.engine.noteOff(outputId, channel, item.note)
-        this.live.sounding.delete(item.note)
-      }
+      if (item.on) this.liveHeld.on(outputId, channel, item.note, item.velocity)
+      else this.liveHeld.off(outputId, channel, item.note)
     }
   }
 
   /** Everything the heard chord has sounding, off. */
   stopLive() {
-    const midi = this.settings.midi
-    const outputId = midi.accompOutputId || midi.chordOutputId
-    for (const note of this.live.sounding) this.engine.noteOff(outputId, midi.accompChannel, note)
-    this.live.sounding.clear()
+    this.liveHeld.release()
     this.live.cursor = 0
   }
 
