@@ -24,7 +24,7 @@ import {
   listSets, putSet, deleteSet, putGrooves, countGrooves, forgetCachedFacets,
   searchGrooves, grooveFacets, getGrooves, whileUpgrading,
   buildIndexes, indexesAreCurrent,
-  readGraph, writeGraph, forgetGraph, everyPath,
+  readGraph, writeGraph, forgetGraph, everyPath, grooveInFolder,
   emptyTally, tallyRow, finishTally, rememberFacetsFor, materialiseFacets,
 } from './core/drumStore.js'
 import {
@@ -3036,6 +3036,20 @@ export async function forgetCatalogueGraph(which) {
  * the entire reason a filtered map can be built on the spot where the unfiltered
  * one has to be built once and kept.
  */
+/**
+ * The pattern a node on the map stands for, as a groove.
+ *
+ * The map knows a leaf by the labels along the path to it; the database
+ * knows it by the folder it sits in and what it is called. This is the
+ * joint. @see core/drumStore.js grooveInFolder
+ */
+export async function grooveForNode(path, label) {
+  if (!Array.isArray(path) || !label) return null
+  // Between the library at the top and the file at the bottom.
+  const found = await grooveInFolder(path.slice(1, -1).join('/'), label)
+  return found ? unpackGroove(found) : null
+}
+
 export async function drumRowsForGraph(mostRows = 60000) {
   return timed('drumRowsForGraph', async () => {
     const found = await searchGrooves(state.drumFilters, { limit: mostRows, offset: 0 })

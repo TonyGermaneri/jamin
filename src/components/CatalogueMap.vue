@@ -56,7 +56,7 @@ const waiting = computed(() => Boolean(props.busy))
       :tree="tree"
       :book="book"
       bare
-      @pick="(node, at) => emit('pick', node, at)"
+      @pick="(node, at, path) => emit('pick', node, at, path)"
     />
 
     <!-- A hairline rather than a spinner over the picture: the map stays

@@ -40,6 +40,52 @@ const REACH = 90
 /** The heat a bloom starts with. Enough to move, not enough to throw. */
 const BLOOM = 0.7
 
+/** `#rgb` or `#rrggbb` to three numbers in 0..255, or the fallback. */
+function readHex(css, fallback) {
+  const hex = String(css || '').trim().replace('#', '')
+  const full = hex.length === 3 ? hex.split('').map((one) => one + one).join('') : hex
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return fallback
+  const n = Number.parseInt(full, 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+
+/* Hue, saturation and lightness, because a palette walked in RGB goes
+   through grey and a palette walked in HSL stays a palette. */
+function rgbToHsl([r, g, b]) {
+  const R = r / 255; const G = g / 255; const B = b / 255
+  const big = Math.max(R, G, B); const small = Math.min(R, G, B)
+  const l = (big + small) / 2
+  if (big === small) return [0, 0, l]
+  const d = big - small
+  const s = l > 0.5 ? d / (2 - big - small) : d / (big + small)
+  const h = big === R ? ((G - B) / d + (G < B ? 6 : 0))
+    : big === G ? (B - R) / d + 2
+      : (R - G) / d + 4
+  return [h / 6, s, l]
+}
+
+/** A hex colour with an alpha, for the trail wash. */
+function withAlpha(css, alpha) {
+  const [r, g, b] = readHex(css, [0, 0, 0])
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`
+}
+
+function hslToRgb([h, s, l]) {
+  if (s <= 0) { const v = Math.round(l * 255); return [v, v, v] }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s
+  const p = 2 * l - q
+  const one = (t) => {
+    let x = t
+    if (x < 0) x += 1
+    if (x > 1) x -= 1
+    if (x < 1 / 6) return p + (q - p) * 6 * x
+    if (x < 1 / 2) return q
+    if (x < 2 / 3) return p + (q - p) * (2 / 3 - x) * 6
+    return p
+  }
+  return [one(h + 1 / 3), one(h), one(h - 1 / 3)].map((v) => Math.round(v * 255))
+}
+
 export class TreeGraph {
   constructor(box, { onPick = null, onHover = null, onOpen = null } = {}) {
     this.box = box
@@ -62,14 +108,39 @@ export class TreeGraph {
     this.drawn = []
     this.links = []
 
+    /*
+     * How it is drawn, and how it behaves. Set by the view from the theme and
+     * the settings; everything here is a default so the renderer works alone.
+     */
     this.look = {
       link: 'rgba(128,140,180,0.26)',
-      linkWidth: 0.8,
       ring: 'rgba(255,255,255,0.9)',
       from: '#7c5cff',
       to: '#22d3ee',
       dim: '#5b6480',
+      /** The ground. Black unless somebody says otherwise: a map is a night
+          sky, and a lit background throws away half the contrast a glow has
+          to work with. */
+      ground: '#000000',
+      /** How many families the palette is cut into. @see paletteFor */
+      families: 7,
+      edgeWidth: 0.9,
+      nodeSize: 1,
+      /** How much of the last frame survives into this one. */
+      trail: 0.35,
+      /** How far a node's glow reaches past it, as a multiple of its radius. */
+      bloom: 0.6,
+      /** ring | burst | spiral -- how children leave their parent. */
+      unfold: 'ring',
+      /** How quickly the layout settles. 1 is the d3 default. */
+      speed: 1,
+      /** Whether opening something moves the camera to it. */
+      follow: false,
+      /** How hard nodes push apart, and how far an edge wants to be. */
+      repel: 1,
+      reach: 1,
     }
+    this.palette = []
     this.hovered = -1
     this.chosen = -1
     this.at = zoomIdentity
@@ -114,6 +185,13 @@ export class TreeGraph {
       .stop()
 
     this.sim.on('tick', () => { this.tree = null; this.paint() })
+    /*
+     * A few more frames after it stops, so a trail fades out instead of
+     * freezing mid-smear. Without them the last ghost of the last movement
+     * stays on screen until something else happens to repaint.
+     */
+    this.sim.on('end', () => { this.cooling = 24; this.paintSoon() })
+    this.cooling = 0
 
     this.canvas.addEventListener('mousemove', this.onMove)
     this.canvas.addEventListener('mouseleave', this.onLeave)
@@ -307,7 +385,18 @@ export class TreeGraph {
     const node = this.source.nodes[at]
     const up = this.live.get(this.source.parents[at])
     const angle = ((at % 997) / 997) * Math.PI * 2
-    const push = up ? 6 : (REACH * Math.sqrt(spread)) / 2
+
+    /*
+     * How a child leaves its parent.
+     *
+     * `ring` sets them all a hair away and lets the forces open them out,
+     * which is the steadiest. `burst` throws them clear so the opening reads
+     * as an event. `spiral` fans them by index, which keeps a big folder
+     * legible while it settles instead of untangling for a second first.
+     */
+    const how = this.look.unfold || 'ring'
+    const room = how === 'burst' ? 34 : how === 'spiral' ? 10 + (at % 17) * 2 : 6
+    const push = up ? room : (REACH * Math.sqrt(spread)) / 2
 
     return {
       at,
@@ -315,8 +404,9 @@ export class TreeGraph {
       clips: node.clips,
       label: node.label,
       leaf: node.leaf,
+      family: this.familyOf(at),
       r: this.radiusOf(node),
-      colour: this.colourOf(node),
+      colour: this.colourOf(node, this.familyOf(at)),
       x: (up ? up.x : 0) + Math.cos(angle) * push,
       y: (up ? up.y : 0) + Math.sin(angle) * push,
       homeX: up ? up.x : 0,
@@ -327,28 +417,73 @@ export class TreeGraph {
 
   radiusOf(node) {
     const where = Math.log1p(Math.max(1, node.clips)) / Math.max(1e-6, this.biggest)
-    return Math.max(2.5, 2.5 + where * 11)
+    return Math.max(1.5, (2 + where * 8) * (this.look.nodeSize || 1))
   }
 
-  colourOf(node) {
-    const down = node.depth / this.deepest
-    const [from, to, dim] = this.ramp()
-    const towards = node.leaf ? 0.5 : down * 0.25
-    const mix = [0, 1, 2].map((i) => {
-      const along = from[i] + (to[i] - from[i]) * down
-      return Math.round(along + (dim[i] - along) * towards)
-    })
-    return `rgb(${mix[0]},${mix[1]},${mix[2]})`
-  }
+  /**
+   * The theme's own colours, cut into a handful of families.
+   *
+   * Not a rainbow. Every shade here lies on the arc between the theme's two
+   * accents, walked in hue-saturation-lightness rather than in RGB -- the
+   * straight RGB line between two saturated colours passes through mud, and
+   * the mud is what made an earlier ramp look like a different program's
+   * palette. A theme whose accents are two greys therefore gets greys, which
+   * is the point: the map should look like the rest of jamin looks.
+   *
+   * A family per branch rather than a shade per depth. Depth is already said
+   * by how far out a node is and by how big it is; what the eye cannot get
+   * from the picture is which branch a far-flung node belongs to, and colour
+   * is the one channel that can say it at a glance.
+   */
+  paletteFor(many) {
+    const from = rgbToHsl(readHex(this.look.from, [124, 92, 255]))
+    const to = rgbToHsl(readHex(this.look.to, [34, 211, 238]))
 
-  ramp() {
-    const read = (css) => {
-      const hex = String(css || '').replace('#', '')
-      const full = hex.length === 3 ? hex.split('').map((one) => one + one).join('') : hex
-      const n = Number.parseInt(full, 16)
-      return Number.isFinite(n) ? [(n >> 16) & 255, (n >> 8) & 255, n & 255] : [124, 92, 255]
+    // The short way round the wheel, so two accents either side of red do not
+    // travel through every hue between them.
+    let turn = to[0] - from[0]
+    if (turn > 0.5) turn -= 1
+    if (turn < -0.5) turn += 1
+
+    const out = []
+    for (let i = 0; i < many; i++) {
+      const along = many === 1 ? 0 : i / (many - 1)
+      out.push([
+        (from[0] + turn * along + 1) % 1,
+        from[1] + (to[1] - from[1]) * along,
+        from[2] + (to[2] - from[2]) * along,
+      ])
     }
-    return [read(this.look.from), read(this.look.to), read(this.look.dim)]
+    return out
+  }
+
+  /**
+   * One node's colour: its family, lit by how deep it is.
+   *
+   * Deeper is dimmer and less saturated, so the structure holding a
+   * catalogue up reads through the clips hanging off it -- the leaves are
+   * most of a real tree, and at full strength they are the entire picture.
+   */
+  colourOf(node, family) {
+    if (!this.palette.length) this.palette = this.paletteFor(this.look.families || 7)
+    const [h, s, l] = this.palette[((family % this.palette.length) + this.palette.length)
+      % this.palette.length]
+    const down = Math.min(1, node.depth / Math.max(1, this.deepest))
+    const fade = node.leaf ? 0.45 : down * 0.3
+    const [r, g, b] = hslToRgb([h, s * (1 - fade * 0.55), l * (1 - fade * 0.4)])
+    return `rgb(${r},${g},${b})`
+  }
+
+  /** Which branch a node belongs to: its own index at depth one, or the root's. */
+  familyOf(at) {
+    let here = at
+    let guard = 0
+    while (guard++ < 64) {
+      const up = this.source.parents[here]
+      if (up < 0 || this.source.parents[up] < 0) break
+      here = up
+    }
+    return here
   }
 
   /* ---------------- opening and closing ---------------- */
@@ -367,6 +502,10 @@ export class TreeGraph {
     else return false
 
     this.rebuild()
+    // Only if asked. Moving the camera to what was just clicked is the one
+    // thing an explorer must not do by default -- you clicked it because you
+    // could see it, and taking it somewhere else loses the place.
+    if (this.look.follow && this.open.has(at)) this.zoomToPoint(at, this.at.k)
     if (this.onOpen) this.onOpen(at, this.open.has(at))
     return true
   }
@@ -553,11 +692,59 @@ export class TreeGraph {
     this.frame = requestAnimationFrame(() => { this.frame = 0; this.paint() })
   }
 
+  /**
+   * The dials, applied.
+   *
+   * Called whenever the view hands over new settings. The forces are
+   * reconfigured in place rather than rebuilt, so nothing already on screen
+   * moves because somebody dragged a slider -- the picture just starts
+   * behaving differently.
+   */
+  retune() {
+    const look = this.look
+    this.palette = this.paletteFor(look.families || 7)
+
+    const speed = Math.max(0.15, Math.min(4, look.speed || 1))
+    this.sim.alphaDecay(0.0228 * speed)
+    this.sim.velocityDecay(Math.max(0.05, Math.min(0.9, 0.4 / Math.sqrt(speed))))
+
+    this.sim.force('charge').strength(-220 * Math.max(0.1, look.repel ?? 1))
+    this.sim.force('link').distance((one) =>
+      (REACH * Math.max(0.2, look.reach ?? 1)) / Math.max(1, one.target.depth || 1))
+
+    for (const seat of this.live.values()) {
+      seat.r = this.radiusOf(this.source.nodes[seat.at])
+      seat.colour = this.colourOf(this.source.nodes[seat.at], seat.family)
+    }
+    this.paintSoon()
+  }
+
   paint() {
     const ctx = this.ctx
     if (!ctx) return
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
-    ctx.clearRect(0, 0, this.width, this.height)
+
+    /*
+     * Trails: the last frame is painted over rather than wiped.
+     *
+     * A translucent wash of the ground leaves a fading ghost of where things
+     * were, which is what makes a bloom look like motion instead of like a
+     * sequence of stills. At trail 0 the wash is opaque and this is an
+     * ordinary clear.
+     */
+    const trail = Math.max(0, Math.min(0.92, this.look.trail ?? 0))
+    if (trail > 0.01) {
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.fillStyle = withAlpha(this.look.ground, 1 - trail)
+      ctx.fillRect(0, 0, this.width, this.height)
+    } else {
+      ctx.fillStyle = this.look.ground || '#000'
+      ctx.fillRect(0, 0, this.width, this.height)
+    }
+    if (this.cooling > 0) {
+      this.cooling--
+      this.paintSoon()
+    }
     if (!this.drawn.length) return
 
     const { x, y, k } = this.at
@@ -576,8 +763,31 @@ export class TreeGraph {
       ctx.lineTo(to.x, to.y)
     }
     ctx.strokeStyle = this.look.link
-    ctx.lineWidth = this.look.linkWidth / k
+    ctx.lineWidth = (this.look.edgeWidth ?? 0.9) / k
     ctx.stroke()
+
+    /*
+     * Bloom: the same nodes again, wider and faint, added rather than laid
+     * over.
+     *
+     * `lighter` is additive, so where two glows overlap they brighten -- a
+     * dense branch lights up as one mass and a lone node is a pinprick,
+     * which is the thing a glow is actually for. Drawn first so the crisp
+     * node sits inside its own halo rather than under it.
+     */
+    const bloom = Math.max(0, Math.min(1.5, this.look.bloom ?? 0))
+    if (bloom > 0.01) {
+      ctx.globalCompositeOperation = 'lighter'
+      ctx.globalAlpha = 0.2 * Math.min(1, bloom)
+      for (const one of this.drawn) {
+        ctx.beginPath()
+        ctx.arc(one.x, one.y, one.r * (1 + bloom * 1.5), 0, Math.PI * 2)
+        ctx.fillStyle = one.colour
+        ctx.fill()
+      }
+      ctx.globalAlpha = 1
+      ctx.globalCompositeOperation = 'source-over'
+    }
 
     for (const one of this.drawn) {
       ctx.beginPath()

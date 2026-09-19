@@ -965,7 +965,9 @@ body,
 
 .jamin-graph-label {
   position: absolute;
-  transform: translate(-50%, -140%);
+  /* The view places it clear of the node's own radius, so this only has to
+     centre it. @see components/CatalogueGraph.vue refreshLabels */
+  transform: translate(-50%, -100%);
   white-space: nowrap;
   font-size: 10.5px;
   line-height: 1.2;
@@ -975,9 +977,12 @@ body,
      carries its own ground rather than hoping. */
   /* The theme's own ground and ink, so a label reads on whatever the graph
      drew behind it and belongs to the same program. @see core/themes.js */
-  background: color-mix(in srgb, var(--jamin-bg) 82%, transparent);
+  background: color-mix(in srgb, var(--jamin-bg) 72%, transparent);
   color: var(--jamin-fg);
-  opacity: 0.88;
+  opacity: 0.94;
+  /* Over a glow, which is bright. A hairline of the ground around the text
+     keeps it legible without a solid box behind every name. */
+  text-shadow: 0 0 6px var(--jamin-bg), 0 0 2px var(--jamin-bg);
 }
 
 .jamin-graph-label i {
@@ -990,7 +995,7 @@ body,
 /* A library, the thing you are on, and a clip: three weights, because the level
    is the first thing a reader needs in a tree. */
 .jamin-graph-label.is-root { font-weight: 600; font-size: 11.5px; opacity: 0.95; }
-.jamin-graph-label.is-leaf { opacity: 0.66; }
+.jamin-graph-label.is-leaf { opacity: 0.78; }
 
 .jamin-graph-label.is-here {
   opacity: 1;
@@ -1016,7 +1021,9 @@ body,
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: rgb(var(--v-theme-surface));
+  /* Black, not the theme's surface. A glow has only as much contrast as the
+     dark behind it, and the map is the one place in jamin that is all glow. */
+  background: #000;
   display: flex;
   flex-direction: column;
 }
@@ -1080,9 +1087,11 @@ body,
   z-index: 2;
   display: flex;
   flex-direction: column;
-  background: rgba(var(--v-theme-surface), 0.82);
-  backdrop-filter: blur(14px);
-  border-bottom: 1px solid rgba(var(--v-border-color), 0.12);
+  /* Thin enough to see the map through. It was 0.82, which reads as a wall
+     with a picture underneath rather than as something floating on one. */
+  background: rgba(var(--v-theme-surface), 0.38);
+  backdrop-filter: blur(22px) saturate(140%);
+  border-bottom: 1px solid rgba(var(--v-border-color), 0.10);
 }
 
 .jamin-map-chrome {
@@ -1114,6 +1123,15 @@ body,
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 4px 8px;
   padding: 0 10px 6px;
+  /*
+   * Two rows at 1920, and never more than a fifth of the window whatever the
+   * width. Twelve filters in a 900px editor wrap to five rows and take two
+   * thirds of the screen, which leaves the map -- the thing this view exists
+   * to show -- as a strip along the bottom. Past that it scrolls.
+   */
+  max-height: 20vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .jamin-map-filters .v-field {
@@ -1134,6 +1152,22 @@ body,
   font-size: 11px;
 }
 
+/* The one control in the filter row that is not a field. Squeezed to the
+   same height so it sits in the row rather than setting its height. */
+.jamin-map-switch {
+  flex: 0 0 auto;
+  margin: 0 4px;
+}
+
+.jamin-map-switch .v-selection-control {
+  min-height: 0;
+}
+
+.jamin-map-switch .v-label {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
 .jamin-map-filters .v-input__details {
   display: none;
 }
@@ -1150,9 +1184,13 @@ body,
   overscroll-behavior: contain;
   padding: 12px 14px;
   border-radius: 10px;
-  background: rgba(var(--v-theme-surface), 0.88);
-  backdrop-filter: blur(14px);
+  /* Glass, like everything else floating over the map. Denser than the bars
+     because this one holds a piano roll and a row of pills, and those have
+     to be readable over whatever is behind them. */
+  background: rgba(var(--v-theme-surface), 0.55);
+  backdrop-filter: blur(24px) saturate(140%);
   border: 1px solid rgba(var(--v-border-color), 0.14);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
 }
 
 /* How much the filters found, bottom left, out of the way of everything. */
@@ -1229,14 +1267,26 @@ body,
   z-index: 0;
 }
 
-/* The title and the tabs keep their place and become glass. */
+/* The title and the tabs keep their place and become glass.
+
+   Thin glass. At 0.82 the bars read as walls with a picture below them, which
+   is the layout this replaced; the map is supposed to be the window and
+   everything else a thing floating on it. Blurred hard enough that text stays
+   legible over whatever happens to be behind it. */
 .jamin-book-mapped .v-overlay__content > .v-card > .v-card-title,
 .jamin-book-mapped .v-overlay__content > .v-card > .jamin-book-chrome,
 .jamin-book-mapped .v-overlay__content > .v-card > .v-tabs {
   position: relative;
   z-index: 3;
-  background: rgba(var(--v-theme-surface), 0.82);
-  backdrop-filter: blur(14px);
+  background: rgba(var(--v-theme-surface), 0.38);
+  backdrop-filter: blur(22px) saturate(140%);
+  border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.06);
+}
+
+/* And the card itself keeps nothing of its own, so there is no seam between
+   the glass and the picture. */
+.jamin-book-mapped .v-overlay__content > .v-card {
+  background: #000;
 }
 
 .jamin-book-mapped .v-overlay__content > .v-card > .v-tabs {

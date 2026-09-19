@@ -876,6 +876,36 @@ export async function getGroove(id) {
 }
 
 /**
+ * The pattern a node on the map stands for.
+ *
+ * A leaf of the catalogue's tree is one clip, but the tree only knows the
+ * labels along the path to it -- the folder it lives in and what it is
+ * called. Picking one used to look for that name among `state.drumHits`,
+ * which is the ten rows the list happens to be showing, so a leaf almost
+ * never resolved to anything and clicking a file did nothing at all.
+ *
+ * The folder is indexed, so this is a range over a handful of rows rather
+ * than a walk: a folder holds tens of patterns, not thousands.
+ */
+export async function grooveInFolder(folder, name) {
+  const db = await open()
+  if (!db || !name) return null
+
+  try {
+    const store = db.transaction(GROOVES, 'readonly').objectStore(GROOVES)
+    const range = IDBKeyRange.only(String(folder || ''))
+    const found = await ask(store.index('folder').getAll(range, 400))
+    if (!found || !found.length) return null
+    return found.find((row) => row.n === name)
+      // A folder whose names are not unique, or a label the tree shortened.
+      || found.find((row) => String(row.n || '').startsWith(name))
+      || null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Several at once, which is what compiling a chart needs.
  *
  * Every request issued before anything is awaited, so they all belong to one

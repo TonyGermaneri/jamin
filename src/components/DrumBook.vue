@@ -48,6 +48,7 @@ import {
   drumVoiceMuted,
   drumMutesFor,
   unmuteEveryDrumVoice,
+  grooveForNode,
 } from '../store.js'
 import { summarizeGroove } from '../core/drums.js'
 import { DRUM_VOICES, kitById, gmName, TD11_TO_VOICE } from '../core/drumKits.js'
@@ -400,13 +401,42 @@ async function drawTheMap() {
  * A clip is chosen outright; a folder searches for its name, which narrows the
  * list beside the graph to what is under it.
  */
-function pickNode(node) {
-  if (!node) return
-  if (node.leaf) {
-    const found = state.drumHits.find((one) => one.name === node.label)
-    if (found) { selected.value = found; return }
+/**
+ * A node on the map, picked.
+ *
+ * Two things were wrong with this and they had the same cause: it treated
+ * picking as searching. A leaf was looked for among `state.drumHits`, which
+ * is the ten rows the list happens to be showing, so a file almost never
+ * resolved and clicking one did nothing; and anything else went into the
+ * search box, which is a filter -- so the tree was rebuilt and refitted, and
+ * the camera jumped away from the thing that had just been clicked.
+ *
+ * Picking is not searching. A branch shows what is under it; a leaf is
+ * fetched from the database by the path the map already knows, and becomes
+ * the pattern in the panel, with its part pills and its piano roll. Nothing
+ * about the filters moves, so nothing about the picture moves.
+ */
+const node = ref(null)
+
+async function pickNode(picked, at, path) {
+  if (!picked) return
+  node.value = { ...picked, path: path || [] }
+
+  if (!picked.leaf) {
+    // A branch is not a pattern. The panel says what is under it, and the
+    // map is where you go further in.
+    selected.value = null
+    return
   }
-  search.value = node.label
+
+  const groove = await grooveForNode(path || [], picked.label)
+  if (!groove) {
+    node.value = { ...node.value, missing: true }
+    return
+  }
+
+  selected.value = groove
+  if (autoSelect.value) assignEverywhere(groove)
 }
 
 const filterValues = () => {
@@ -1155,33 +1185,83 @@ onMounted(refreshTree)
                           density="compact" variant="solo-filled" flat hide-details />
                 <v-select v-model="shelf" :items="shelves" :loading="facetsBusy"
                           density="compact" variant="solo-filled" flat hide-details />
+                <!-- Picking on the map puts the pattern into every part at
+                     once, rather than into the panel to be dropped by hand.
+                     Here rather than in the settings because it is turned on
+                     and off while hunting, not configured once. -->
+                <v-switch v-model="autoSelect" density="compact" hide-details
+                          color="primary" label="Auto-select"
+                          class="jamin-map-switch" />
               </template>
 
               <template #detail>
-                <div v-if="!selected" class="text-caption text-medium-emphasis py-6 text-center">
-                  Pick a pattern to see what it plays.
+                <div v-if="!node && !selected"
+                     class="text-caption text-medium-emphasis py-6 text-center">
+                  Pick anything on the map to see what is in it.
                 </div>
-                <div v-else>
-                  <div class="text-body-1 mb-1">{{ selected.name }}</div>
-                  <div class="text-caption text-medium-emphasis mb-3">
-                    {{ summarizeGroove(selected) }}
-                  </div>
-                  <div v-if="unreadable" class="text-caption text-warning mb-3">
-                    Its notes are in the file on disk, and {{ unreadable }}
-                  </div>
-                  <div v-else-if="preview" class="jamin-map-roll mb-3">
-                    <div v-for="row in preview.rows" :key="row.id" class="jamin-map-roll-row">
-                      <span class="jamin-map-roll-name">{{ row.name }}</span>
-                      <span class="jamin-map-roll-cells">
-                        <i v-for="(velocity, step) in row.cells" :key="step"
-                           :class="{ 'is-hit': velocity > 0 }" />
+
+                <!-- What was picked, whether or not it turned out to be a
+                     pattern. A branch is a place in the catalogue and saying
+                     how much is under it is the useful thing to say; a leaf
+                     is one pattern and everything below applies. -->
+                <template v-else>
+                  <div v-if="node" class="mb-3">
+                    <div class="text-body-1">{{ node.label }}</div>
+                    <div class="text-caption text-medium-emphasis">
+                      <span v-if="!node.leaf">
+                        {{ (node.clips || 0).toLocaleString() }}
+                        pattern{{ node.clips === 1 ? '' : 's' }} under this
                       </span>
+                      <span v-else-if="node.missing" class="text-warning">
+                        not in the database — the map is older than the library
+                      </span>
+                      <span v-else>{{ summarizeGroove(selected) }}</span>
+                    </div>
+                    <div v-if="node.path && node.path.length > 1"
+                         class="text-caption text-disabled mt-1">
+                      {{ node.path.slice(0, -1).join(' › ') }}
                     </div>
                   </div>
-                  <div class="text-caption text-medium-emphasis">
-                    {{ selected.folder || 'no folder' }}
-                  </div>
-                </div>
+
+                  <template v-if="selected">
+                    <div v-if="unreadable" class="text-caption text-warning mb-3">
+                      Its notes are in the file on disk, and {{ unreadable }}
+                    </div>
+                    <div v-else-if="preview" class="jamin-map-roll mb-3">
+                      <div v-for="row in preview.rows" :key="row.id" class="jamin-map-roll-row">
+                        <span class="jamin-map-roll-name">{{ row.name }}</span>
+                        <span class="jamin-map-roll-cells">
+                          <i v-for="(velocity, step) in row.cells" :key="step"
+                             :class="{ 'is-hit': velocity > 0 }" />
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- The same pills as the list, because they are the same
+                         act: this pattern, in that part, as its groove or as
+                         its fill. A map you can look at but not play from is
+                         a picture of a catalogue. -->
+                    <div v-if="liveRows.length" class="jamin-drum-pills mb-3">
+                      <v-chip
+                        v-for="(row, index) in liveRows" :key="row.name"
+                        size="x-small" label
+                        :variant="slotFor(row.name, selected) ? 'flat' : 'outlined'"
+                        :color="chipColour(slotFor(row.name, selected))"
+                        :class="{ 'is-playing': row.name === playingSection }"
+                        :title="chipTitle(row, selected, index)"
+                        @click.stop="cycleGrooveOn(row.name, selected)"
+                      >
+                        <v-icon v-if="slotFor(row.name, selected) === 'fill'" start size="11">
+                          mdi-flash
+                        </v-icon>
+                        {{ pillLabel(row, index) }}
+                      </v-chip>
+                    </div>
+                    <div v-else class="text-caption text-disabled mb-3">
+                      Write some parts into the chart and they appear here to drop this into.
+                    </div>
+                  </template>
+                </template>
               </template>
             </CatalogueMap>
 

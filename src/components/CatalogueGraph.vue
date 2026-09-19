@@ -81,6 +81,32 @@ const showLabels = computed(() => state.settings.graph.labels)
  */
 const theme = computed(() => state.settings.theme)
 
+/** The dials, as the settings hold them. @see core/settings.js graph.look */
+const look = computed(() => state.settings.graph.look || {})
+
+/**
+ * The theme and the dials, handed to the renderer.
+ *
+ * The colours come from the theme and nowhere else -- a map in a palette
+ * nothing else on screen uses looks like a different program -- and the
+ * ground is black rather than the theme's surface, because a glow has only
+ * as much contrast as the dark behind it.
+ */
+function dress(graph) {
+  if (!graph) return
+  graph.look = {
+    ...graph.look,
+    ...look.value,
+    link: rgba(theme.value.dim, 0.3),
+    ring: theme.value.error,
+    from: theme.value.accent,
+    to: theme.value.accentAlt,
+    dim: theme.value.dim,
+    ground: '#000000',
+  }
+  graph.retune()
+}
+
 /* ---------------- what the catalogue knows ---------------------------- */
 
 /**
@@ -137,6 +163,7 @@ function refreshLabels() {
     const [x, y] = graph.screenOf(one)
     if (x < -40 || y < -20 || x > wide + 40 || y > tall + 20) continue
 
+    if (look.value.nodeInfo === 'none') break
     const text = String(one.label || '')
     if (!text) continue
 
@@ -144,22 +171,34 @@ function refreshLabels() {
     // hundred of them a frame costs a layout each, and being a few pixels out
     // only ever means one more gap.
     const room = 7 * text.length + 14
-    let clear = true
+    const above = y - (one.r * graph.at.k + 9)
+    let free = true
     for (const already of out) {
       if (Math.abs(already.x - x) < (already.wide + room) / 2
-          && Math.abs(already.y - y) < 15) { clear = false; break }
+          && Math.abs(already.y - above) < 15) { free = false; break }
     }
-    if (!clear) continue
+    if (!free) continue
+
+    /*
+     * Clear of the node and of its glow.
+     *
+     * A fixed offset put the name inside the halo of anything big, where it
+     * washed out against its own node -- the first photograph of this had
+     * eighteen labels on it and perhaps four that could be read. The offset
+     * is the drawn radius, so a big node pushes its name further out and a
+     * pinprick keeps it close.
+     */
+    const clear = one.r * graph.at.k + 9
 
     out.push({
       key: one.at,
       x: Math.round(x),
-      y: Math.round(y),
+      y: Math.round(y - clear),
       wide: room,
       label: text,
       clips: one.clips,
       depth: one.depth,
-      shut: one.shut,
+      shut: one.shut && look.value.nodeInfo !== 'name',
       here: here.value === one.at,
     })
   }
@@ -184,20 +223,22 @@ function build() {
   const graph = new TreeGraph(box.value, {
     onPick: (seat) => {
       here.value = seat.at
-      emit('pick', graph.source.nodes[seat.at], seat.at)
+      /*
+       * With the path to it, which is what makes a node resolvable.
+       *
+       * A leaf of the tree is one clip, and the only thing the tree knows
+       * about it is the labels along the way down. Without them the book was
+       * reduced to looking the name up among the rows the list happened to
+       * be showing, so clicking a file did nothing.
+       */
+      emit('pick', graph.source.nodes[seat.at], seat.at,
+        graph.ancestorsOf(seat.at).map((up) => graph.source.nodes[up].label))
       refreshLabels()
     },
     onHover: (seat) => { hovering.value = seat ? seat.label : null },
     onOpen: () => { remember(); refreshLabels() },
   })
-  graph.look = {
-    link: rgba(theme.value.dim, 0.3),
-    linkWidth: 0.9,
-    ring: theme.value.error,
-    from: theme.value.accent,
-    to: theme.value.accentAlt,
-    dim: theme.value.dim,
-  }
+  dress(graph)
   engine.value = graph
 
   /*
@@ -289,7 +330,8 @@ function jump(at) {
   here.value = at
   graph.chosen = at
   graph.zoomToPoint?.(at)
-  emit('pick', graph.source.nodes[at], at)
+  emit('pick', graph.source.nodes[at], at,
+    graph.ancestorsOf(at).map((up) => graph.source.nodes[up].label))
 }
 
 /* ---------------- what was left open ----------------------------------
@@ -333,6 +375,10 @@ watch(source, (next) => {
 
 // Re-drawn when the theme changes, because every colour in it came from there.
 watch(() => JSON.stringify(theme.value), build)
+
+// A dial moved. Applied in place -- nothing already on screen moves because
+// somebody dragged a slider, the picture just starts behaving differently.
+watch(look, () => { dress(engine.value); refreshLabels() }, { deep: true })
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(following)

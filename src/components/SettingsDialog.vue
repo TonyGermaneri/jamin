@@ -9,6 +9,7 @@ import DrumLibraries from './DrumLibraries.vue'
 import DrumKit from './DrumKit.vue'
 import { state, engine, applyTheme, resetSettings, applyPortBindings, forgetErrors, toast } from '../store.js'
 import { THEMES, SHADER_DEFAULTS } from '../core/themes.js'
+import { defaultSettings } from '../core/settings.js'
 import { loadChordDictionary, searchChords } from '../core/chordDictionary.js'
 import { pcName } from '../core/chordParser.js'
 
@@ -77,6 +78,15 @@ function resetShaders() {
   Object.assign(state.settings.shader, SHADER_DEFAULTS)
 }
 
+/** The map's own dials, which live under the graph settings. */
+const map = computed(() => state.settings.graph.look)
+
+function resetMap() {
+  // From the defaults rather than from a second copy of them written here,
+  // which is how two sets of defaults come to disagree.
+  Object.assign(state.settings.graph.look, defaultSettings().graph.look)
+}
+
 async function retryMidi() {
   await engine.enable()
   state.midi.state = engine.state
@@ -101,6 +111,7 @@ async function retryMidi() {
         <v-tab value="display">Display</v-tab>
         <v-tab value="themes">Themes</v-tab>
         <v-tab value="shaders">Shaders</v-tab>
+        <v-tab value="map">Map</v-tab>
         <v-tab value="accompany">Accompany</v-tab>
         <!-- Both were tabs in the drum book, which was four tabs of which one
              was a catalogue. Pointing at a folder and fixing a note map are
@@ -589,6 +600,89 @@ async function retryMidi() {
               </v-col>
             </v-row>
             <v-btn size="small" class="mt-2" @click="resetShaders">Reset effects</v-btn>
+          </v-window-item>
+
+          <!-- Map ------------------------------------------------------- -->
+          <v-window-item value="map">
+            <div class="text-caption text-medium-emphasis mb-3">
+              The catalogue as a map. What makes a tree of nine nodes readable is not what
+              makes one of nine hundred thousand readable, so these are here rather than
+              decided for you.
+              <InfoTip>
+                Every colour comes from the theme — the map is drawn on the arc between the
+                theme's two accents, one shade per branch, so a far-flung node says which
+                family it belongs to without a legend. Change the theme and the map changes
+                with it.
+              </InfoTip>
+            </div>
+
+            <v-row dense>
+              <v-col cols="12" md="6">
+                <v-select
+                  v-model="map.unfold"
+                  :items="[
+                    { title: 'Ring — children open out steadily', value: 'ring' },
+                    { title: 'Burst — they fly clear of the parent', value: 'burst' },
+                    { title: 'Spiral — they fan out by order', value: 'spiral' },
+                  ]"
+                  label="Opening a node" density="compact" hide-details class="mb-3"
+                />
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-select
+                  v-model="map.nodeInfo"
+                  :items="[
+                    { title: 'Name and how much is in it', value: 'count' },
+                    { title: 'Name only', value: 'name' },
+                    { title: 'Nothing', value: 'none' },
+                  ]"
+                  label="Over each node" density="compact" hide-details class="mb-3"
+                />
+              </v-col>
+
+              <v-col
+                v-for="knob in [
+                  ['nodeSize', 'Node size', 0.3, 2.5],
+                  ['edgeWidth', 'Edge width', 0.1, 4],
+                  ['bloom', 'Glow', 0, 1.5],
+                  ['trail', 'Trails', 0, 0.9],
+                  ['speed', 'How fast it settles', 0.2, 3],
+                  ['repel', 'How hard nodes push apart', 0.1, 3],
+                  ['reach', 'How far a branch reaches', 0.2, 3],
+                  ['families', 'Colours in the palette', 2, 12],
+                ]"
+                :key="knob[0]" cols="12" md="6"
+              >
+                <div class="text-caption mb-1">
+                  {{ knob[1] }} — {{ Number(map[knob[0]]).toFixed(knob[0] === 'families' ? 0 : 2) }}
+                </div>
+                <v-slider
+                  v-model="map[knob[0]]" :min="knob[2]" :max="knob[3]"
+                  :step="knob[0] === 'families' ? 1 : 0.01" hide-details
+                />
+              </v-col>
+
+              <v-col cols="12">
+                <v-switch v-model="state.settings.graph.labels" density="compact" hide-details
+                          color="primary" label="Names over the nodes" />
+                <v-switch v-model="map.follow" density="compact" hide-details color="primary"
+                          label="Move the camera to whatever is opened" />
+                <div class="text-caption text-medium-emphasis">
+                  Off by default: you clicked it where you could see it, and taking the view
+                  somewhere else loses your place.
+                </div>
+              </v-col>
+
+              <v-col cols="12" md="6">
+                <div class="text-caption mb-1">
+                  Most names at once — {{ state.settings.graph.mostLabels }}
+                </div>
+                <v-slider v-model="state.settings.graph.mostLabels" :min="20" :max="400"
+                          :step="10" hide-details />
+              </v-col>
+            </v-row>
+
+            <v-btn size="small" class="mt-3" @click="resetMap">Back to the defaults</v-btn>
           </v-window-item>
 
           <!-- Accompany -------------------------------------------------- -->

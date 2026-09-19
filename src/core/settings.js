@@ -241,6 +241,40 @@ export function defaultSettings() {
        * the wrong folder once.
        */
       open: {},
+
+      /**
+       * How the map looks and how it behaves.
+       *
+       * Here rather than buried in the renderer because what makes a tree of
+       * nine nodes readable is not what makes one of nine hundred thousand
+       * readable, and nobody can know in advance which of those they are
+       * looking at. @see canvas/treeGraph.js retune
+       */
+      look: {
+        /** How many shades the theme's accents are cut into, one per branch. */
+        families: 7,
+        /** Multiplies the size a node gets from how much is under it. */
+        nodeSize: 1,
+        edgeWidth: 0.9,
+        /** How much of the last frame survives into this one: motion, as a
+            smear. 0 is an ordinary clear. */
+        trail: 0.35,
+        /** How far a node's glow reaches past it. Additive, so a dense
+            branch lights up as one mass. */
+        bloom: 0.45,
+        /** ring | burst | spiral -- how children leave their parent. */
+        unfold: 'ring',
+        /** How quickly the layout settles. 1 is d3's own pace. */
+        speed: 1,
+        /** Whether opening something takes the camera to it. Off, because
+            you clicked it where you could see it. */
+        follow: false,
+        /** How hard nodes push apart, and how far an edge wants to be. */
+        repel: 1,
+        reach: 1,
+        /** none | name | count -- what the label over a node says. */
+        nodeInfo: 'count',
+      },
     },
 
     random: {

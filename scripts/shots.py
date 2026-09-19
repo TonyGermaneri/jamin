@@ -101,6 +101,7 @@ def main():
         print(f"  {startsSmall(page)}")
         print(f"  {openingKeepsIt(page)}")
         print(f"  {openingStaysPut(page)}")
+        print(f"  {clickingStaysPut(page)}")
         print(f"  {eachCatalogue(page)}\n")
 
         for name, prepare in VIEWS:
@@ -360,6 +361,55 @@ def openingStaysPut(page):
             f"and left the camera at k={now['k']}")
 
 
+def clickingStaysPut(page):
+    """A real click, on a real node, with a real mouse.
+
+    `openingStaysPut` drives the renderer's own toggle, which is not the path
+    somebody uses -- and the camera moving on selection was never in the
+    renderer. It was the book: picking a node put its name in the search box,
+    which is a filter, which rebuilt the tree and refitted the view. So this
+    puts the pointer on a node and clicks it.
+    """
+    places = page.evaluate("() => window.__jaminTreeProbe.places()")
+    if not places:
+        return "FAIL nothing on the map to click"
+
+    # Well inside the picture. The lowest node on screen can be under the
+    # count strip or past the edge, and a click that lands off the map lands
+    # on the dialog instead and closes the book -- which is how this check
+    # first reported a panel that was not there because the whole view was
+    # not there.
+    inside = [one for one in places
+              if 260 < one["y"] < TALL - 200 and 120 < one["x"] < WIDE - 460]
+    if not inside:
+        return "FAIL no node landed anywhere clickable"
+    target = max(inside, key=lambda one: one["y"])
+
+    was = page.evaluate("() => window.__jaminTreeProbe.camera()")
+    page.mouse.click(target["x"], target["y"])
+    page.wait_for_timeout(1400)
+
+    if not page.evaluate("() => Boolean(document.querySelector('.jamin-map'))"):
+        return f"FAIL clicking {target['label']!r} closed the book"
+
+    now = page.evaluate("() => window.__jaminTreeProbe.camera()")
+    # The visible one. Three books can be mounted at once and the first
+    # `.jamin-map-detail` in the document belongs to whichever of them is
+    # hidden, which is how this check first reported an empty panel over a
+    # panel that was full.
+    said = page.evaluate("""() => {
+      const all = [...document.querySelectorAll('.jamin-map-detail')]
+      const shown = all.filter((one) => one.getClientRects().length)
+      return (shown[0] || all[0] || { innerText: '' }).innerText.trim().slice(0, 80)
+    }""")
+
+    if now != was:
+        return f"FAIL clicking {target['label']!r} moved the camera: {was} -> {now}"
+    if target["label"] not in said:
+        return f"FAIL clicking {target['label']!r} said nothing: {said!r}"
+    return f"ok   clicking {target['label']!r} filled the panel and left the camera alone"
+
+
 def eachCatalogue(page):
     """The same question of all three, because they are not the same shape.
 
@@ -530,8 +580,12 @@ def onChart(page, what, small=False):
     hit-tests against its own layout, so the reliable way to put the pointer on
     a chord is to tell the component which token it is on.
     """
-    if small:
-        page.set_viewport_size({"width": 900, "height": 480})
+    # Restored either way. This used to shrink and leave it shrunk, so every
+    # view photographed after it -- including the whole-corpus map, the one
+    # picture whose entire point is what the thing looks like at size -- was
+    # taken in a 900x480 window without saying so.
+    page.set_viewport_size({"width": 900, "height": 480} if small
+                           else {"width": WIDE, "height": TALL})
     page.evaluate("""(what) => {
       const app = window.__jaminApp
       app.state.ui.book = null
