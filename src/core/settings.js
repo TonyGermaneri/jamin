@@ -262,6 +262,16 @@ export function defaultSettings() {
         /** none | name | count -- what the label over a node says. */
         nodeInfo: 'count',
         /**
+         * How far a filter takes down what it excludes.
+         *
+         * A filter is not a different catalogue, so it does not get a
+         * different map: the layout stays exactly where it is and what
+         * matched is what is lit. This is how far the rest goes towards
+         * the background. 0 makes a filter invisible on the map.
+         * @see canvas/treeGraph.js colourOf
+         */
+        muted: 0.82,
+        /**
          * What a clip is drawn as, by what it is.
          *
          * A groove loops for a section and a fill happens once at the end of

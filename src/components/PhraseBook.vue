@@ -21,6 +21,7 @@ import {
   visibleLicks,
   catalogue,
   treeOf,
+  markGraphRows,
   setAccentPhrase,
   midiForPhrase,
   favourite,
@@ -50,13 +51,23 @@ const sortBy = ref('')
 const sorts = ADAPTERS.phrases.sorts
 
 /*
- * Built from whatever the filters found, every time they change.
+ * Built from the whole catalogue, and only when the grouping changes.
  *
- * Ten thousand phrases is small enough to rebuild on the spot, which is what
- * makes the filters work *on* the graph rather than beside it.
+ * It used to be built from whatever the filters found, so every touch of a
+ * dropdown was a different tree with different nodes in different places --
+ * the map jumped, and anything anybody had arranged on it went with it. A
+ * filter is not a different catalogue. The map is the catalogue and the
+ * filter says where to look, which is `marked` below.
  */
 const graph = computed(() =>
-  (asGraph.value ? treeOf('phrases', matches.value, sortBy.value) : null))
+  (asGraph.value ? treeOf('phrases', catalogue(), sortBy.value) : null))
+
+/** Which of its nodes the filters are pointing at. @see store.markGraphRows */
+const marked = computed(() => {
+  if (!asGraph.value || !graph.value) return null
+  if (matches.value.length === catalogue().length) return null
+  return markGraphRows('phrases', graph.value, matches.value, { sortBy: sortBy.value })
+})
 
 /** A phrase is chosen outright; a folder searches for its name. */
 function pickNode(node) {
@@ -458,6 +469,7 @@ const assigningTo = computed(() => {
               :tree="graph"
               book="phrases"
               :busy="state.licksLoading"
+              :marked="marked"
               :found="matches.length"
               label="phrases"
               @pick="pickNode"

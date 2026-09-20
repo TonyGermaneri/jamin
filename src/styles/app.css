@@ -1388,6 +1388,39 @@ body,
   background: rgb(var(--v-theme-primary));
 }
 
+/*
+ * The map's own actions, beside the count.
+ *
+ * Plain text buttons rather than a toolbar: they sit over the picture and
+ * anything with a fill on it here is a panel, which is a thing the map
+ * spent a while getting rid of.
+ */
+.jamin-map-tools {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  pointer-events: auto;
+}
+
+.jamin-map-tools button {
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: rgba(var(--v-theme-on-surface), 0.62);
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.jamin-map-tools button:hover {
+  color: rgb(var(--v-theme-primary));
+}
+
 /* A progression's chords in the map's aside, wrapped rather than cut. */
 .jamin-map-chords {
   white-space: pre-wrap;

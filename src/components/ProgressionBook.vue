@@ -22,6 +22,7 @@ import {
   midiForProgression,
   allProgressions,
   treeOf,
+  markGraphRows,
   storedGraph,
   buildBulkGraph,
 } from '../store.js'
@@ -95,6 +96,8 @@ function pickNode(node) {
 const search = ref('')
 const page = ref(1)
 const rows = ref([])
+/** Which nodes of the map the filters point at. @see store.markGraphRows */
+const marked = ref(null)
 const total = ref(0)
 const partial = ref(false)
 const loading = ref(false)
@@ -373,24 +376,26 @@ async function refreshTree() {
    */
   const narrowed = Boolean(search.value) || activeFilters.value > 0
 
-  if (state.bulk.count > 0 && !narrowed && !sortBy.value) {
+  if (state.bulk.count > 0 && !sortBy.value) {
     const kept = await storedGraph('progressions')
     if (mine !== drawing) return
-    if (kept) { graph.value = kept; return }
-    await drawTheMap()
+    if (kept) graph.value = kept
+    else await drawTheMap()
+    if (mine !== drawing) return
+    await refreshMarks(mine, { bulk: true })
     return
   }
 
-  if (state.bulk.count > 0 && narrowed) {
+  if (state.bulk.count > 0) {
     reading.value = true
     try {
-      // Everything the filters match, not the page of it on screen.
-      const found = await progressionPage(0, MOST_GRAPH_ROWS, search.value,
-                                          { genre: genre.value,
-                                            decade: decade.value,
-                                            fits: onlyFitting.value ? songBars.value : 0 })
+      // Grouped by something, which re-roots the catalogue -- so it is a
+      // different tree rather than a filtered view, and it is built from
+      // everything. Narrowing marks it; it does not rebuild it.
+      const found = await progressionPage(0, MOST_GRAPH_ROWS, '', {})
       if (mine !== drawing) return
       graph.value = treeOf('progressions', found.rows, sortBy.value)
+      await refreshMarks(mine, { bulk: false })
     } finally {
       if (mine === drawing) reading.value = false
     }
@@ -398,6 +403,30 @@ async function refreshTree() {
   }
 
   graph.value = treeOf('progressions', allProgressions(), sortBy.value)
+  await refreshMarks(mine, { bulk: false })
+}
+
+/**
+ * Which nodes the filters light up, without touching the layout.
+ *
+ * A filter is not a different catalogue. It used to build one -- the map
+ * was rebuilt from the rows that matched, so every touch of a dropdown was
+ * a different tree in a different arrangement -- and the map is now the
+ * catalogue with the matching part lit. @see store.js markGraphRows
+ */
+async function refreshMarks(mine, { bulk }) {
+  const narrowed = Boolean(search.value) || activeFilters.value > 0
+  if (!narrowed) { marked.value = null; return }
+
+  const found = state.bulk.count > 0
+    ? (await progressionPage(0, MOST_GRAPH_ROWS, search.value,
+        { genre: genre.value,
+          decade: decade.value,
+          fits: onlyFitting.value ? songBars.value : 0 })).rows
+    : rows.value
+  if (mine !== drawing) return
+  marked.value = markGraphRows('progressions', graph.value, found,
+    { sortBy: sortBy.value, bulk })
 }
 
 // Not during setup: `rows` is declared below, and a const used before its
@@ -484,6 +513,7 @@ onMounted(refreshTree)
               v-if="asGraph"
               :tree="graph"
               book="progressions"
+              :marked="marked"
               :busy="building || reading"
               :found="total"
               label="progressions"

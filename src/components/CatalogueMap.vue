@@ -18,7 +18,7 @@
  * looks like, because those are the only parts that differ between a drum
  * pattern, a phrase and a progression. They arrive as slots.
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import CatalogueGraph from './CatalogueGraph.vue'
 
 const props = defineProps({
@@ -32,9 +32,15 @@ const props = defineProps({
   label: { type: String, default: '' },
   /** Which catalogue, so what was left open is remembered per book. */
   book: { type: String, default: '' },
+  /** What the filters match, by node index, or null for everything.
+      @see components/CatalogueGraph.vue */
+  marked: { type: Object, default: null },
 })
 
 const emit = defineEmits(['pick'])
+
+/** The renderer, for the actions below the picture. */
+const canvas = ref(null)
 
 /**
  * The cursor says the map is thinking; the map itself never goes away.
@@ -52,9 +58,11 @@ const waiting = computed(() => Boolean(props.busy))
   <div class="jamin-map" :class="{ 'is-waiting': waiting }">
     <!-- The canvas, edge to edge and behind everything. -->
     <CatalogueGraph
+      ref="canvas"
       class="jamin-map-canvas"
       :tree="tree"
       :book="book"
+      :marked="marked"
       bare
       @pick="(node, at, path) => emit('pick', node, at, path)"
     />
@@ -90,6 +98,21 @@ const waiting = computed(() => Boolean(props.busy))
       <aside v-if="$slots.detail" class="jamin-map-detail" data-keep-clear="right">
         <slot name="detail" />
       </aside>
+
+      <!--
+        The map's own actions.
+
+        Down here with the count rather than up on the glass: the glass is
+        the filters, which is how somebody moves around the catalogue, and
+        these are things done to the picture. @see components/CatalogueGraph.vue
+      -->
+      <div class="jamin-map-tools" data-keep-clear="bottom">
+        <button type="button" @click="canvas && canvas.arrange()">
+          Auto arrange
+        </button>
+        <button type="button" @click="canvas && canvas.closeAll()">Collapse</button>
+        <button type="button" @click="canvas && canvas.fit()">Fit</button>
+      </div>
 
       <!-- What the filters found, and how much of the map is drawn. The
            second is a fact about the picture rather than about the catalogue,

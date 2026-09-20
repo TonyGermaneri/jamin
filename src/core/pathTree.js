@@ -353,3 +353,96 @@ export function rgba(hex, alpha) {
   const [r, g, b] = toRgb(hex)
   return `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${alpha})`
 }
+
+/**
+ * Find nodes in a tree by the path that leads to them.
+ *
+ * The tree is built from paths and then forgets them: a node knows its own
+ * label and its parent, and the whole path only exists as the walk down.
+ * Which is fine until something outside has a path and wants the node --
+ * which is what marking the catalogue's filter on the map needs, sixty
+ * thousand times over.
+ *
+ * So the walk is made cheap rather than the paths stored. A parent's
+ * children are turned into a label lookup the first time anybody goes
+ * through it and kept, so a folder with a thousand clips under it is
+ * scanned once no matter how many of them are asked for. Nothing is built
+ * for a folder nobody looks in, which over three quarters of a million
+ * nodes is almost all of them.
+ *
+ * Shelves are walked through rather than into. They are the map's own
+ * invention -- ranges made to stop a folder having a thousand children --
+ * and no path a vendor wrote has `Ab–Ci` in it, so a shelf's children are
+ * folded into its parent's lookup as if the shelf were not there.
+ * @see capFanOut
+ */
+export function pathFinder(tree) {
+  const kids = new Map()
+
+  const lookup = (parent) => {
+    const held = kids.get(parent)
+    if (held) return held
+
+    const found = new Map()
+    // Breadth-first through shelves, so a label is found at the depth the
+    // catalogue put it at rather than the depth the map made for it.
+    const queue = [parent]
+    for (let i = 0; i < queue.length; i++) {
+      const at = queue[i]
+      const from = at < 0 ? 0 : tree.childAt[at]
+      const to = at < 0 ? 0 : tree.childAt[at + 1]
+      for (let n = from; n < to; n++) {
+        const child = tree.childList[n]
+        if (tree.nodes[child].shelf) { queue.push(child); continue }
+        if (!found.has(tree.nodes[child].label)) found.set(tree.nodes[child].label, child)
+      }
+    }
+    kids.set(parent, found)
+    return found
+  }
+
+  // The roots, which have no parent to be looked up under.
+  const roots = new Map()
+  for (let at = 0; at < tree.parents.length; at++) {
+    if (tree.parents[at] !== -1) continue
+    if (tree.nodes[at].shelf) continue
+    if (!roots.has(tree.nodes[at].label)) roots.set(tree.nodes[at].label, at)
+  }
+  kids.set(-1, roots)
+
+  /** The node at this path, or -1. `path` is the labels, top level first. */
+  return function find(path) {
+    let at = -1
+    for (const step of path) {
+      const found = lookup(at).get(step)
+      if (found === undefined) return -1
+      at = found
+    }
+    return at
+  }
+}
+
+/**
+ * Every node the filter touches, plus the way down to each.
+ *
+ * A folder is lit when something under it matched, because a lit clip
+ * inside a dark folder is a clip nobody can find. `pathsOf` gives each
+ * row's path as an array of labels.
+ */
+export function markPaths(tree, rows, pathsOf) {
+  const find = pathFinder(tree)
+  const marked = new Set()
+
+  for (const row of rows) {
+    let at = find(pathsOf(row))
+    if (at < 0) continue
+    // Up to the root, stopping as soon as an ancestor is already lit: the
+    // rest of that branch was lit by whatever got there first.
+    while (at >= 0 && !marked.has(at)) {
+      marked.add(at)
+      at = tree.parents[at]
+    }
+  }
+
+  return marked
+}

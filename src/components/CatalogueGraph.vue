@@ -58,6 +58,16 @@ const props = defineProps({
   bare: { type: Boolean, default: false },
   /** Which catalogue this is, so what was left open is remembered per book. */
   book: { type: String, default: '' },
+  /**
+   * What the filters match, by node index, or null for everything.
+   *
+   * Not a different tree. Filtering used to rebuild the map out of the rows
+   * that matched, which meant a different layout on every touch of a
+   * dropdown and the arrangement somebody had made thrown away with it.
+   * The map is the catalogue; this is where the attention is.
+   * @see canvas/treeGraph.js setMarked
+   */
+  marked: { type: Object, default: null },
 })
 const emit = defineEmits(['pick'])
 
@@ -156,6 +166,10 @@ function refreshLabels() {
    */
   const order = graph.drawn
     .slice()
+    // Nothing the filter excluded gets a name. Dimming says "not this one"
+    // and a label says "read this" -- both at once says neither, and on a
+    // full map the excluded nodes would take every label the budget has.
+    .filter((one) => !one.dim)
     .sort((a, b) => (b.clips || 0) - (a.clips || 0))
 
   const out = []
@@ -306,8 +320,14 @@ function build() {
         alpha: Math.round(graph.sim.alpha() * 1e4) / 1e4 }),
       shapes: () => graph.drawn.map((one) => ({
         label: one.label, shape: one.shape, depth: one.depth, shut: Boolean(one.shut),
+        // Whether the filters put this one aside. The map does not move
+        // when a filter changes, so this is the only thing that says a
+        // filter happened at all. @see canvas/treeGraph.js setMarked
+        dim: Boolean(one.dim),
         leaf: !graph.hasChildren(one.at),
       })),
+      /** The names actually drawn, which is not every node's. */
+      named: () => labels.value.map((one) => one.label),
     }
   }
 
@@ -325,6 +345,7 @@ function build() {
    * to it open. @see store.js graphOpen
    */
   if (source.value) graph.setTree(source.value, remembered())
+  graph.setMarked(props.marked)
   refreshLabels()
 }
 
@@ -345,6 +366,23 @@ function closeAll() {
 function fit() {
   engine.value?.fitView?.()
 }
+
+/**
+ * Lay it out as the tree it is, rather than as the cloud the forces make.
+ *
+ * @see canvas/treeGraph.js arrange
+ */
+function arrange() {
+  engine.value?.arrange?.()
+  refreshLabels()
+}
+
+/*
+ * The map's own glass has no room for a row of buttons, so the actions are
+ * handed up and it puts the ones it wants where it has space.
+ * @see components/CatalogueMap.vue
+ */
+defineExpose({ arrange, openAll, closeAll, fit })
 
 /**
  * The path to a node, as folders only.
@@ -486,6 +524,21 @@ watch(source, (next) => {
   if (!graph) return
   here.value = null
   if (next) graph.setTree(next, remembered())
+  graph.setMarked(props.marked)
+  refreshLabels()
+})
+
+/*
+ * A filter changed, and nothing moves.
+ *
+ * This is the whole point of marking rather than rebuilding: no `setTree`,
+ * no simulation, no camera. One pass over what is on screen to recolour it
+ * and one to work out which names survive.
+ */
+watch(() => props.marked, (marked) => {
+  const graph = engine.value
+  if (!graph) return
+  graph.setMarked(marked)
   refreshLabels()
 })
 
@@ -552,6 +605,7 @@ onBeforeUnmount(() => {
         <span v-if="tree">of {{ tree.nodes.length.toLocaleString() }}</span>
       </span>
       <span class="jamin-graph-spacer"></span>
+      <button type="button" @click="arrange">Auto arrange</button>
       <button type="button" @click="openAll">Open one more level</button>
       <button type="button" @click="closeAll">Collapse</button>
       <button type="button" @click="fit">Fit</button>

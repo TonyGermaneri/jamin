@@ -34,7 +34,7 @@ import {
 import { resourceOk } from './core/fetchResource.js'
 import { rebuild, docSize } from './core/crdt.js'
 import { sameGenre } from './core/genres.js'
-import { buildTree, withChildren } from './core/pathTree.js'
+import { buildTree, withChildren, markPaths } from './core/pathTree.js'
 import { notesForPack } from './core/drumPacks.js'
 import { applyEdit, insertAt, setDrumPattern } from './core/chartEdit.js'
 import { ADAPTERS } from './core/graphView.js'
@@ -3373,9 +3373,10 @@ export async function streamDrumRows(onBatch, { batch = BATCH, ceiling = 400000 
   }
 }
 
-export async function drumRowsForGraph(mostRows = 60000) {
+export async function drumRowsForGraph(mostRows = 60000, { everything = false } = {}) {
   return timed('drumRowsForGraph', async () => {
-    const found = await searchGrooves(state.drumFilters, { limit: mostRows, offset: 0 })
+    const asked = everything ? { set: '' } : state.drumFilters
+    const found = await searchGrooves(asked, { limit: mostRows, offset: 0 })
     /*
      * The seven fields a tree is built from, not the whole pattern.
      *
@@ -3408,6 +3409,57 @@ export async function drumRowsForGraph(mostRows = 60000) {
  * (@see buildBulkGraph); everything else is fast enough to do every time the
  * filters change, which is what makes the filters work on the graph at all.
  */
+/**
+ * Which nodes of a map the filters are pointing at.
+ *
+ * A filter is not a different catalogue. It used to build one -- the map
+ * was rebuilt out of the rows that matched, so every touch of a dropdown
+ * was a different tree with different node indexes, a different layout,
+ * and whatever arrangement somebody had made thrown away with it. So the
+ * map stays as it is and this says which of its nodes matched; the
+ * renderer lights those and takes the rest down towards the background.
+ *
+ * The path is reconstructed exactly as the tree was built from it, which
+ * is why this is here rather than in the renderer: the bulk map roots on
+ * the library's *name* and a tree built on the spot roots on its id, and
+ * getting that wrong marks nothing at all.
+ *
+ * `null` means everything, which is what no filter means.
+ * @see core/pathTree.js markPaths, canvas/treeGraph.js setMarked
+ */
+export function markGraphRows(which, tree, rows, { sortBy = '', bulk = false } = {}) {
+  if (!tree || !tree.nodes || !rows) return null
+  const adapter = ADAPTERS[which]
+  if (!adapter) return null
+
+  /*
+   * Timed by hand, because `timed` is async and this is not.
+   *
+   * Wrapping a synchronous answer in it returns a promise, and a promise
+   * handed to the renderer as a set of node indexes has no `size`, reads
+   * as "no filter", and lights the whole map. Which is exactly how this
+   * first shipped. @see treeOf, which counts the same way for the same
+   * reason.
+   */
+  const at = performance.now()
+  const whole = withChildren(tree)
+  const found = markPaths(whole, rows, (row) => {
+    const levels = []
+    if (sortBy) levels.push(adapter.facet(row, sortBy) || '(none)')
+    if (bulk) {
+      levels.push(labelFor(which, row.setId))
+      levels.push(...String(row.path || row.name || '').split('/'))
+    } else {
+      levels.push(...String(adapter.treePath(row) || '').split('/'))
+    }
+    return levels.filter(Boolean)
+  })
+  const kept = timings.markGraphRows || (timings.markGraphRows = { calls: 0, ms: 0 })
+  kept.calls++
+  kept.ms += performance.now() - at
+  return found
+}
+
 export function treeOf(which, rows, sortBy = '') {
   const adapter = ADAPTERS[which]
   if (!adapter || !rows || !rows.length) return null
@@ -5180,5 +5232,10 @@ if (typeof window !== 'undefined') {
     // Where the maps were left, so a harness can start from nothing --
     // and so `Back to the defaults` means it. @see core/settings.js
     forgetGraphArrangements,
+    // What a filter points at on the map, which is the one thing about
+    // filtering that is not visible in the layout -- because the layout no
+    // longer changes. @see scripts/arrange_check.py
+    drumRowsForGraph,
+    markGraphRows,
   }
 }

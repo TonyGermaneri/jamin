@@ -21,6 +21,7 @@ memory.
 """
 import functools
 import http.server
+import math
 import os
 import socketserver
 import sys
@@ -80,11 +81,16 @@ STATE = r"""
 () => {
   const probe = window.__jaminTreeProbe
   if (!probe) return null
+  const drawn = probe.shapes()
   return {
-    open: probe.shapes().filter((one) => !one.shut && !one.leaf).length,
+    open: drawn.filter((one) => !one.shut && !one.leaf).length,
     showing: probe.showing(),
     camera: probe.camera(),
     places: probe.places(),
+    dim: drawn.filter((one) => one.dim).length,
+    lit: drawn.filter((one) => !one.dim).length,
+    named: probe.named(),
+    dimNames: drawn.filter((one) => one.dim).map((one) => one.label),
   }
 }
 """
@@ -212,27 +218,60 @@ def main():
         else:
             print(f"ok    and moved the camera to {arranged['camera']}")
 
-        # ---- and a filter does not throw it away -------------------------
+        # ---- a filter marks the map, it does not rebuild it --------------
         #
-        # Narrowing the catalogue is a different tree with different node
-        # indexes, so it gets an arrangement of its own -- and clearing the
-        # filter has to bring back the one that was there before, not a
-        # fresh layout. Keeping one arrangement per book lost it.
+        # "Make it so there is only one global layout and filtering simply
+        # darkens the color of the nodes and removes the labels that are not
+        # in the filtered list so the layout does not change between filter
+        # changes." So: nothing moves, some nodes go dim, and the dim ones
+        # lose their names.
         page.evaluate("() => window.__jaminBookProbe.filter('genre', 'rock')")
-        page.wait_for_timeout(2500)
+        page.wait_for_timeout(3000)
+        narrowed = look(page)
+        # What "darkens the colour and removes the labels" looks like, which
+        # is not a thing the numbers below can show.
+        page.screenshot(path=os.path.join(ROOT, "tests", "browser", "shots",
+                                          "graph-filtered.png"))
+
+        stayed = same(arranged, narrowed)
+        if stayed:
+            failures.append(f"FAIL filtering moved {len(stayed)} node(s): "
+                            + "; ".join(stayed[:3]))
+        else:
+            print(f"ok    filtering left all {len(narrowed['places'])} nodes "
+                  f"exactly where they were")
+
+        if not narrowed["dim"]:
+            failures.append("FAIL the filter dimmed nothing")
+        elif not narrowed["lit"]:
+            failures.append("FAIL the filter dimmed everything")
+        else:
+            print(f"ok    and dimmed {narrowed['dim']} of "
+                  f"{narrowed['dim'] + narrowed['lit']}, leaving {narrowed['lit']} lit")
+
+        named = set(narrowed["named"])
+        wrong = [one for one in narrowed["dimNames"] if one in named]
+        if wrong:
+            failures.append(f"FAIL {len(wrong)} dimmed node(s) kept a name: "
+                            + ", ".join(sorted(set(wrong))[:4]))
+        else:
+            print(f"ok    and named only what it lit ({len(named)} names)")
+
         # `any`, not empty: an empty genre is still a filter as far as the
-        # book is concerned, so clearing it that way left the map on the
-        # filtered tree and this check measured the wrong two pictures.
+        # book is concerned, and this check would then be measuring the
+        # filtered map against itself.
         page.evaluate("() => window.__jaminBookProbe.filter('genre', 'any')")
-        page.wait_for_timeout(5000)
-        filtered = still(page)
-        moved_by_filter = same(arranged, filtered)
+        page.wait_for_timeout(3000)
+        cleared = look(page)
+        moved_by_filter = same(arranged, cleared)
         if moved_by_filter:
             failures.append(f"FAIL filtering and clearing lost the arrangement: "
                             f"{len(moved_by_filter)} node(s) moved, "
                             + "; ".join(moved_by_filter[:3]))
+        elif cleared["dim"]:
+            failures.append(f"FAIL {cleared['dim']} node(s) stayed dim after clearing")
         else:
-            print("ok    filtering and clearing it leaves everything where it was")
+            print("ok    and clearing it lights everything again, still unmoved")
 
         if os.environ.get("ARRANGE_TRACE"):
             print("   stored:", page.evaluate(
@@ -241,6 +280,62 @@ def main():
                 " return { stamp: d.stamp, open: (d.open||[]).length,"
                 " places: (d.places||[]).length, camera: d.camera,"
                 " first: (d.places||[])[0] } }"))
+
+        # ---- and it can be laid out as the tree it is --------------------
+        #
+        # The forces make a picture that is honest about how much is where
+        # and, on a real catalogue, a knot. "Auto arrange" draws it as a
+        # tree: the root in the middle and each level a ring further out.
+        # Which is a claim about geometry, so it is measured as one.
+        page.evaluate("() => window.__jaminBookProbe.filter('genre', 'any')")
+        page.wait_for_timeout(2000)
+        button = page.locator(".jamin-map-tools button", has_text="Auto arrange")
+        if not button.count():
+            failures.append("FAIL there is no Auto arrange button on the map")
+        else:
+            button.first.click()
+            page.wait_for_timeout(1600)
+            laid = look(page)
+            # "Beautiful" is not a thing a number settles, so there is a
+            # picture of it as well as the geometry.
+            shot = os.path.join(ROOT, "tests", "browser", "shots", "graph-arranged.png")
+            os.makedirs(os.path.dirname(shot), exist_ok=True)
+            page.screenshot(path=shot)
+            depths = page.evaluate("() => window.__jaminTreeProbe.shapes()")
+            cam = laid["camera"]
+
+            rings = {}
+            for spot, node in zip(laid["places"], depths):
+                r = math.hypot(spot["x"] - cam["x"], spot["y"] - cam["y"]) / cam["k"]
+                rings.setdefault(node["depth"], []).append(r)
+
+            ragged = []
+            for depth, radii in sorted(rings.items()):
+                if len(radii) < 3:
+                    continue
+                mid = sum(radii) / len(radii)
+                if mid < 1:
+                    continue
+                if (max(radii) - min(radii)) / mid > 0.02:
+                    ragged.append(f"depth {depth}: {min(radii):.0f}–{max(radii):.0f}")
+            if ragged:
+                failures.append("FAIL arranging did not put each level on a ring: "
+                                + "; ".join(ragged))
+            else:
+                counted = {d: len(r) for d, r in sorted(rings.items())}
+                print(f"ok    auto arrange put every level on its own ring {counted}")
+
+            # And the rings are further out as they go down, which is what
+            # makes it read as a tree rather than as a target.
+            means = [sum(r) / len(r) for _, r in sorted(rings.items())]
+            if means != sorted(means):
+                failures.append(f"FAIL the rings are not in order: "
+                                + ", ".join(f"{one:.0f}" for one in means))
+            else:
+                print("ok    and each ring outside the one above it — "
+                      + ", ".join(f"{one:.0f}" for one in means))
+
+            arranged = laid
 
         # ---- the session ends, and starts again -------------------------
         boot(fresh=False)

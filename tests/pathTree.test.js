@@ -228,4 +228,65 @@ const shelved = buildTree(
 check('shelving does not lose the marks',
       shelved.nodes.filter((one) => one.fill).length, 100)
 
+/* ---------------- finding a node by the path to it ---------------------- */
+/*
+ * A filter is not a different catalogue.
+ *
+ * The map used to be rebuilt out of the rows a filter matched, so every
+ * touch of a dropdown was a different tree with different indexes in a
+ * different arrangement. Marking instead needs the opposite of what the
+ * tree does: the tree turns paths into nodes and forgets the paths, and
+ * this has to find the node again from the path outside.
+ */
+const deep = buildTree([
+  { path: 'Pack/Rock/fast.mid' },
+  { path: 'Pack/Rock/slow.mid' },
+  { path: 'Pack/Jazz/swing.mid' },
+  { path: 'Other/Rock/one.mid' },
+])
+const find = pathFinder(deep)
+
+check('a root is found', deep.nodes[find(['Pack'])].label, 'Pack')
+check('and a folder inside it', deep.nodes[find(['Pack', 'Rock'])].label, 'Rock')
+check('and a clip inside that', deep.nodes[find(['Pack', 'Rock', 'fast.mid'])].label, 'fast.mid')
+// Two `Rock` folders in two libraries are two folders, and the path says which.
+check('the same name in two libraries is two nodes',
+      find(['Pack', 'Rock']) !== find(['Other', 'Rock']), true)
+check('a path that is not there is not found', find(['Pack', 'Nope']), -1)
+check('and neither is one that stops short of nothing', find(['Nope']), -1)
+
+/* ---------------- shelves are walked through, not into ------------------ */
+/*
+ * A shelf is the map's own invention -- a range made to stop a folder
+ * having a thousand children -- and no path a vendor wrote has `Ab–Ci` in
+ * it. So a clip under a shelf has to be found by the path it really has.
+ */
+const wide = buildTree(
+  Array.from({ length: 300 }, (unused, n) =>
+    ({ path: `one/clip ${String(n).padStart(4, '0')}.mid` })),
+  { mostChildren: 16 })
+const inWide = pathFinder(wide)
+check('the catalogue really was shelved', wide.nodes.some((one) => one.shelf), true)
+check('and a clip under a shelf is still found by its own path',
+      wide.nodes[inWide(['one', 'clip 0123.mid'])].label, 'clip 0123.mid')
+check('every one of them', Array.from({ length: 300 }, (unused, n) =>
+  inWide(['one', `clip ${String(n).padStart(4, '0')}.mid`])).every((at) => at >= 0), true)
+
+/* ---------------- marking lights the way down --------------------------- */
+const lit = markPaths(deep, [{ path: 'Pack/Rock/fast.mid' }],
+                      (row) => row.path.split('/'))
+check('the clip is lit', lit.has(find(['Pack', 'Rock', 'fast.mid'])), true)
+// A lit clip inside a dark folder is a clip nobody can find.
+check('and so is the folder it is in', lit.has(find(['Pack', 'Rock'])), true)
+check('and the library above that', lit.has(find(['Pack'])), true)
+check('its neighbour is not', lit.has(find(['Pack', 'Rock', 'slow.mid'])), false)
+check('nor the folder beside it', lit.has(find(['Pack', 'Jazz'])), false)
+check('nor the other library', lit.has(find(['Other'])), false)
+check('three nodes lit -- the clip and the way down to it, no more', lit.size, 3)
+
+// A row the tree has never heard of marks nothing rather than throwing.
+check('a path with no node marks nothing',
+      markPaths(deep, [{ path: 'Ghost/Rock/none.mid' }],
+                (row) => row.path.split('/')).size, 0)
+
 console.log(failed ? `path-tree: ${failed} FAILED` : 'path-tree: all checks passed')

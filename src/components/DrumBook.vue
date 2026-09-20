@@ -43,6 +43,7 @@ import {
   graphState,
   treeOf,
   drumRowsForGraph,
+  markGraphRows,
   streamDrumRows,
   grooveAtIndex,
   aimedElsewhere,
@@ -1136,11 +1137,18 @@ const silenced = computed(() => Object.values(drumMutesFor()).filter(Boolean).le
  */
 let drawing = 0
 
+/**
+ * What the filters are pointing at, by node index. Null is everything.
+ *
+ * @see store.js markGraphRows
+ */
+const marked = ref(null)
+
 async function refreshTree() {
   if (!asGraph.value) return
   const mine = ++drawing
 
-  if (!filtered.value && !sortBy.value) {
+  if (!sortBy.value) {
     /*
      * Never rebuild because a window opened.
      *
@@ -1164,24 +1172,62 @@ async function refreshTree() {
     const kept = await storedGraph('drums')
     if (mine !== drawing) return
     if (kept) graph.value = kept
-    if (said.how === 'current') return
 
-    // Small enough that drawing it is quicker than reading the question.
-    if (said.quick) { await drawTheMap(); return }
-    mapIsOld.value = said.how
-    mapWhy.value = said.why || ''
+    if (said.how !== 'current') {
+      // Small enough that drawing it is quicker than reading the question.
+      if (said.quick) { await drawTheMap() }
+      else {
+        mapIsOld.value = said.how
+        mapWhy.value = said.why || ''
+        return
+      }
+      if (mine !== drawing) return
+    }
+
+    await refreshMarks(mine, { bulk: true })
     return
   }
 
-  // Everything the filters match, not the page of it on screen.
+  /*
+   * Grouped by something, which really is a different tree.
+   *
+   * "Sort by genre" re-roots the catalogue: the genres become the top level
+   * and every library hangs under the genre it is in. That is a different
+   * map of the same catalogue rather than a filtered view of one, so it is
+   * built -- and built from everything, not from what the filters match,
+   * or the layout would move every time a dropdown did. @see store.treeOf
+   */
   reading.value = true
   try {
-    const rows = await drumRowsForGraph()
+    const rows = await drumRowsForGraph(60000, { everything: true })
     if (mine !== drawing) return
     graph.value = treeOf('drums', rows, sortBy.value)
+    await refreshMarks(mine, { bulk: false })
   } finally {
     if (mine === drawing) reading.value = false
   }
+}
+
+/**
+ * Which nodes the filters light up.
+ *
+ * Read as rows and turned into node indexes, because a filter is a
+ * question about clips and a map is made of places. Nothing here touches
+ * the tree: the map does not move when a filter changes, which is the
+ * whole point.
+ *
+ * Capped at the same sixty thousand rows the map used to be *built* from.
+ * On a catalogue where a filter matches more than that, the folders are
+ * all lit long before the cap -- the first few hundred rows reach every
+ * branch there is -- and what goes unlit is individual clips deep inside
+ * folders that are mostly still closed.
+ */
+async function refreshMarks(mine, { bulk }) {
+  if (!filtered.value) { marked.value = null; return }
+  const rows = await drumRowsForGraph()
+  if (mine !== drawing) return
+  marked.value = markGraphRows('drums', graph.value, rows,
+    { sortBy: sortBy.value, bulk })
 }
 
 /*
@@ -1220,7 +1266,19 @@ const graphFilters = computed(() => JSON.stringify([
   era.value, onlyFavourites.value, onlyFitting.value,
 ]))
 
-watch([asGraph, graphFilters, sortBy], refreshTree)
+/*
+ * A filter changes the marks; the grouping changes the tree.
+ *
+ * Split, because they are different costs. Marking reads the rows and
+ * recolours what is on screen; building reads them and lays the whole
+ * thing out again. Running the second for the first is what made every
+ * touch of a dropdown throw the picture away.
+ */
+watch([asGraph, sortBy], refreshTree)
+watch(graphFilters, () => {
+  if (!asGraph.value || !graph.value) return
+  refreshMarks(drawing, { bulk: !sortBy.value })
+})
 
 /*
  * And the list's rows, which follow the same filters.
@@ -1319,6 +1377,7 @@ onMounted(refreshTree)
               v-if="asGraph"
               :tree="graph"
               book="drums"
+              :marked="marked"
               :busy="building || reading || state.drumBusy"
               :found="found"
               label="patterns"

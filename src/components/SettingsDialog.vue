@@ -675,6 +675,7 @@ async function retryMidi() {
                   ['speed', 'How fast it settles', 0.2, 3],
                   ['repel', 'How hard nodes push apart', 0.1, 3],
                   ['reach', 'How far a branch reaches', 0.2, 3],
+                  ['muted', 'How far a filter dims the rest', 0, 1],
                   ['families', 'Colours in the palette', 2, 12],
                 ]"
                 :key="knob[0]" cols="12" md="6"

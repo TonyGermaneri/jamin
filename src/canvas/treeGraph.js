@@ -123,6 +123,18 @@ export class TreeGraph {
     this.open = new Set()
     /** Index -> the object standing for it on screen. Only the visible ones. */
     this.live = new Map()
+    /**
+     * What the filters match, by node index, or null for everything.
+     *
+     * Filtering used to rebuild the tree out of the rows that matched,
+     * which is a different tree: different nodes, different indexes, a
+     * different layout every time somebody touched a dropdown, and the
+     * arrangement they had made thrown away with it. A filter is not a
+     * different catalogue. It is the same catalogue with your attention on
+     * part of it, so the map stays exactly as it is and the part that
+     * matched is the part that is lit. @see setMarked
+     */
+    this.marked = null
     /** The same as an array, which is what painting and hit-testing walk. */
     this.drawn = []
     this.links = []
@@ -158,6 +170,10 @@ export class TreeGraph {
       /** How hard nodes push apart, and how far an edge wants to be. */
       repel: 1,
       reach: 1,
+      /** How far a node the filters exclude is taken down. 0 leaves the map
+          unchanged by a filter; 1 is as near to the background as it goes
+          without disappearing. @see colourOf */
+      muted: 0.82,
       /** What a clip is drawn as, by what it is. Branches are always
           circles: a folder is not a groove or a fill, and giving it one of
           their shapes would say it was. @see canvas/nodeShapes.js */
@@ -169,6 +185,8 @@ export class TreeGraph {
     this.chosen = -1
     this.at = zoomIdentity
     this.frame = 0
+    /** The auto-arrange animation, if one is running. @see glideTo */
+    this.gliding = 0
     this.dpr = 1
     this.width = 1
     this.height = 1
@@ -563,7 +581,9 @@ export class TreeGraph {
         family: this.familyOf(at),
         r: this.radiusOf(node),
         shape: this.shapeOf(node),
-        colour: this.colourOf(node, this.familyOf(at)),
+        dim: this.marked ? !this.marked.has(at) : false,
+        colour: this.colourOf(node, this.familyOf(at),
+          this.marked ? !this.marked.has(at) : false),
         x: was[1],
         y: was[2],
         shut: this.hasChildren(at) && !this.open.has(at),
@@ -598,7 +618,9 @@ export class TreeGraph {
       family: this.familyOf(at),
       r: this.radiusOf(node),
       shape: this.shapeOf(node),
-      colour: this.colourOf(node, this.familyOf(at)),
+      dim: this.marked ? !this.marked.has(at) : false,
+      colour: this.colourOf(node, this.familyOf(at),
+        this.marked ? !this.marked.has(at) : false),
       x: (up ? up.x : 0) + Math.cos(angle) * push,
       y: (up ? up.y : 0) + Math.sin(angle) * push,
       shut: this.hasChildren(at) && !this.open.has(at),
@@ -667,14 +689,54 @@ export class TreeGraph {
    * catalogue up reads through the clips hanging off it -- the leaves are
    * most of a real tree, and at full strength they are the entire picture.
    */
-  colourOf(node, family) {
+  colourOf(node, family, dim = false) {
     if (!this.palette.length) this.palette = this.paletteFor(this.look.families || 7)
     const [h, s, l] = this.palette[((family % this.palette.length) + this.palette.length)
       % this.palette.length]
     const down = Math.min(1, node.depth / Math.max(1, this.deepest))
     const fade = node.leaf ? 0.45 : down * 0.3
-    const [r, g, b] = hslToRgb([h, s * (1 - fade * 0.55), l * (1 - fade * 0.4)])
+    /*
+     * Outside the filter: still there, and plainly not the point.
+     *
+     * Dark enough to read as background and light enough to keep the shape
+     * of the catalogue -- a node the filter excluded is not a node that has
+     * gone away, and a map that hid them would be the layout changing by
+     * another name. Colour is drained before lightness so a dimmed branch
+     * reads as grey rather than as a darker version of its own family,
+     * which at a distance looks like a branch that simply went quiet.
+     */
+    const mute = dim ? Math.max(0, Math.min(1, this.look.muted ?? 0.82)) : 0
+    const [r, g, b] = hslToRgb([
+      h,
+      s * (1 - fade * 0.55) * (1 - mute * 0.9),
+      l * (1 - fade * 0.4) * (1 - mute * 0.72),
+    ])
     return `rgb(${r},${g},${b})`
+  }
+
+  /**
+   * Light these and dim the rest, without moving anything.
+   *
+   * `null` is "everything", which is what no filter means. Only the colours
+   * are touched -- not the positions, not the open set, not the camera --
+   * so changing a filter costs one pass over what is on screen.
+   */
+  setMarked(marked) {
+    // `null` is no filter; an empty set is a filter that matched nothing,
+    // which dims the whole map. Treating the two the same lit everything
+    // up at the moment a filter found nothing, which reads as the filter
+    // having been ignored.
+    this.marked = marked || null
+    for (const seat of this.live.values()) {
+      seat.dim = this.marked ? !this.marked.has(seat.at) : false
+      seat.colour = this.colourOf(this.source.nodes[seat.at], seat.family, seat.dim)
+    }
+    this.paintSoon()
+  }
+
+  /** Whether the filters have anything to say about this node. */
+  litAt(at) {
+    return !this.marked || this.marked.has(at)
   }
 
   /** Which branch a node belongs to: its own index at depth one, or the root's. */
@@ -958,6 +1020,186 @@ export class TreeGraph {
     if (this.onArrange) this.onArrange()
   }
 
+  /**
+   * Lay what is on screen out as a tree, rather than as a settled cloud.
+   *
+   * The forces make a picture that is honest about how much is where and
+   * is, on a real catalogue, a knot: branches cross, a folder ends up
+   * nowhere near its parent, and the shape of the thing is guesswork. A
+   * tree is not a cloud. Drawn as a tree it has the shape it actually
+   * has -- the root in the middle, each level a ring further out, every
+   * branch its own wedge, and no two branches overlapping.
+   *
+   * The wedges are shared out by how many leaves are under each child
+   * rather than by how many children there are, so a folder holding four
+   * hundred clips gets the room it needs and one holding two does not get
+   * the same. That is the whole difference between a radial tree that
+   * reads and one that is a fan of overlapping spokes.
+   *
+   * The ring spacing comes from the outermost ring: it has to be long
+   * enough for every leaf on it to sit clear of its neighbours, which is a
+   * circumference, which is a radius. Nothing is guessed at a fixed size.
+   *
+   * Animated, because the point of arranging a map somebody is reading is
+   * that they can see what moved where. @see glideTo
+   */
+  arrange() {
+    if (!this.drawn.length || !this.source) return
+
+    const kids = new Map()
+    const roots = []
+    for (const seat of this.drawn) {
+      const up = this.source.parents[seat.at]
+      if (up >= 0 && this.live.has(up)) {
+        const list = kids.get(up)
+        if (list) list.push(seat.at)
+        else kids.set(up, [seat.at])
+      } else {
+        roots.push(seat.at)
+      }
+    }
+    // The catalogue's own order, which is what the index is. The live map
+    // is in the order things happened to be opened in, and a ring in that
+    // order is a ring nobody can read down.
+    for (const list of kids.values()) list.sort((a, b) => a - b)
+    roots.sort((a, b) => a - b)
+
+    /*
+     * How much room each branch needs, counted in leaves.
+     *
+     * Bottom up over a list that is already parent-before-child, so one
+     * pass backwards does it -- the same trick the tree itself is built
+     * with. A node with nothing open under it counts as one.
+     */
+    const order = []
+    const stack = [...roots]
+    while (stack.length) {
+      const at = stack.pop()
+      order.push(at)
+      const under = kids.get(at)
+      if (under) for (const child of under) stack.push(child)
+    }
+    const weight = new Map()
+    for (let i = order.length - 1; i >= 0; i--) {
+      const at = order[i]
+      const under = kids.get(at)
+      if (!under || !under.length) { weight.set(at, 1); continue }
+      let sum = 0
+      for (const child of under) sum += weight.get(child) || 1
+      weight.set(at, sum)
+    }
+
+    // Deep enough, and wide enough, to hold what is on it.
+    let deepest = 0
+    const levelOf = new Map()
+    for (const at of roots) levelOf.set(at, 0)
+    for (const at of order) {
+      const here = levelOf.get(at) || 0
+      deepest = Math.max(deepest, here)
+      for (const child of kids.get(at) || []) levelOf.set(child, here + 1)
+    }
+
+    const leaves = roots.reduce((sum, at) => sum + (weight.get(at) || 1), 0)
+    const GAP = 30
+    const rings = Math.max(1, deepest)
+    const ring = Math.max(REACH, (leaves * GAP) / (2 * Math.PI * rings))
+
+    const target = new Map()
+    const place = (at, from, to) => {
+      const level = levelOf.get(at) || 0
+      const middle = (from + to) / 2
+      const radius = level * ring
+      target.set(at, level === 0 && roots.length === 1
+        ? [0, 0]
+        : [Math.cos(middle) * radius, Math.sin(middle) * radius])
+
+      const under = kids.get(at)
+      if (!under || !under.length) return
+      const span = to - from
+      const total = weight.get(at) || 1
+      let edge = from
+      for (const child of under) {
+        const share = (span * (weight.get(child) || 1)) / total
+        place(child, edge, edge + share)
+        edge += share
+      }
+    }
+
+    /*
+     * A single root sits in the middle and its children take the whole
+     * circle. Several roots are a top level in their own right and share
+     * it between them -- with a gap, so the first and the last are not on
+     * the same angle, which is the seam a radial layout gets wrong first.
+     */
+    if (roots.length === 1) {
+      place(roots[0], 0, Math.PI * 2)
+    } else {
+      let edge = 0
+      for (const at of roots) {
+        const share = (Math.PI * 2 * (weight.get(at) || 1)) / Math.max(1, leaves)
+        place(at, edge, edge + share)
+        edge += share
+      }
+    }
+
+    this.glideTo(target)
+  }
+
+  /**
+   * Move everything to where it is going, over about two thirds of a
+   * second.
+   *
+   * Not a jump. A map somebody is reading that rearranges between one
+   * frame and the next is a different map they now have to find their way
+   * around again; watching it move is what makes it the same one. Eased at
+   * both ends, and anything pinned by hand is let go of, because being
+   * arranged is the opposite of being held.
+   */
+  glideTo(target) {
+    const from = new Map()
+    for (const seat of this.drawn) {
+      from.set(seat.at, [seat.x, seat.y])
+      seat.fx = null
+      seat.fy = null
+    }
+    if (this.pinned) this.pinned.clear()
+    this.sim.stop()
+    this.sim.alpha(0)
+    cancelAnimationFrame(this.gliding)
+
+    const began = performance.now()
+    const OVER = 680
+    const step = () => {
+      const t = Math.min(1, (performance.now() - began) / OVER)
+      // Smoothstep: no lurch at either end.
+      const e = t * t * (3 - 2 * t)
+      for (const seat of this.drawn) {
+        const was = from.get(seat.at)
+        const to = target.get(seat.at)
+        if (!was || !to) continue
+        seat.x = was[0] + (to[0] - was[0]) * e
+        seat.y = was[1] + (to[1] - was[1]) * e
+      }
+      this.tree = null
+      this.paint()
+      if (t < 1) { this.gliding = requestAnimationFrame(step); return }
+      this.gliding = 0
+      /*
+       * And a few dozen frames to wash the trails out.
+       *
+       * A trail is the last frame painted over rather than wiped, so when
+       * the painting stops the last smear stays -- and after a move this
+       * long that is a ghost of the whole old layout hanging behind the
+       * new one. The frames cost nothing and the fade is the point.
+       */
+      this.cooling = 48
+      this.fitView()
+      this.paintSoon()
+      if (this.onArrange) this.onArrange()
+    }
+    this.gliding = requestAnimationFrame(step)
+  }
+
   /** Every node on screen under this one, itself included. */
   descendantsOf(at) {
     const out = []
@@ -1055,7 +1297,8 @@ export class TreeGraph {
     for (const seat of this.live.values()) {
       seat.r = this.radiusOf(this.source.nodes[seat.at])
       seat.shape = this.shapeOf(this.source.nodes[seat.at])
-      seat.colour = this.colourOf(this.source.nodes[seat.at], seat.family)
+      seat.dim = this.marked ? !this.marked.has(seat.at) : false
+      seat.colour = this.colourOf(this.source.nodes[seat.at], seat.family, seat.dim)
     }
     this.paintSoon()
   }
@@ -1121,6 +1364,10 @@ export class TreeGraph {
       ctx.globalCompositeOperation = 'lighter'
       ctx.globalAlpha = 0.2 * Math.min(1, bloom)
       for (const one of this.drawn) {
+        // A halo on a node the filter excluded is the excluded node being
+        // the brightest thing on the screen, which is the opposite of what
+        // dimming it was for.
+        if (one.dim) continue
         ctx.beginPath()
         traceShape(ctx, one.shape, one.x, one.y, one.r * (1 + bloom * 1.5))
         ctx.fillStyle = one.colour
@@ -1136,9 +1383,12 @@ export class TreeGraph {
       ctx.fillStyle = one.colour
       ctx.fill()
       // A node with more inside it says so, rather than looking like a leaf.
+      // Dimmed along with everything else about it: a white ring is the
+      // brightest mark on the map and would pick out exactly the folders
+      // the filter had just put aside.
       if (one.shut) {
         ctx.lineWidth = 1.4 / k
-        ctx.strokeStyle = 'rgba(255,255,255,0.55)'
+        ctx.strokeStyle = one.dim ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.55)'
         ctx.stroke()
       }
     }
@@ -1159,6 +1409,7 @@ export class TreeGraph {
 
   destroy() {
     cancelAnimationFrame(this.frame)
+    cancelAnimationFrame(this.gliding)
     this.sim.stop()
     this.watching.disconnect()
     this.canvas.removeEventListener('mousemove', this.onMove)
