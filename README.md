@@ -560,7 +560,7 @@ are MIT, which is fine either way.
 
 Licence before download, every time.
 
-- **Impro-Visor** (`vocab/My.voc`, ~530KB of licks, cells and idioms) is
+- **Impro-Visor** (`src/data/My.voc`, ~530KB of licks, cells and idioms) is
   GPL-2.0-or-later, so it is bundled here verbatim as `src/data/My.voc`, with
   attribution. It is the closest thing to a sibling project: its vocabulary
   auto-transposes to the chord of the moment, which is what Mr. Accompany Me
