@@ -183,6 +183,33 @@ export async function buildIndexes() {
   return Boolean(built)
 }
 
+/**
+ * Run an upgrade for the sake of a store that is missing.
+ *
+ * One version past whatever is there, which is the rule that holds whether
+ * the catalogue was created with a version or without one. The upgrade
+ * handler creates only what is absent, so on a database that already has
+ * its indexes this costs a transaction and nothing else.
+ */
+async function addMissingStores() {
+  if (typeof indexedDB === 'undefined') return false
+  const db = await open()
+  const next = db ? Math.max(DB_VERSION, db.version + 1) : DB_VERSION
+  if (db) db.close()
+
+  handle = null
+  wantVersion = next
+  const built = await open()
+  wantVersion = null
+  return Boolean(built && built.objectStoreNames.contains(GRAPHS))
+}
+
+/** Whether this catalogue can keep a map at all. @see addMissingStores */
+export async function canKeepGraphs() {
+  const db = await open()
+  return Boolean(db && db.objectStoreNames.contains(GRAPHS))
+}
+
 function open() {
   if (handle) return handle
 
@@ -1606,9 +1633,29 @@ export async function readGraph(which) {
  * @returns {string} empty when it was written, otherwise why not.
  */
 export async function writeGraph(which, graph) {
-  const db = await open()
+  let db = await open()
   if (!db) return 'NoDatabase'
-  if (!db.objectStoreNames.contains(GRAPHS)) return 'NoGraphStore'
+
+  /*
+   * The store may simply not exist, and that is not the caller's problem.
+   *
+   * The database is opened at whatever version it already sits at, on
+   * purpose: asking for a version runs an upgrade, and an upgrade over
+   * three quarters of a million rows is the better part of a minute that
+   * nobody asked for. The cost of that rule is that a catalogue imported
+   * before the graphs store existed never gets one -- so every map written
+   * since has failed with `NoGraphStore`, silently until now, and "there is
+   * no map of this catalogue yet" was true and permanent.
+   *
+   * Making an empty object store is free; it is filling an index that is
+   * slow, and the upgrade skips every index that is already there. So this
+   * heals rather than reports, once, and writes the map it was given.
+   */
+  if (!db.objectStoreNames.contains(GRAPHS)) {
+    if (!(await addMissingStores())) return 'NoGraphStore'
+    db = await open()
+    if (!db || !db.objectStoreNames.contains(GRAPHS)) return 'NoGraphStore'
+  }
 
   return new Promise((resolve) => {
     let why = ''

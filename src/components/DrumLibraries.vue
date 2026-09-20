@@ -18,7 +18,7 @@ import {
   cancelDrumImport,
   forgetDrumSet,
   forgetEveryDrumSet,
-  prepareDrumFilters,
+  rebuildCatalogue,
   setDrumSetKit,
   countEachDrumSet,
   kitMapFor,
@@ -507,10 +507,33 @@ async function bringIndexesUpToDate() {
     </tbody>
   </v-table>
 
+  <!--
+    What the database is using, and what for.
+
+    "3.2 GB for a library of 612 MB" is a reasonable thing to disbelieve, so
+    the number says what it is made of rather than sitting there on its own.
+    The MIDI is not in it at all -- these are pointers -- and what is in it
+    is a row per pattern, ten indexes over those rows, and the map.
+  -->
   <div v-if="state.drumSets.length && state.drumStorage.quota"
        class="text-caption text-medium-emphasis mt-2">
     The catalogue is using {{ inGigabytes(state.drumStorage.usage) }} of the
     {{ inGigabytes(state.drumStorage.quota) }} this machine will give it.
+    <InfoTip>
+      None of that is the MIDI: the files stay where they are and the catalogue
+      holds pointers. What it holds is one row per pattern — its name, path, folder,
+      genre, tempo, length and tags — and <strong>ten indexes over those rows</strong>,
+      each of which is another copy of one field plus a key, which is what makes a
+      filter answer without reading anything.
+      <br /><br />
+      The rest is the browser. IndexedDB keeps superseded copies of what it has
+      written until it compacts, and it compacts when it feels like it — an import
+      run twice can leave two of everything for a while. Erasing a library and
+      re-importing it is the way to make it let go.
+      <br /><br />
+      Measured here: 774,268 patterns are about 155 MB of rows and 77 MB of map.
+      Anything much past half a gigabyte is the browser holding on, not jamin.
+    </InfoTip>
   </div>
 
   <div v-else-if="!state.drumSets.length" class="text-caption text-medium-emphasis pa-4">
@@ -545,12 +568,16 @@ async function bringIndexesUpToDate() {
     as it arrives and never needs it. @see store.js prepareDrumFilters
   -->
   <div v-if="state.drumSets.length" class="d-flex align-center mt-4" style="gap: 8px">
+    <!-- One button rather than three. "The filter lists", "the map" and
+         "the indexes" are three names for one complaint -- something about
+         this catalogue is out of step -- and asking somebody which of the
+         three to press is handing them jamin's internals as a quiz. -->
     <v-btn size="small" variant="tonal"
-           prepend-icon="mdi-filter-check-outline"
+           prepend-icon="mdi-refresh"
            :loading="state.drumPreparing.running"
            :disabled="state.drumPreparing.running || state.drumRemoval.running"
-           @click="prepareDrumFilters">
-      Count the filter lists
+           @click="rebuildCatalogue">
+      Rebuild the catalogue
     </v-btn>
     <span class="text-caption text-medium-emphasis">
       <template v-if="state.drumPreparing.running">
@@ -559,8 +586,9 @@ async function bringIndexesUpToDate() {
         {{ state.drumPreparing.rows.toLocaleString() }} read</span>
       </template>
       <template v-else>
-        Once, for libraries imported before jamin counted them on the way in.
-        Afterwards, choosing a library is instant.
+        The indexes, the filter lists and the map, in that order. Once, for a
+        catalogue imported before jamin built them on the way in — and the fix
+        when anything says it is out of date.
       </template>
     </span>
   </div>

@@ -52,6 +52,8 @@ import {
   drumMutesFor,
   unmuteEveryDrumVoice,
   grooveForNode,
+  previewGroove,
+  cancelPreview,
 } from '../store.js'
 import { summarizeGroove } from '../core/drums.js'
 import { DRUM_VOICES, kitById, gmName, TD11_TO_VOICE } from '../core/drumKits.js'
@@ -1305,22 +1307,7 @@ onMounted(refreshTree)
               <template #filters>
                 <!-- What the title strip used to carry, on the line it can
                      share with the filters rather than on one of its own. -->
-                <div class="jamin-map-aside">
-                  <span class="jamin-map-count-inline">
-                    {{ everything.toLocaleString() }} patterns
-                  </span>
-                  <span v-if="waiting" class="text-warning">
-                    {{ waiting }} part{{ waiting === 1 ? '' : 's' }} with no groove
-                  </span>
-                  <v-spacer />
-                  <v-btn icon size="x-small" variant="text" :disabled="!found"
-                         aria-label="A random groove from this list" @click="roll">
-                    <v-icon size="17">mdi-dice-5-outline</v-icon>
-                    <v-tooltip activator="parent" location="bottom">
-                      One of the {{ found.toLocaleString() }} the filters are showing
-                    </v-tooltip>
-                  </v-btn>
-                </div>
+
                 <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify"
                               clearable density="compact" variant="solo-filled" flat hide-details />
                 <v-select v-model="library" :items="libraries"
@@ -1426,6 +1413,29 @@ onMounted(refreshTree)
                              :class="{ 'is-hit': velocity > 0 }" />
                         </span>
                       </div>
+                    </div>
+
+                    <!--
+                      Hear it before deciding.
+
+                      Stopped, it plays at once. Rolling, it waits for the
+                      next bar line and the roll shows when that is, because
+                      a pattern dropped into the middle of a bar tells you
+                      nothing about whether it fits. @see store.js previewGroove
+                    -->
+                    <div class="d-flex align-center ga-2 mb-3">
+                      <v-btn size="small" variant="tonal" class="text-none"
+                             :prepend-icon="state.drumPreview.waiting
+                               ? 'mdi-timer-sand' : 'mdi-play'"
+                             @click="previewGroove(selected)">
+                        {{ state.drumPreview.waiting ? 'On the next bar' : 'Preview' }}
+                      </v-btn>
+                      <span v-if="state.drumPreview.waiting"
+                            class="text-caption text-medium-emphasis">
+                        bar {{ state.drumPreview.atBar }}
+                      </span>
+                      <v-btn v-if="state.drumPreview.waiting" size="x-small" variant="text"
+                             class="text-none" @click="cancelPreview">Cancel</v-btn>
                     </div>
 
                     <!-- The same pills as the list, because they are the same

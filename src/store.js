@@ -141,6 +141,8 @@ export const state = reactive({
   drumBusy: false,
   /** Why the last map could not be kept, if it could not. @see buildBulkGraph */
   graphTrouble: '',
+  /** A pattern waiting for the next bar line. @see previewGroove */
+  drumPreview: { waiting: false, atBar: 0, name: '' },
   /** The one-off counting of the filter dropdowns. @see prepareDrumFilters */
   drumPreparing: { running: false, name: '', done: 0, of: 0, rows: 0 },
   /**
@@ -3466,6 +3468,46 @@ async function readDrumFacets(setId) {
  * clips, and a wait nobody asked for looks like a hang -- the same rule the
  * index build follows. @see core/drumStore.js materialiseFacets
  */
+/**
+ * Everything a catalogue is asked to remember, built again from the rows.
+ *
+ * One button, because "the filter lists", "the map" and "the indexes" are
+ * three names for the same complaint: the catalogue has been imported and
+ * something about it is out of step. Somebody who has to work out which of
+ * the three to press has been handed jamin's internals as a quiz.
+ *
+ * In the order they depend on each other -- the indexes first, because the
+ * upgrade that creates them is also what creates the store the map lives
+ * in, and a catalogue imported before that store existed could not keep a
+ * map at all and said so for ever.
+ */
+export async function rebuildCatalogue() {
+  const progress = state.drumPreparing
+  Object.assign(progress, { running: true, name: 'Indexes', done: 0, of: 3, rows: 0 })
+  try {
+    await buildIndexes()
+
+    progress.name = 'Filter lists'
+    progress.done = 1
+    await materialiseFacets((said) => Object.assign(progress, said, { done: 1, of: 3 }))
+
+    progress.name = 'The map'
+    progress.done = 2
+    await forgetCatalogueGraph('drums')
+    await buildBulkGraph('drums', { onProgress: (n) => { progress.rows = n } })
+
+    toast(state.graphTrouble
+      ? `Rebuilt, but the map could not be kept — ${state.graphTrouble}`
+      : 'The catalogue is rebuilt')
+  } catch (error) {
+    noteError(error, 'rebuilding the catalogue')
+    toast('Could not rebuild the catalogue — the error log has the reason')
+  } finally {
+    progress.running = false
+    progress.name = ''
+  }
+}
+
 export async function prepareDrumFilters() {
   const progress = state.drumPreparing
   Object.assign(progress, { running: true, name: '', done: 0, of: 0, rows: 0 })
@@ -3605,6 +3647,44 @@ export function inboundKitFor(groove) {
  * browser it goes straight out of the engine, and inside the plugin it is
  * handed to the processor, which puts it in the next block the host collects.
  */
+/**
+ * Hear one pattern, now or on the next bar line.
+ *
+ * Stopped, there is nothing to be in time with and it plays at once.
+ * Rolling, it waits: a groove dropped into the middle of a bar tells you
+ * nothing about whether it fits the song, which is the only question
+ * previewing one is asked to answer. The roll shows the bar it is waiting
+ * for, so the wait is a countdown rather than a pause.
+ *
+ * It is the drum accent underneath -- the same "play this instead, once"
+ * the dice and the chart's own accent use -- because a second way of
+ * playing one pattern is a second thing to keep in step with the first.
+ * @see core/player.js armDrumAccent
+ */
+export function previewGroove(groove) {
+  if (!groove) return
+
+  player.armDrumAccent(groove)
+
+  if (!clock().running) {
+    // Nothing to be in time with. The player takes it on the next pulse it
+    // is given, and a stopped transport still ticks the drums along.
+    state.drumPreview = { waiting: false, atBar: 0, name: groove.name || '' }
+    player.rebuildDrums()
+    return
+  }
+
+  const perBar = (state.score && state.score.pulsesPerBar) || 96
+  const bar = Math.floor(player.position / perBar) + 2
+  state.drumPreview = { waiting: true, atBar: bar, name: groove.name || '' }
+}
+
+/** Never mind. @see previewGroove */
+export function cancelPreview() {
+  state.drumPreview = { waiting: false, atBar: 0, name: '' }
+  player.armDrumAccent(null)
+}
+
 export function tapDrum(note, velocity = 100) {
   if (!Number.isInteger(note) || note < 0 || note > 127) return
 
@@ -4002,6 +4082,19 @@ function syncDrumsPlaying() {
   const playing = state.playing
 
   playing.barPulses = state.score.pulsesPerBar || 96
+
+  /*
+   * A preview waiting for its bar line, arriving at it.
+   *
+   * The accent is already armed; what this watches for is the playhead
+   * reaching the bar it was promised, so the button stops saying "on the
+   * next bar" at the moment it stops being true.
+   */
+  const soon = state.drumPreview
+  if (soon.waiting) {
+    const at = Math.floor(player.position / playing.barPulses) + 1
+    if (at >= soon.atBar) state.drumPreview = { waiting: false, atBar: 0, name: soon.name }
+  }
 
   if (!live.running) {
     if (playing.section || playing.voices.length || playing.running) {

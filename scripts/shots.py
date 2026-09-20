@@ -104,6 +104,7 @@ def main():
         print(f"  {labelsStay(page)}")
         print(f"  {clickingStaysPut(page)}")
         print(f"  {glassIsGlass(page)}")
+        print(f"  {rightButtonPans(page)}")
         print(f"  {gridWorks(page)}")
         print(f"  {eachCatalogue(page)}\n")
 
@@ -552,6 +553,37 @@ def glassIsGlass(page):
       }, null, 0)
     }""")
     return f"glass  {said}"
+
+
+def rightButtonPans(page):
+    """The right button moves the view, wherever it is pressed.
+
+    On a map the size of a catalogue, panning is most of what the mouse is
+    for, and d3-zoom takes the left button only -- so moving meant finding a
+    patch of empty space to grab. This drags with the right button from on
+    top of a node, which is the case that had no way to pan at all.
+    """
+    places = page.evaluate("() => window.__jaminTreeProbe.places()")
+    inside = [one for one in places
+              if 300 < one["y"] < TALL - 200 and 200 < one["x"] < WIDE - 500]
+    if not inside:
+        return "FAIL nothing on the map to drag from"
+
+    was = page.evaluate("() => window.__jaminTreeProbe.camera()")
+    from_ = inside[0]
+    page.mouse.move(from_["x"], from_["y"])
+    page.mouse.down(button="right")
+    page.mouse.move(from_["x"] - 140, from_["y"] - 90, steps=8)
+    page.mouse.up(button="right")
+    page.wait_for_timeout(500)
+    now = page.evaluate("() => window.__jaminTreeProbe.camera()")
+
+    if now["x"] == was["x"] and now["y"] == was["y"]:
+        return f"FAIL the right button did not pan ({was} unchanged)"
+    if now["k"] != was["k"]:
+        return f"FAIL panning changed the zoom: {was['k']} -> {now['k']}"
+    return (f"ok   the right button pans from on top of a node "
+            f"({was['x']},{was['y']} -> {now['x']},{now['y']})")
 
 
 def eachCatalogue(page):

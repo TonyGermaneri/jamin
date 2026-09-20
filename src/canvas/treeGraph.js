@@ -175,6 +175,18 @@ export class TreeGraph {
       // be picked up at all.
       .filter((event) => {
         if (event.type === 'wheel') return true
+        /*
+         * Either button moves the view.
+         *
+         * d3-zoom takes the left one only, and on a map the size of a
+         * catalogue panning is most of what the mouse is for -- having to
+         * find a patch of empty space to grab is a thing you notice every
+         * few seconds. The right button always pans, wherever it is
+         * pressed, so there is always a way to move without hunting for
+         * one; the left button still opens a node, so it only pans off a
+         * node. @see onDown, which claims the left button on a node.
+         */
+        if (event.button === 2) return true
         if (event.button) return false
         return !this.spotOf(event)
       })
@@ -184,6 +196,7 @@ export class TreeGraph {
     /** What is being dragged, and everything that came with it. */
     this.dragging = null
     this.canvas.addEventListener('mousedown', this.onDown)
+    this.canvas.addEventListener('contextmenu', this.onMenu)
     window.addEventListener('mousemove', this.onDrag)
     window.addEventListener('mouseup', this.onUp)
 
@@ -700,7 +713,8 @@ export class TreeGraph {
    * left running so whatever is in the way gets out of it.
    */
   onDown = (event) => {
-    if (event.button) return
+    // Left only: the right one is panning, even over a node.
+    if (event.button !== 0) return
     const found = this.spotOf(event)
     if (!found) return
 
@@ -806,6 +820,14 @@ export class TreeGraph {
     // Swallowed rather than acted on a third time.
     event.preventDefault()
   }
+
+  /*
+   * No menu on the map.
+   *
+   * The right button pans, and a browser that opens its own menu halfway
+   * through a drag leaves the drag stuck to the pointer.
+   */
+  onMenu = (event) => { event.preventDefault() }
 
   /* ---------------- painting it ---------------- */
 
@@ -957,6 +979,7 @@ export class TreeGraph {
     this.canvas.removeEventListener('click', this.onTap)
     this.canvas.removeEventListener('dblclick', this.onDoubleTap)
     this.canvas.removeEventListener('mousedown', this.onDown)
+    this.canvas.removeEventListener('contextmenu', this.onMenu)
     window.removeEventListener('mousemove', this.onDrag)
     window.removeEventListener('mouseup', this.onUp)
     select(this.canvas).on('.zoom', null)

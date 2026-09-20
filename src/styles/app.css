@@ -1158,23 +1158,6 @@ body,
   font-size: 11px;
 }
 
-/* The line the title strip used to be. Shares the filter grid's full width
-   so the count sits left and the dice right, on a row that was already
-   there. */
-.jamin-map-aside {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 11px;
-  color: rgba(var(--v-theme-on-surface), 0.66);
-  padding: 2px 2px 0;
-}
-
-.jamin-map-count-inline {
-  font-weight: 600;
-  color: rgba(var(--v-theme-on-surface), 0.85);
-}
 
 /* The one control in the filter row that is not a field. Squeezed to the
    same height so it sits in the row rather than setting its height. */
