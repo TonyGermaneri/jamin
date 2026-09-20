@@ -12,6 +12,7 @@ import DrumKit from './DrumKit.vue'
 import { state, engine, applyTheme, resetSettings, applyPortBindings, forgetErrors, toast } from '../store.js'
 import { THEMES, SHADER_DEFAULTS } from '../core/themes.js'
 import { defaultSettings } from '../core/settings.js'
+import { NODE_SHAPES } from '../canvas/nodeShapes.js'
 import { loadChordDictionary, searchChords } from '../core/chordDictionary.js'
 import { pcName } from '../core/chordParser.js'
 
@@ -641,6 +642,27 @@ async function retryMidi() {
                   ]"
                   label="Over each node" density="compact" hide-details class="mb-3"
                 />
+              </v-col>
+
+              <!-- A groove loops for a section and a fill happens once at the
+                   end of one. They were the same dot, so the only way to tell
+                   them apart on the map was to click one. Folders stay circles
+                   whatever these say: a folder is neither. -->
+              <v-col cols="12" md="6">
+                <v-select
+                  v-model="map.grooveShape" :items="NODE_SHAPES"
+                  label="Groove node shape" density="compact" hide-details class="mb-3"
+                />
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-select
+                  v-model="map.fillShape" :items="NODE_SHAPES"
+                  label="Fill node shape" density="compact" hide-details
+                />
+                <div class="text-caption text-medium-emphasis mb-3">
+                  Every shape covers the same area as the circle it replaces, so shape says
+                  what a clip is and size still says how much is under it.
+                </div>
               </v-col>
 
               <v-col

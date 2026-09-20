@@ -45,6 +45,9 @@ SUITES = [
     # The catalogue as the tree it already is, which is what replaced the
     # co-occurrence hairball.
     (["src/core/pathTree.js"], "tests/pathTree.test.js"),
+    # What a node is drawn as, and whether the shapes are the same size as
+    # each other -- on this map a node's size is a number, not a flourish.
+    (["src/canvas/nodeShapes.js"], "tests/nodeShapes.test.js"),
     (["src/core/chordParser.js", "src/core/score.js", "src/core/chartEdit.js",
       "src/core/chordPicker.js"], "tests/chartEdit.test.js"),
     (["src/core/chordParser.js", "src/core/chordDetect.js"], "tests/chordDetect.test.js"),

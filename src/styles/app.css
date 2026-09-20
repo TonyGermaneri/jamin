@@ -1320,13 +1320,34 @@ body,
   z-index: 2;
 }
 
-/* A pattern's grid, small enough to sit in the map's aside. The full keyboard,
-   the mutes and the transport belong beside the list, where somebody is working
-   on a pattern rather than looking for one. */
+/* A pattern's grid, small enough to sit in the map's aside. The full keyboard
+   and the mutes belong beside the list, where somebody is working on a pattern
+   rather than looking for one; the playhead is here too, because the preview
+   button is here and a preview you cannot see the position of is a noise. */
 .jamin-map-roll {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 1px;
+}
+
+/* Where in the pattern the preview has got to. Over the cells only, which
+   start after the 62px of names and the 6px gap. @see DrumBook transport */
+.jamin-map-roll-head {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: rgb(var(--v-theme-warning));
+  opacity: 0.85;
+  pointer-events: none;
+  transition: none;
+}
+
+.jamin-map-roll-head.is-gliding {
+  transition: left 120ms linear;
 }
 
 .jamin-map-roll-row {

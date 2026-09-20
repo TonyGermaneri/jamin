@@ -188,4 +188,44 @@ check('a shelf counts what is on it',
 check('without the cap it is a hairball',
       fanOf(buildTree(lumpy, { pathOf: (one) => one.path, mostChildren: 0 })), 900)
 
+/* ---------------- a fill is not a groove -------------------------------- */
+/*
+ * The map used to draw both as the same dot, so the only way to tell a fill
+ * from a groove was to click it. The corpora say which -- every row carries a
+ * kind -- so the leaf is marked from that and never from its name.
+ *
+ * Only `true` is written. Three quarters of a million clips are mostly
+ * grooves, and `kind: 'beat'` on every one of them would be most of a
+ * megabyte of stored map saying the default out loud.
+ */
+const mixed = buildTree([
+  { path: 'Pack/Rock/groove 1.mid', kind: 'beat' },
+  { path: 'Pack/Rock/fill 1.mid', kind: 'fill' },
+  { path: 'Pack/Rock/groove 2.mid', kind: 'beat' },
+], { fillOf: (one) => one.kind === 'fill' })
+
+const marked = mixed.nodes.filter((one) => one.fill)
+check('the fill is marked and nothing else is', marked.map((one) => one.label), ['fill 1.mid'])
+check('a groove carries no mark at all',
+      mixed.nodes.filter((one) => one.leaf).every((one) => one.fill === true || !('fill' in one)),
+      true)
+check('and a folder is never marked',
+      mixed.nodes.filter((one) => !one.leaf).some((one) => one.fill), false)
+
+// Without the option nothing is marked, which is what the other two
+// catalogues get: a phrase is not a groove or a fill.
+check('no marks when nothing says which is which',
+      buildTree([{ path: 'a/b.mid', kind: 'fill' }]).nodes.some((one) => one.fill), false)
+
+// A shelved catalogue keeps them. The shelves are rebuilt from the nodes, and
+// an earlier version of that rebuild dropped everything but label and depth.
+const shelved = buildTree(
+  Array.from({ length: 300 }, (unused, n) => ({
+    path: `one/clip ${String(n).padStart(4, '0')}.mid`,
+    kind: n % 3 ? 'beat' : 'fill',
+  })),
+  { fillOf: (one) => one.kind === 'fill', mostChildren: 16 })
+check('shelving does not lose the marks',
+      shelved.nodes.filter((one) => one.fill).length, 100)
+
 console.log(failed ? `path-tree: ${failed} FAILED` : 'path-tree: all checks passed')

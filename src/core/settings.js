@@ -274,6 +274,16 @@ export function defaultSettings() {
         reach: 1,
         /** none | name | count -- what the label over a node says. */
         nodeInfo: 'count',
+        /**
+         * What a clip is drawn as, by what it is.
+         *
+         * A groove loops for a section and a fill happens once at the end of
+         * one. On a map of three quarters of a million clips the only way to
+         * tell which was which was to click it. @see canvas/nodeShapes.js
+         * for what the names mean.
+         */
+        grooveShape: 'circle',
+        fillShape: 'square',
       },
     },
 

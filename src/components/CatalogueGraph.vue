@@ -279,6 +279,15 @@ function build() {
       // grew and one that was rebuilt around the thing you clicked.
       camera: () => ({ x: Math.round(graph.at.x), y: Math.round(graph.at.y),
         k: Math.round(graph.at.k * 1000) / 1000 }),
+      // What each node is being drawn as. A fill and a groove are different
+      // things and were the same dot; nothing in a screenshot can tell a
+      // square from a circle at four pixels across, and nothing else can say
+      // whether the shape followed the clip or just the setting.
+      // @see canvas/nodeShapes.js, scripts/preview_check.py
+      shapes: () => graph.drawn.map((one) => ({
+        label: one.label, shape: one.shape, depth: one.depth, shut: Boolean(one.shut),
+        leaf: !graph.hasChildren(one.at),
+      })),
     }
   }
 

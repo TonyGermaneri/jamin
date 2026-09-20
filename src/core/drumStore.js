@@ -1710,9 +1710,11 @@ export async function everyPath(onBatch, batchSize = 20000) {
         return
       }
       const row = cursor.value
-      // The path and the library it is in. The library is the top level of the
-      // tree and the path hangs under it. @see core/pathTree.js
-      batch.push([row.p || row.n || '', row.s || ''])
+      // The path, the library it is in, and whether it is a fill. The library
+      // is the top level of the tree and the path hangs under it; the kind
+      // decides what shape the clip is drawn as, and is one character.
+      // @see core/pathTree.js
+      batch.push([row.p || row.n || '', row.s || '', row.k === 'fill' ? 'fill' : ''])
       seen++
 
       if (batch.length >= batchSize) {

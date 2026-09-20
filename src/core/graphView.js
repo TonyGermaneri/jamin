@@ -60,6 +60,15 @@ export const ADAPTERS = {
     label: 'Drums',
     /** Library first, then the path inside it. */
     treePath: (one) => [one.setId || 'Built in', one.path || one.name || ''].filter(Boolean).join('/'),
+    /*
+     * A fill is drawn differently from a groove, because it is a different
+     * thing: a groove loops for a section and a fill happens once, at the
+     * end of one. The corpora say which -- every row carries `kind` -- so
+     * this is read rather than inferred. Only drums have the distinction;
+     * the other catalogues leave it out and get one shape.
+     * @see canvas/treeGraph.js, core/pathTree.js
+     */
+    isFill: (one) => one.kind === 'fill',
     /** What a "sort by" choice means for this catalogue. */
     facet: (one, by) => {
       if (by === 'genre') return one.genre || ''

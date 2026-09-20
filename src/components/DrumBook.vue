@@ -419,9 +419,13 @@ const sorts = computed(() => (ADAPTERS.drums.sorts || []))
 
 /** `missing`, `stale`, or empty when the map is in step. @see store.graphState */
 const mapIsOld = ref('')
+/** Why it is stale: `changed` (the catalogue moved) or `shape` (the map can
+    hold something the drawn one cannot). @see store.graphState */
+const mapWhy = ref('')
 
 async function drawTheMap() {
   mapIsOld.value = ''
+  mapWhy.value = ''
   building.value = true
   drawn.value = 0
   try {
@@ -856,7 +860,18 @@ const preview = computed(() => {
 const transport = computed(() => {
   const roll = preview.value
   const playing = state.playing
-  if (!roll || !playing.running || !roll.lengthPulses) return null
+  if (!roll) return null
+
+  /*
+   * A preview with no transport under it moves the line itself.
+   *
+   * Stopped, there is no song position to take modulo anything: the store
+   * plays the pattern off a timer and reports how far through the pass it
+   * is, which is already the fraction this wants. @see store.js playOwnPreview
+   */
+  if (state.drumPreview.at !== null) return state.drumPreview.at
+
+  if (!playing.running || !roll.lengthPulses) return null
 
   const bar = playing.barPulses || 0
   const step = bar > 0
@@ -882,7 +897,11 @@ const transport = computed(() => {
  */
 const gliding = ref(false)
 watch(transport, (now, before) => {
-  gliding.value = now !== null && before !== null && now >= before
+  // Not while we are driving it ourselves: a preview with no transport moves
+  // the line every thirty milliseconds, and easing that over a hundred and
+  // twenty leaves it permanently behind the drum it is pointing at.
+  gliding.value = state.drumPreview.at === null
+    && now !== null && before !== null && now >= before
 })
 
 
@@ -1150,6 +1169,7 @@ async function refreshTree() {
     // Small enough that drawing it is quicker than reading the question.
     if (said.quick) { await drawTheMap(); return }
     mapIsOld.value = said.how
+    mapWhy.value = said.why || ''
     return
   }
 
@@ -1350,6 +1370,9 @@ onMounted(refreshTree)
                          class="mb-3">
                   <div class="text-body-2 mb-2">
                     <span v-if="mapIsOld === 'missing'">There is no map of this catalogue yet.</span>
+                    <span v-else-if="mapWhy === 'shape'">This map was drawn before jamin could
+                      tell a fill from a groove, so every clip on it is drawn as a groove.
+                      Redrawing it fixes that; nothing else about it is out of date.</span>
                     <span v-else>The map is out of date — the catalogue has changed since
                       it was drawn.</span>
                   </div>
@@ -1413,6 +1436,14 @@ onMounted(refreshTree)
                              :class="{ 'is-hit': velocity > 0 }" />
                         </span>
                       </div>
+                      <!-- One line down the whole grid rather than one per row:
+                           it says where in the pattern you are, which is a
+                           property of the pattern and not of the hi-hat. The
+                           names take a fixed 62px and the gap 6, so the cells
+                           start 68 in. @see transport -->
+                      <b v-if="transport !== null" class="jamin-map-roll-head"
+                         :class="{ 'is-gliding': gliding }"
+                         :style="{ left: `calc(68px + (100% - 68px) * ${transport})` }" />
                     </div>
 
                     <!--
@@ -1425,10 +1456,12 @@ onMounted(refreshTree)
                     -->
                     <div class="d-flex align-center ga-2 mb-3">
                       <v-btn size="small" variant="tonal" class="text-none"
-                             :prepend-icon="state.drumPreview.waiting
-                               ? 'mdi-timer-sand' : 'mdi-play'"
-                             @click="previewGroove(selected)">
-                        {{ state.drumPreview.waiting ? 'On the next bar' : 'Preview' }}
+                             :prepend-icon="state.drumPreview.waiting ? 'mdi-timer-sand'
+                               : state.drumPreview.at !== null ? 'mdi-stop' : 'mdi-play'"
+                             @click="state.drumPreview.at !== null
+                               ? cancelPreview() : previewGroove(selected)">
+                        {{ state.drumPreview.waiting ? 'On the next bar'
+                          : state.drumPreview.at !== null ? 'Playing' : 'Preview' }}
                       </v-btn>
                       <span v-if="state.drumPreview.waiting"
                             class="text-caption text-medium-emphasis">

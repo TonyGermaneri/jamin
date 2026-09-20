@@ -41,7 +41,7 @@ import { ADAPTERS } from './core/graphView.js'
 import { realizeChord } from './core/voicing.js'
 import { scoreOptions } from './core/compile.js'
 import { Player } from './core/player.js'
-import { parseScore } from './core/score.js'
+import { parseScore, PPQN } from './core/score.js'
 import {
   loadSettings,
   saveSettings,
@@ -141,8 +141,11 @@ export const state = reactive({
   drumBusy: false,
   /** Why the last map could not be kept, if it could not. @see buildBulkGraph */
   graphTrouble: '',
-  /** A pattern waiting for the next bar line. @see previewGroove */
-  drumPreview: { waiting: false, atBar: 0, name: '' },
+  /**
+   * A pattern being previewed: waiting for the next bar line, or playing on
+   * its own with `at` a fraction across it. @see previewGroove
+   */
+  drumPreview: { waiting: false, atBar: 0, name: '', at: null },
   /** The one-off counting of the filter dropdowns. @see prepareDrumFilters */
   drumPreparing: { running: false, name: '', done: 0, of: 0, rows: 0 },
   /**
@@ -3104,11 +3107,21 @@ async function shelveTheCorpus(list) {
  * underneath jamin with the count unchanged, and nothing short of reading
  * the whole thing would.
  */
+/**
+ * What the stored map holds, as against what it used to hold.
+ *
+ * Bumped when a map gains something a drawn one cannot have: the fill marks
+ * came in here, and a map drawn before them would have drawn every fill as a
+ * groove with nothing saying why. An old map reads as stale, which offers a
+ * rebuild rather than forcing one. @see graphState
+ */
+const MAP_SHAPE = 2
+
 export async function catalogueStamp(which) {
   if (which === 'progressions') {
-    return { clips: await countProgressions(), sets: 1 }
+    return { clips: await countProgressions(), sets: 1, shape: MAP_SHAPE }
   }
-  return { clips: await countGrooves(null), sets: state.drumSets.length }
+  return { clips: await countGrooves(null), sets: state.drumSets.length, shape: MAP_SHAPE }
 }
 
 /**
@@ -3126,8 +3139,12 @@ export async function graphState(which) {
   const now = await catalogueStamp(which)
   const held = await readGraph(which)
   const then = (held && held.stamp) || {}
+  const same = then.clips === now.clips && then.sets === now.sets
   const how = !held || !held.nodes ? 'missing'
-    : (then.clips === now.clips && then.sets === now.sets) ? 'current' : 'stale'
+    : (same && then.shape === now.shape) ? 'current' : 'stale'
+  // Two quite different reasons to be stale, and telling somebody the
+  // catalogue has changed when it has not is a lie they cannot act on.
+  const why = how !== 'stale' ? '' : same ? 'shape' : 'changed'
 
   /*
    * And whether drawing it would be a wait worth asking about.
@@ -3141,7 +3158,7 @@ export async function graphState(which) {
    * Twenty thousand clips is about a fifth of a second of buildTree, which
    * is measured rather than guessed. @see scripts/graph_check.py
    */
-  return { how, clips: now.clips, quick: now.clips <= 20000 }
+  return { how, why, clips: now.clips, quick: now.clips <= 20000 }
 }
 
 export async function buildBulkGraph(which, { onProgress = null } = {}) {
@@ -3158,9 +3175,10 @@ export async function buildBulkGraph(which, { onProgress = null } = {}) {
   if (!rows.length) return null
 
   const tree = buildTree(rows, {
-    // `[text, group]` from the walker. The group is the first level and the
-    // rest of the path hangs under it.
+    // `[text, group, kind]` from the walker. The group is the first level and
+    // the rest of the path hangs under it.
     pathOf: (one) => (one[1] ? `${labelFor(which, one[1])}/${one[0]}` : one[0]),
+    fillOf: which === 'drums' ? (one) => one[2] === 'fill' : null,
   })
 
   const graph = {
@@ -3399,6 +3417,7 @@ export function treeOf(which, rows, sortBy = '') {
   const tree = buildTree(rows, {
     pathOf: (one) => adapter.treePath(one),
     facetOf: sortBy ? (one) => adapter.facet(one, sortBy) : null,
+    fillOf: adapter.isFill || null,
   })
   const kept = timings.treeOf || (timings.treeOf = { calls: 0, ms: 0 })
   kept.calls++
@@ -3664,24 +3683,113 @@ export function inboundKitFor(groove) {
 export function previewGroove(groove) {
   if (!groove) return
 
-  player.armDrumAccent(groove)
+  stopOwnPreview()
 
   if (!clock().running) {
-    // Nothing to be in time with. The player takes it on the next pulse it
-    // is given, and a stopped transport still ticks the drums along.
-    state.drumPreview = { waiting: false, atBar: 0, name: groove.name || '' }
-    player.rebuildDrums()
+    /*
+     * Nothing is running, so nothing will play it.
+     *
+     * This used to arm the accent and rebuild the drum track, on the
+     * reasoning that a stopped transport still ticks the drums along. It
+     * does not. `flushDrums` is called from `tick`, `tick` is called from
+     * the clock, and a stopped clock does not tick -- so the button armed a
+     * pattern for a section that would be reached the next time somebody
+     * pressed play, and in the meantime made no sound at all. Which is the
+     * one thing a button marked Preview has to do.
+     *
+     * So when there is no transport to be in time with, this plays the
+     * pattern itself: one pass, in wall-clock time, out of the same port
+     * and channel the drums use. @see playOwnPreview
+     */
+    state.drumPreview = { waiting: false, atBar: 0, name: groove.name || '', at: 0 }
+    playOwnPreview(groove)
     return
   }
 
+  player.armDrumAccent(groove)
   const perBar = (state.score && state.score.pulsesPerBar) || 96
   const bar = Math.floor(player.position / perBar) + 2
-  state.drumPreview = { waiting: true, atBar: bar, name: groove.name || '' }
+  state.drumPreview = { waiting: true, atBar: bar, name: groove.name || '', at: null }
+}
+
+/**
+ * A pattern played by nothing but a timer.
+ *
+ * Every hit gets a `setTimeout` at the millisecond it falls on, worked out
+ * from the tempo the clock last reported. That is coarse -- a browser timer
+ * is good to a handful of milliseconds and a drum machine is good to a
+ * fraction of one -- and it is the right coarseness for this: the question
+ * a preview answers is "what is in this pattern", not "does it sit in the
+ * pocket", and the pocket is what the transport is for.
+ *
+ * Mapped exactly as the player would map it, so what you hear stopped is
+ * what you will hear rolling: the library's own numbering read in, the
+ * kit on this track written out, and any drum taken out of the song left
+ * out of the preview too.
+ */
+const ownPreview = { timers: [], frame: 0 }
+
+async function playOwnPreview(groove) {
+  const whole = await notesFor(groove)
+  // Something else was picked, or cancelled, while the file was being read.
+  if (state.drumPreview.at === null) return
+  if (!whole || !(whole.notes || []).length) {
+    toast(whole && whole.unreadable ? 'Its notes could not be read' : 'Nothing in that one to play')
+    state.drumPreview = { waiting: false, atBar: 0, name: '', at: null }
+    return
+  }
+
+  const played = mapDrumNotes(whole.notes, kitMapFor(), inboundMapFor(whole) || undefined)
+  const muted = player.mutedNotes || new Set()
+  const bpm = Math.round(clock().bpm) || state.score.bpm || 120
+  const perPulse = 60000 / bpm / PPQN
+  const length = Math.max(1, whole.lengthPulses || PPQN * 4) * perPulse
+
+  for (const hit of played) {
+    if (muted.has(hit.note)) continue
+    const when = Math.max(0, hit.at * perPulse)
+    ownPreview.timers.push(setTimeout(() => tapDrum(hit.note, hit.velocity), when))
+  }
+
+  /*
+   * The playhead over the roll, for as long as the pass lasts.
+   *
+   * Nothing else is moving it: `state.playing.pulse` comes off the transport,
+   * and there is no transport.
+   *
+   * A timer rather than `requestAnimationFrame`, which is what this was and
+   * which stopped after four frames. An animation frame is a frame -- it is
+   * called when the page is *painting*, and a page whose only reason to paint
+   * is the line this callback moves can stop painting and take the line with
+   * it. Measured: the fraction froze at 0.13 while the drums went on playing
+   * to the end. Thirty milliseconds is smoother than the eight samples a
+   * second the transport gives the same line, and it arrives whether or not
+   * anything happens to be on screen.
+   */
+  const began = performance.now()
+  ownPreview.frame = setInterval(() => {
+    const into = (performance.now() - began) / length
+    if (into >= 1 || state.drumPreview.at === null) {
+      stopOwnPreview()
+      state.drumPreview = { waiting: false, atBar: 0, name: '', at: null }
+      return
+    }
+    state.drumPreview.at = into
+  }, 30)
+}
+
+/** Silence a preview of our own, wherever it had got to. */
+function stopOwnPreview() {
+  for (const timer of ownPreview.timers) clearTimeout(timer)
+  ownPreview.timers = []
+  if (ownPreview.frame) clearInterval(ownPreview.frame)
+  ownPreview.frame = 0
 }
 
 /** Never mind. @see previewGroove */
 export function cancelPreview() {
-  state.drumPreview = { waiting: false, atBar: 0, name: '' }
+  stopOwnPreview()
+  state.drumPreview = { waiting: false, atBar: 0, name: '', at: null }
   player.armDrumAccent(null)
 }
 
@@ -5055,5 +5163,12 @@ if (typeof window !== 'undefined') {
     grooveForNode,
     countGrooves,
     streamDrumRows,
+    // Previewing one pattern with no transport under it is the one drum path
+    // with no clock in it, so there is nothing for a harness to step. It gets
+    // the call and the engine the notes leave by. @see scripts/preview_check.py
+    engine,
+    previewGroove,
+    cancelPreview,
+    notesFor,
   }
 }

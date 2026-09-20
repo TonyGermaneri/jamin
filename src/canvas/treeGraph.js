@@ -27,6 +27,7 @@
 import { select } from 'd3-selection'
 import { zoom, zoomIdentity } from 'd3-zoom'
 import { quadtree } from 'd3-quadtree'
+import { traceShape } from './nodeShapes.js'
 import {
   forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY,
 } from 'd3-force'
@@ -39,6 +40,7 @@ const REACH = 90
 
 /** The heat a bloom starts with. Enough to move, not enough to throw. */
 const BLOOM = 0.7
+
 
 /** `#rgb` or `#rrggbb` to three numbers in 0..255, or the fallback. */
 function readHex(css, fallback) {
@@ -151,6 +153,11 @@ export class TreeGraph {
       /** How hard nodes push apart, and how far an edge wants to be. */
       repel: 1,
       reach: 1,
+      /** What a clip is drawn as, by what it is. Branches are always
+          circles: a folder is not a groove or a fill, and giving it one of
+          their shapes would say it was. @see canvas/nodeShapes.js */
+      grooveShape: 'circle',
+      fillShape: 'square',
     }
     this.palette = []
     this.hovered = -1
@@ -449,6 +456,7 @@ export class TreeGraph {
       leaf: node.leaf,
       family: this.familyOf(at),
       r: this.radiusOf(node),
+      shape: this.shapeOf(node),
       colour: this.colourOf(node, this.familyOf(at)),
       x: (up ? up.x : 0) + Math.cos(angle) * push,
       y: (up ? up.y : 0) + Math.sin(angle) * push,
@@ -459,6 +467,19 @@ export class TreeGraph {
   radiusOf(node) {
     const where = Math.log1p(Math.max(1, node.clips)) / Math.max(1e-6, this.biggest)
     return Math.max(1.5, (2 + where * 8) * (this.look.nodeSize || 1))
+  }
+
+  /**
+   * What this node is drawn as.
+   *
+   * Only a clip has a kind, and only the drum catalogue records one, so
+   * everything else -- folders, shelves, phrases, progressions -- is a
+   * circle. `fill` is put on the leaf when the map is drawn, off the row's
+   * own field; nothing here guesses from a name. @see core/pathTree.js
+   */
+  shapeOf(node) {
+    if (!node || !node.leaf) return 'circle'
+    return (node.fill ? this.look.fillShape : this.look.grooveShape) || 'circle'
   }
 
   /**
@@ -868,6 +889,7 @@ export class TreeGraph {
 
     for (const seat of this.live.values()) {
       seat.r = this.radiusOf(this.source.nodes[seat.at])
+      seat.shape = this.shapeOf(this.source.nodes[seat.at])
       seat.colour = this.colourOf(this.source.nodes[seat.at], seat.family)
     }
     this.paintSoon()
@@ -935,7 +957,7 @@ export class TreeGraph {
       ctx.globalAlpha = 0.2 * Math.min(1, bloom)
       for (const one of this.drawn) {
         ctx.beginPath()
-        ctx.arc(one.x, one.y, one.r * (1 + bloom * 1.5), 0, Math.PI * 2)
+        traceShape(ctx, one.shape, one.x, one.y, one.r * (1 + bloom * 1.5))
         ctx.fillStyle = one.colour
         ctx.fill()
       }
@@ -945,7 +967,7 @@ export class TreeGraph {
 
     for (const one of this.drawn) {
       ctx.beginPath()
-      ctx.arc(one.x, one.y, one.r, 0, Math.PI * 2)
+      traceShape(ctx, one.shape, one.x, one.y, one.r)
       ctx.fillStyle = one.colour
       ctx.fill()
       // A node with more inside it says so, rather than looking like a leaf.
@@ -961,7 +983,7 @@ export class TreeGraph {
       const seat = this.live.get(at)
       if (!seat) continue
       ctx.beginPath()
-      ctx.arc(seat.x, seat.y, seat.r + 3.5 / k, 0, Math.PI * 2)
+      traceShape(ctx, seat.shape, seat.x, seat.y, seat.r + 3.5 / k)
       ctx.strokeStyle = colour
       ctx.lineWidth = 1.8 / k
       ctx.stroke()

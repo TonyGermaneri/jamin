@@ -39,6 +39,15 @@ const DOWN = '\u0000'
 export function buildTree(clips, {
   pathOf = (one) => one.path,
   facetOf = null,
+  /**
+   * Whether a clip is a fill rather than a groove, where that means anything.
+   *
+   * Only the answer `true` is recorded, as `fill` on the leaf. A catalogue of
+   * three quarters of a million clips is mostly grooves, and writing
+   * `kind: 'beat'` onto every one of them would be most of a megabyte of the
+   * stored map saying the default out loud. @see canvas/nodeShapes.js
+   */
+  fillOf = null,
   mostNodes = 1200000,
   mostChildren = 64,
 } = {}) {
@@ -99,6 +108,7 @@ export function buildTree(clips, {
         ? fresh(levels[depth], parent, depth)
         : nodeFor(prefix, levels[depth], parent, depth)
       if (id < 0) break
+      if (last && fillOf && fillOf(clip)) nodes[id].fill = true
 
       // Every node counts every clip beneath it, which is what makes a folder
       // worth drawing at the size it is.
