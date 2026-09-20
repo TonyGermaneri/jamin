@@ -103,6 +103,7 @@ def main():
         print(f"  {openingStaysPut(page)}")
         print(f"  {labelsStay(page)}")
         print(f"  {clickingStaysPut(page)}")
+        print(f"  {gridWorks(page)}")
         print(f"  {eachCatalogue(page)}\n")
 
         for name, prepare in VIEWS:
@@ -427,6 +428,82 @@ def labelsStay(page):
     if later < first * 0.9:
         return f"FAIL the names faded away: {first} -> {later} over {showing} nodes"
     return f"ok   the names stay: {first} -> {later} after nine seconds"
+
+
+def gridWorks(page):
+    """The list, as a canvas grid: does it hold everything, and can it be driven?
+
+    A canvas grid is one element with a picture in it, so none of the usual
+    ways of asking are available -- there are no rows in the DOM to count and
+    no row to click with a selector. What there is is the component's own
+    API, which is what the application talks to as well.
+    """
+    page.evaluate("""() => {
+      const app = window.__jaminApp
+      app.state.settings.graph.drums = false
+      app.state.ui.book = null
+      app.openBook('drums')
+    }""")
+    page.wait_for_timeout(2500)
+
+    found = page.evaluate("""() => {
+      const grid = document.querySelector('canvas-datagrid')
+      if (!grid) return null
+      return { rows: grid.data.length, columns: grid.schema.length }
+    }""")
+    if not found:
+        return "FAIL there is no grid on the page"
+    if not found["rows"]:
+        return "FAIL the grid is empty"
+
+    # Every row, not a page of ten -- which is the whole point of the change.
+    total = page.evaluate("() => window.__jaminBookProbe.found()")
+    if found["rows"] < min(total, 100):
+        return f"FAIL the grid holds {found['rows']} of {total}"
+
+    box = page.locator('canvas-datagrid').bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+
+    before = page.evaluate("() => document.querySelector('canvas-datagrid').scrollTop")
+    page.mouse.wheel(0, 1200)
+    page.wait_for_timeout(500)
+    after = page.evaluate("() => document.querySelector('canvas-datagrid').scrollTop")
+    if after <= before:
+        said = page.evaluate("""() => {
+          const g = document.querySelector('canvas-datagrid')
+          const r = g.getBoundingClientRect()
+          return JSON.stringify({
+            top: g.scrollTop, height: g.scrollHeight,
+            box: [Math.round(r.width), Math.round(r.height)],
+            rows: g.data.length,
+          })
+        }""")
+        return f"FAIL the wheel did not scroll it ({before} -> {after}) {said}"
+
+    # And the keyboard, which is how somebody walks a list without leaving it.
+    page.evaluate("""() => {
+      const grid = document.querySelector('canvas-datagrid')
+      grid.focus()
+      grid.setActiveCell(0, 0)
+    }""")
+    # One press at a time, each read back. Pressing twice and checking for
+    # row two assumes both land in the same frame, which is a fact about the
+    # harness rather than about the grid -- the first one goes into
+    # establishing focus.
+    rowAt = lambda: page.evaluate(
+        "() => document.querySelector('canvas-datagrid').activeCell.rowIndex")
+    page.wait_for_timeout(200)
+    walked = [rowAt()]
+    for _ in range(3):
+        page.keyboard.press("ArrowDown")
+        page.wait_for_timeout(200)
+        walked.append(rowAt())
+
+    if walked[-1] <= walked[0]:
+        return f"FAIL the arrows did not move through the list: {walked}"
+
+    return (f"ok   the grid holds all {found['rows']:,} rows in {found['columns']} columns, "
+            f"and the wheel and arrows drive it")
 
 
 def eachCatalogue(page):

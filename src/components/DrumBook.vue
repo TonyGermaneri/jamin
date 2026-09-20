@@ -43,6 +43,8 @@ import {
   graphState,
   treeOf,
   drumRowsForGraph,
+  streamDrumRows,
+  grooveAtIndex,
   aimedElsewhere,
   instanceLabel,
   setDrumVoiceMuted,
@@ -55,6 +57,7 @@ import { summarizeGroove } from '../core/drums.js'
 import { DRUM_VOICES, kitById, gmName, TD11_TO_VOICE } from '../core/drumKits.js'
 import InfoTip from './InfoTip.vue'
 import CatalogueMap from './CatalogueMap.vue'
+import DataGrid from './DataGrid.vue'
 import { vDragMidi } from '../core/dragOut.js'
 import { useRowsThatFit } from '../core/fitRows.js'
 import { everyTag } from '../core/drumTags.js'
@@ -92,6 +95,27 @@ const filtersOpen = ref(
 const selected = ref(null)
 const page = ref(1)
 const PER_PAGE = 10
+
+/**
+ * What the grid shows, and how wide.
+ *
+ * The same facts the list carried, in columns rather than stacked -- which
+ * is the point of a grid: forty rows of name-over-summary is forty rows you
+ * read one at a time, and forty rows of aligned columns is a thing you scan.
+ */
+const gridColumns = [
+  { name: 'name', title: 'Pattern', width: 300 },
+  { name: 'kind', title: 'Kind', width: 70 },
+  { name: 'genre', title: 'Genre', width: 130 },
+  { name: 'bars', title: 'Bars', width: 56 },
+  { name: 'timeSignature', title: 'Time', width: 60 },
+  { name: 'bpm', title: 'BPM', width: 60 },
+  { name: 'feel', title: 'Feel', width: 110 },
+  { name: 'surface', title: 'Hands on', width: 120 },
+  { name: 'part', title: 'Part', width: 100 },
+  { name: 'era', title: 'Era', width: 80 },
+  { name: 'folder', title: 'Shelf', width: 320 },
+]
 
 const listEl = ref(null)
 
@@ -577,7 +601,51 @@ const signatures = computed(() => fromFacet(facets.value.signatures, 'Any time s
 const found = computed(() => state.drumSearch.total)
 
 /** The page, exactly as the database sent it. */
-const list = computed(() => state.drumHits)
+/**
+ * Every row the filters match, streamed in.
+ *
+ * `state.drumHits` is the page the store last fetched -- ten rows, because
+ * that is what the pager asked for. The grid wants the lot, and it wants it
+ * without waiting eight seconds for three quarters of a million of them, so
+ * they arrive in batches and this grows. @see store.js streamDrumRows
+ *
+ * The tag fields are lifted onto the row as they land. The grid reads
+ * `row[name]` and the tags live a level down in `row.tags`; lifting them
+ * once here beats a formatter that digs for them on every repaint, and
+ * leaves the groove itself intact for everything that already takes one --
+ * choosing it, dragging it out, playing it.
+ */
+const everyRow = ref([])
+const streaming = ref(false)
+let loading = 0
+
+function flatten(groove) {
+  const tags = groove.tags || {}
+  groove.feel = tags.feel || ''
+  groove.surface = tags.surface || ''
+  groove.part = tags.part || ''
+  groove.era = tags.era || ''
+  return groove
+}
+
+async function loadEveryRow() {
+  const mine = ++loading
+  everyRow.value = []
+  streaming.value = true
+  try {
+    await streamDrumRows((rows) => {
+      if (mine !== loading) return false
+      // A new array each time: handing the grid the same one with more in
+      // it leaves its scroll bar describing the length it last measured.
+      everyRow.value = everyRow.value.concat(rows.map(flatten))
+      return true
+    })
+  } finally {
+    if (mine === loading) streaming.value = false
+  }
+}
+
+const list = computed(() => everyRow.value)
 
 const activeFilters = computed(() =>
   [kind.value !== 'any', genre.value !== 'any',
@@ -626,17 +694,23 @@ const pageCount = computed(() => Math.max(1, Math.ceil(found.value / PER_PAGE)))
  * offset, which is what the database is for. 2,399 grooves is a shrug; the 60
  * two-bar funk beats is a suggestion.
  */
+/**
+ * One at random out of everything the filters found.
+ *
+ * It used to work out which page the chosen index fell on, fetch that page,
+ * and take the row from it. Every row is here now, so it is an index into an
+ * array -- and on the map, where the rows are not streamed, it falls back to
+ * asking the database for the one it wants.
+ */
 async function roll() {
   if (!found.value) return
-  const at = Math.floor(Math.random() * found.value)
-  const wanted = Math.floor(at / PER_PAGE) + 1
-  if (wanted !== page.value) {
-    page.value = wanted
-    await nextTick()
-    await searchDrums(null, { offset: Math.max(0, (wanted - 1) * PER_PAGE), limit: PER_PAGE })
-  }
   const pool = list.value
-  if (pool.length) choose(pool[at % PER_PAGE] || pool[pool.length - 1])
+  if (pool.length) {
+    choose(pool[Math.floor(Math.random() * pool.length)])
+    return
+  }
+  const one = await grooveAtIndex(Math.floor(Math.random() * found.value))
+  if (one) choose(one)
 }
 
 /** Picking a groove, which in auto-select mode also places it. */
@@ -878,38 +952,21 @@ function pillLabel(row, index) {
  */
 
 /**
- * Move through the list, turning the page at either end.
+ * Move through the list.
  *
- * The page is what is in the browser now -- the rest of the answer is in the
- * database and is fetched a page at a time -- so walking off the end of one
- * turns to the next and lands on its first row. Which is what arrowing through
- * a long list does anyway; it is only that the boundary is now real.
+ * It used to turn pages at either end, because the browser only held ten
+ * rows and the rest of the answer was in the database. The grid holds the
+ * whole answer, so there are no ends to reach any more -- only the two the
+ * list actually has. @see components/DataGrid.vue
  */
 function step(by) {
   const pool = list.value
   if (!pool.length) return
-
   const at = pool.findIndex((groove) => selected.value && groove.id === selected.value.id)
-  const next = (at < 0 ? 0 : at) + by
-
-  if (next < 0) {
-    if (page.value <= 1) { selected.value = pool[0]; return }
-    page.value -= 1
-    nextTick(() => { const rows = list.value; selected.value = rows[rows.length - 1] || null })
-    return
-  }
-  if (next >= pool.length) {
-    if (page.value >= pageCount.value) { selected.value = pool[pool.length - 1]; return }
-    page.value += 1
-    nextTick(() => { selected.value = list.value[0] || null })
-    return
-  }
+  const next = Math.max(0, Math.min(pool.length - 1, (at < 0 ? 0 : at) + by))
   selected.value = pool[next]
 }
 
-function turnPage(by) {
-  page.value = Math.min(pageCount.value, Math.max(1, page.value + by))
-}
 
 /*
  * The wheel walks the catalogue, the same as the phrase and progression books.
@@ -919,15 +976,6 @@ function turnPage(by) {
  * than the page -- three quarters of a million patterns is not something to
  * page through twelve at a time.
  */
-let wheelAcc = 0
-function onWheel(event) {
-  event.preventDefault()
-  wheelAcc += event.deltaY
-  while (Math.abs(wheelAcc) >= 30) {
-    step(wheelAcc > 0 ? 1 : -1)
-    wheelAcc -= Math.sign(wheelAcc) * 30
-  }
-}
 
 /** 1-9 are the first nine parts and 0 is the tenth, as tabs and windows have
     numbered things for thirty years. */
@@ -937,10 +985,26 @@ function assignToPartNumber(digit) {
   if (row) cycleGrooveOn(row.name, selected.value)
 }
 
-function onKey(event) {
+/**
+ * The book's own shortcuts, over whichever row the grid is on.
+ *
+ * The grid brings the arrows, the wheel, page up and down, home and end --
+ * everything about moving through a list. These are about what a pattern is
+ * *for*: a digit puts it on that numbered part, space puts it on all of
+ * them. They were on the list this replaced and would otherwise have gone
+ * with it. @see components/DataGrid.vue
+ */
+function onGridKey(event, row) {
+  if (row && row !== selected.value) selected.value = row
+
   if (event.key >= '0' && event.key <= '9') {
     event.preventDefault()
     assignToPartNumber(Number(event.key))
+    return
+  }
+  if (event.key === ' ' || event.code === 'Space') {
+    event.preventDefault()
+    if (selected.value) assignEverywhere(selected.value)
   }
 }
 
@@ -1135,6 +1199,18 @@ const graphFilters = computed(() => JSON.stringify([
 ]))
 
 watch([asGraph, graphFilters, sortBy], refreshTree)
+
+/*
+ * And the list's rows, which follow the same filters.
+ *
+ * Not on the map: there is no list there, and streaming three quarters of a
+ * million rows into nothing is the kind of work that makes a window feel
+ * slow for no visible reason.
+ */
+watch([asGraph, graphFilters], () => {
+  if (asGraph.value) { everyRow.value = []; streaming.value = false; loading++; return }
+  loadEveryRow()
+}, { immediate: true })
 
 /*
  * A way in for the harness.
@@ -1415,132 +1491,38 @@ onMounted(refreshTree)
                 </div>
 
 
-                <!-- No longer gives way when the filters open: they are on
-                     the other side now and take nothing from the list. -->
-                <v-list v-if="list.length" ref="listEl" density="compact"
-                        class="py-0 jamin-book-scroll"
-                        tabindex="0"
-                        style="outline: none"
-                        @keydown="onKey"
-                        @keydown.down.prevent="step(1)"
-                        @keydown.up.prevent="step(-1)"
-                        @keydown.left.prevent="turnPage(-1)"
-                        @keydown.right.prevent="turnPage(1)"
-                        @keydown.space.prevent="assignEverywhere(selected)"
-                        @keydown.page-down.prevent="step(PER_PAGE)"
-                        @keydown.page-up.prevent="step(-PER_PAGE)"
-                        @keydown.home.prevent="page = 1"
-                        @keydown.end.prevent="page = pageCount"
-                        @wheel="onWheel">
-                  <!-- Drag a groove straight onto a track. Not an HTML5 drag:
-                       the web view starts its own on dragstart and JUCE then
-                       refuses to start one. @see core/dragOut.js -->
-                  <v-list-item
-                    v-for="groove in list" :key="groove.id"
-                    v-drag-midi="() => midiForGroove(groove)"
-                    :active="selected && selected.id === groove.id"
-                    class="px-2" @click="choose(groove)"
-                  >
-                    <template #prepend>
-                      <v-icon size="16" :color="groove.kind === 'fill' ? 'warning' : undefined">
-                        {{ groove.kind === 'fill' ? 'mdi-flash-outline' : 'mdi-circle-multiple-outline' }}
-                      </v-icon>
-                    </template>
-                    <v-list-item-title class="text-body-2">
-                      {{ groove.name }}
-                      <!-- The id, because a name is shared and an id is not --
-                           the same reason the phrase list carries one. It is
-                           what `[d:...]` in the chart refers to. -->
-                      <span class="text-caption text-medium-emphasis jamin-mono ml-1">
-                        {{ '{' + groove.id + '}' }}
-                      </span>
-                    </v-list-item-title>
-                    <v-list-item-subtitle class="text-caption">
-                      {{ groove.bars }} bar{{ groove.bars === 1 ? '' : 's' }} ·
-                      {{ groove.timeSignature }} · {{ groove.bpm }}bpm
-                      <span v-if="groove.substyle">· {{ groove.substyle }}</span>
-                      <span v-if="groove.drummer">· {{ groove.drummer }}</span>
-                      <span v-if="onlyFitting && partsItFits(groove).length" class="text-primary">
-                        · fits {{ partsItFits(groove).map((p) => p.name === ' song' ? 'the song' : p.name).join(', ') }}
-                      </span>
-                    </v-list-item-subtitle>
-                    <!-- One pill per part, on their own line: a song with eight
-                         sections is eight pills, and squeezed onto the end of
-                         the name they crowd out the name.
+                <!--
+                  Every row, drawn on a canvas.
 
-                         Three states, cycled by clicking: not playing, this
-                         part's groove, this part's fill (with a bolt on it).
-                         Any pattern can be either -- what a library calls a
-                         pattern is a guess from its file name, and a guess is
-                         not a rule. -->
-                    <div v-if="liveRows.length" class="jamin-drum-pills">
-                      <v-chip
-                        v-for="(row, index) in liveRows" :key="row.name"
-                        size="x-small" label
-                        :variant="slotFor(row.name, groove) ? 'flat' : 'outlined'"
-                        :color="chipColour(slotFor(row.name, groove))"
-                        :class="{ 'is-playing': row.name === playingSection }"
-                        :title="chipTitle(row, groove, index)"
-                        @click.stop="cycleGrooveOn(row.name, groove)"
-                      >
-                        <v-icon v-if="slotFor(row.name, groove) === 'fill'" start size="11">
-                          mdi-flash
-                        </v-icon>
-                        {{ pillLabel(row, index) }}
-                      </v-chip>
-                    </div>
+                  This was a list of ten with a pager under it, because ten
+                  thousand list items is a scroll of jank and three quarters
+                  of a million is a dead tab. Paging is what a list does when
+                  it cannot hold what it is showing; a canvas grid can, so
+                  the pager is gone and the rows are simply all there.
 
-                    <!-- What the folders said about it, in columns, because a
-                         name and a heart across fourteen hundred pixels leaves
-                         the middle of every row empty and the thing somebody is
-                         choosing between unsaid. They fall away as the window
-                         narrows. @see core/drumTags.js -->
-                    <template #append>
-                      <div class="jamin-row-facts">
-                        <span class="jamin-row-fact d-none d-lg-flex">{{ groove.genre }}</span>
-                        <span class="jamin-row-fact d-none d-xl-flex">
-                          {{ (groove.tags || {}).feel }}
-                        </span>
-                        <span class="jamin-row-fact d-none d-xl-flex">
-                          {{ (groove.tags || {}).surface }}
-                        </span>
-                        <span class="jamin-row-fact jamin-row-fact-last">{{ groove.hits }} hits</span>
-                        <v-btn icon size="x-small" variant="text"
-                               :color="favourite(groove) ? 'error' : undefined"
-                               :aria-label="`Favourite ${groove.name}`"
-                               @click.stop="toggleFavourite(groove)">
-                          <v-icon size="16">{{ favourite(groove) ? 'mdi-heart' : 'mdi-heart-outline' }}</v-icon>
-                        </v-btn>
-                      </div>
-                    </template>
-                  </v-list-item>
-                </v-list>
+                  The wheel and the keyboard come with the component --
+                  arrows, page up and down, home and end -- and Enter means
+                  "use this one", as it does everywhere else in jamin.
+                  @see components/DataGrid.vue
+                -->
+                <DataGrid
+                  v-if="list.length"
+                  class="jamin-book-scroll"
+                  :rows="list"
+                  :columns="gridColumns"
+                  :chosen="selected"
+                  @pick="choose"
+                  @use="assignEverywhere"
+                  @key="onGridKey"
+                />
 
-                <div v-else-if="!asGraph" class="text-caption text-medium-emphasis pa-4">
-                  <span v-if="state.drumReport.error">
-                    The catalogue would not load — {{ state.drumReport.error }}
-                  </span>
-                  <span v-else-if="!drums.length">Loading the grooves…</span>
-                  <span v-else>Nothing matches.</span>
-                  <div v-if="filtered" class="mt-2">
-                    <v-btn size="x-small" variant="text" @click="clearFilters">Clear the filters</v-btn>
-                  </div>
+                <div v-if="streaming" class="text-caption text-medium-emphasis mt-1">
+                  <v-progress-circular indeterminate size="12" width="2" class="mr-1" />
+                  {{ list.length.toLocaleString() }} of {{ found.toLocaleString() }} loaded
                 </div>
 
-                <!--
-                  The pager gets the line to itself.
-
-                  It used to share it with "404,339 found · page 22 of 40,434",
-                  which is a lot of characters to say what the pager is already
-                  showing and what the filter panel says two inches away. With
-                  the room back, more page numbers fit, which is the thing that
-                  actually helps at forty thousand pages.
-                -->
                 <div class="d-flex align-center flex-grow-0 mt-1">
-                  <v-pagination v-if="pageCount > 1" v-model="page" :length="pageCount"
-                                :total-visible="9" density="compact" size="small"
-                                class="flex-grow-1" />
-                  <v-spacer v-else />
+                  <v-spacer />
                   <!-- Transient, and the only thing here worth a line of text:
                        a wait nobody asked for looks like a hang. -->
                   <span v-if="state.drumUpgrading" class="text-caption text-medium-emphasis ml-2">

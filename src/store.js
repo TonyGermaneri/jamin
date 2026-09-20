@@ -3170,11 +3170,63 @@ export async function forgetCatalogueGraph(which) {
  * knows it by the folder it sits in and what it is called. This is the
  * joint. @see core/drumStore.js grooveInFolder
  */
+/**
+ * One row by its position in what the filters found.
+ *
+ * For the dice on the map, where the rows are not streamed into anything and
+ * there is no array to index. @see components/DrumBook.vue roll
+ */
+export async function grooveAtIndex(at) {
+  const got = await searchGrooves(state.drumFilters, { limit: 1, offset: Math.max(0, at) })
+  const one = got && got.rows && got.rows[0]
+  return one ? unpackGroove(one) : null
+}
+
 export async function grooveForNode(path, label) {
   if (!Array.isArray(path) || !label) return null
   // Between the library at the top and the file at the bottom.
   const found = await grooveInFolder(path.slice(1, -1).join('/'), label)
   return found ? unpackGroove(found) : null
+}
+
+/**
+ * Everything the filters match, handed over a batch at a time.
+ *
+ * The list used to page: ten rows, and a pager under them. Paging is what a
+ * list does when it cannot hold what it is showing, and a canvas grid can --
+ * it draws the rows on screen and no others, however long the array behind
+ * it is. What it cannot do is wait: three quarters of a million rows is
+ * eight seconds of reading, and a window that shows nothing for eight
+ * seconds is the thing paging was hiding.
+ *
+ * So the rows arrive in batches and the grid grows. The first batch is on
+ * screen in about the time one page used to take, and the rest fills in
+ * underneath while somebody is already reading. `after` is the store's own
+ * cursor, so batch fifty costs what batch one did rather than re-walking
+ * everything before it.
+ *
+ * @param onBatch  called with (rows, total) as each batch lands; return
+ *                 false to stop, which is how a filter change abandons the
+ *                 stream it no longer wants.
+ */
+export async function streamDrumRows(onBatch, { batch = 2000, ceiling = 400000 } = {}) {
+  let after = null
+  let sent = 0
+
+  for (;;) {
+    const found = await searchGrooves(state.drumFilters, { limit: batch, offset: 0, after })
+    const rows = found.rows.map(unpackGroove)
+    if (!rows.length) return sent
+
+    sent += rows.length
+    if (onBatch(rows, found.total) === false) return sent
+    if (sent >= Math.min(ceiling, found.total || ceiling)) return sent
+
+    after = found.ended
+    if (!after) return sent
+    // A turn for the interface between batches, or the grid never paints.
+    await new Promise((go) => setTimeout(go, 0))
+  }
 }
 
 export async function drumRowsForGraph(mostRows = 60000) {

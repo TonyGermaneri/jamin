@@ -1691,3 +1691,26 @@ body,
   grid-template-columns: repeat(4, 1fr);
   gap: 4px;
 }
+
+
+/* ------------------------------------------------------------------ *
+ * The catalogue as a grid
+ *
+ * canvas-datagrid is a custom element with a canvas in it, and it measures
+ * itself against the box it is given -- so the box has to have one. As a
+ * flex child with no minimum it collapses to nothing; with no height at all
+ * it grows to the largest canvas a browser will paint and then has nothing
+ * to scroll. @see components/DataGrid.vue
+ * ------------------------------------------------------------------ */
+.jamin-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.jamin-grid canvas-datagrid {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
