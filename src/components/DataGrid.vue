@@ -47,12 +47,26 @@ const grid = shallowRef(null)
  * can see: the ground, the ink, the lines between rows, the header, and the
  * two kinds of highlight.
  */
+/*
+ * A canvas takes a font string and falls back silently.
+ *
+ * The theme's own family list is quoted -- `"IBM Plex Mono", "SF Mono",
+ * ui-monospace, monospace` -- and a quoted family inside a canvas font
+ * shorthand is not parsed by every engine. When it fails the canvas does not
+ * complain; it draws in its default, which is a serif, which is how a
+ * monospace theme came to have a serif grid in it. Unquoted generic names
+ * only, so there is nothing to misparse and the last one always resolves.
+ */
+const FACE = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+
 function dress() {
   const one = grid.value
   if (!one) return
   const theme = state.settings.theme
   const ink = theme.fg
   const dim = theme.dim
+  // Everything is mixed against the ground, because everything is opaque.
+  const ground = theme.bg
 
   Object.assign(one.style, {
     /*
@@ -75,68 +89,84 @@ function dress() {
      * first attempt set the cells and the header and got a white column
      * cap past the last column and a white corner above the row numbers.
      */
-    gridBackgroundColor: 'transparent',
-    cellBackgroundColor: 'transparent',
-    columnHeaderCellCapBackgroundColor: rgba(theme.bg, 0.6),
-    cornerCellBackgroundColor: rgba(theme.bg, 0.6),
-    activeColumnHeaderCellBackgroundColor: rgba(theme.accent, 0.2),
-    activeRowHeaderCellBackgroundColor: rgba(theme.accent, 0.18),
-    rowHeaderCellHoverBackgroundColor: rgba(theme.accent, 0.12),
-    rowHeaderCellSelectedBackgroundColor: rgba(theme.accent, 0.2),
-    activeCellHoverBackgroundColor: rgba(theme.accent, 0.34),
-    activeCellSelectedBackgroundColor: rgba(theme.accent, 0.34),
-    scrollBarCornerBackgroundColor: 'transparent',
-    editCellBackgroundColor: rgba(theme.bg, 0.95),
+    gridBackgroundColor: ground,
+    cellBackgroundColor: ground,
+    columnHeaderCellCapBackgroundColor: mix(ink, ground, 0.06),
+    cornerCellBackgroundColor: mix(ink, ground, 0.06),
+    activeColumnHeaderCellBackgroundColor: mix(theme.accent, ground, 0.22),
+    activeRowHeaderCellBackgroundColor: mix(theme.accent, ground, 0.2),
+    rowHeaderCellHoverBackgroundColor: mix(theme.accent, ground, 0.14),
+    rowHeaderCellSelectedBackgroundColor: mix(theme.accent, ground, 0.22),
+    activeCellHoverBackgroundColor: mix(theme.accent, ground, 0.38),
+    activeCellSelectedBackgroundColor: mix(theme.accent, ground, 0.38),
+    scrollBarCornerBackgroundColor: ground,
+    editCellBackgroundColor: ground,
     editCellColor: ink,
     cellColor: ink,
-    cellFont: `12px ${theme.font}`,
+    cellFont: `12px ${FACE}`,
     cellPaddingLeft: 10,
     cellPaddingRight: 10,
     cellHeight: 26,
-    cellBorderColor: rgba(dim, 0.16),
+    cellBorderColor: mix(dim, ground, 0.3),
     cellBorderWidth: 1,
 
-    columnHeaderCellBackgroundColor: rgba(theme.bg, 0.6),
-    columnHeaderCellColor: rgba(ink, 0.7),
-    columnHeaderCellFont: `11px ${theme.font}`,
-    columnHeaderCellBorderColor: rgba(dim, 0.3),
+    columnHeaderCellBackgroundColor: mix(ink, ground, 0.06),
+    columnHeaderCellColor: mix(ink, ground, 0.72),
+    columnHeaderCellFont: `11px ${FACE}`,
+    columnHeaderCellBorderColor: mix(dim, ground, 0.5),
     columnHeaderCellHeight: 26,
-    columnHeaderCellHoverBackgroundColor: rgba(theme.accent, 0.14),
+    columnHeaderCellHoverBackgroundColor: mix(theme.accent, ground, 0.16),
 
     // The row numbers down the side say how far into three quarters of a
     // million you are, which is the thing a pager used to say.
-    rowHeaderCellBackgroundColor: rgba(theme.bg, 0.5),
-    rowHeaderCellColor: rgba(dim, 0.9),
-    rowHeaderCellFont: `10px ${theme.font}`,
-    rowHeaderCellBorderColor: rgba(dim, 0.2),
+    rowHeaderCellBackgroundColor: mix(ink, ground, 0.04),
+    rowHeaderCellColor: mix(dim, ground, 0.9),
+    rowHeaderCellFont: `10px ${FACE}`,
+    rowHeaderCellBorderColor: mix(dim, ground, 0.36),
 
-    cellHoverBackgroundColor: rgba(theme.accent, 0.1),
+    cellHoverBackgroundColor: mix(theme.accent, ground, 0.12),
     cellHoverColor: ink,
-    cellSelectedBackgroundColor: rgba(theme.accent, 0.26),
+    cellSelectedBackgroundColor: mix(theme.accent, ground, 0.28),
     cellSelectedColor: ink,
-    activeCellBackgroundColor: rgba(theme.accent, 0.3),
+    activeCellBackgroundColor: mix(theme.accent, ground, 0.34),
     activeCellColor: ink,
     activeCellBorderColor: theme.accent,
     activeCellOverlayBorderColor: theme.accent,
     selectionOverlayBorderColor: theme.accent,
 
-    scrollBarBackgroundColor: 'transparent',
-    scrollBarBoxColor: rgba(dim, 0.45),
-    scrollBarBoxBorderColor: 'transparent',
-    scrollBarBorderColor: 'transparent',
+    scrollBarBackgroundColor: ground,
+    scrollBarBoxColor: mix(dim, ground, 0.6),
+    scrollBarBoxBorderColor: mix(dim, ground, 0.6),
+    scrollBarBorderColor: ground,
     scrollBarWidth: 9,
     scrollBarBoxMargin: 2,
     scrollBarBoxMinSize: 24,
   })
 }
 
-/** `#rrggbb` with an alpha, which is the only form the grid takes. */
-function rgba(hex, alpha) {
+/** `#rgb` or `#rrggbb` to three numbers, or mid grey. */
+function read(hex) {
   const clean = String(hex || '').trim().replace('#', '')
   const full = clean.length === 3 ? clean.split('').map((c) => c + c).join('') : clean
   const n = Number.parseInt(full, 16)
-  if (!Number.isFinite(n)) return `rgba(128,128,128,${alpha})`
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`
+  if (!Number.isFinite(n) || full.length !== 6) return [128, 128, 128]
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+
+/**
+ * Two colours mixed, opaque.
+ *
+ * Every colour handed to the grid is solid. A translucent one has to be
+ * composited, and the grid composites it against whatever happened to be in
+ * the canvas already -- the previous frame, not the surface behind it -- so
+ * a hovered row over a scrolled one comes out a different colour than the
+ * same row standing still. Mixing here means the value is the value.
+ */
+function mix(over, under, amount) {
+  const a = read(over)
+  const b = read(under)
+  const t = Math.max(0, Math.min(1, amount))
+  return `rgb(${[0, 1, 2].map((i) => Math.round(b[i] + (a[i] - b[i]) * t)).join(',')})`
 }
 
 /** Which row of the grid holds the chosen thing, or -1. */

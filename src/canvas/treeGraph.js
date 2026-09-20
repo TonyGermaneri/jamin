@@ -94,7 +94,19 @@ export class TreeGraph {
     this.onOpen = onOpen
 
     this.canvas = document.createElement('canvas')
-    this.canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block'
+    /*
+     * Underneath the names, explicitly.
+     *
+     * The labels are a child of this box in the template and the canvas is
+     * appended to it on mount, so the canvas is the later sibling -- and two
+     * absolutely positioned siblings with no z-index are painted in document
+     * order. It got away with that for as long as `paint` began with
+     * `clearRect`: a transparent canvas over the names is no canvas at all.
+     * Filling the ground for the trails made it opaque, and the names
+     * disappeared one frame after they were drawn.
+     */
+    this.canvas.style.cssText =
+      'position:absolute;inset:0;width:100%;height:100%;display:block;z-index:0'
     box.appendChild(this.canvas)
     this.ctx = this.canvas.getContext('2d')
 

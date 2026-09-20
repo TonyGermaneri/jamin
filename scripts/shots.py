@@ -427,6 +427,27 @@ def labelsStay(page):
     showing = page.evaluate("() => window.__jaminTreeProbe.showing()")
     if later < first * 0.9:
         return f"FAIL the names faded away: {first} -> {later} over {showing} nodes"
+
+    # Counted is not the same as seen. The names went on being counted
+    # perfectly while the canvas painted over the top of them -- it is
+    # appended after them and two absolutely positioned siblings with no
+    # z-index are painted in document order. So the stacking is asserted,
+    # because that is the thing that broke.
+    covered = page.evaluate("""() => {
+      const names = document.querySelector('.jamin-graph-labels')
+      const canvas = names && names.parentElement.querySelector('canvas')
+      if (!names || !canvas) return 'no labels layer or no canvas'
+      const over = Number(getComputedStyle(names).zIndex) || 0
+      const under = Number(getComputedStyle(canvas).zIndex) || 0
+      if (over > under) return ''
+      // Same level: document order decides, and the canvas is appended last.
+      const where = [...names.parentElement.children]
+      return where.indexOf(canvas) > where.indexOf(names)
+        ? `the canvas (z ${under}) is painted over the names (z ${over})`
+        : ''
+    }""")
+    if covered:
+        return f"FAIL {covered}"
     return f"ok   the names stay: {first} -> {later} after nine seconds"
 
 

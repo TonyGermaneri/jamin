@@ -961,6 +961,9 @@ body,
   inset: 0;
   pointer-events: none;
   overflow: hidden;
+  /* Over the canvas, which is appended after this in the DOM and would
+     otherwise win on document order alone. @see canvas/treeGraph.js */
+  z-index: 1;
 }
 
 .jamin-graph-label {
