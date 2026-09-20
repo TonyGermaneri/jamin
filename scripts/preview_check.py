@@ -161,7 +161,7 @@ OPEN_MAP = r"""
   const app = window.__jaminApp
   app.state.settings.graph.drums = true
   // Nothing left open from a previous look, so the walk down starts at the top.
-  app.state.settings.graph.open = {}
+  app.forgetGraphArrangements()
   app.openBook('drums')
   return true
 }

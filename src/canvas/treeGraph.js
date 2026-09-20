@@ -89,11 +89,16 @@ function hslToRgb([h, s, l]) {
 }
 
 export class TreeGraph {
-  constructor(box, { onPick = null, onHover = null, onOpen = null } = {}) {
+  constructor(box, {
+    onPick = null, onHover = null, onOpen = null, onArrange = null,
+  } = {}) {
     this.box = box
     this.onPick = onPick
     this.onHover = onHover
     this.onOpen = onOpen
+    /** Something about where things are changed: a node dropped somewhere,
+        the camera moved, the forces come to rest. @see arrangement */
+    this.onArrange = onArrange
 
     this.canvas = document.createElement('canvas')
     /*
@@ -198,6 +203,10 @@ export class TreeGraph {
         return !this.spotOf(event)
       })
       .on('zoom', (event) => { this.at = event.transform; this.paintSoon() })
+      // Where the camera ended up is part of the arrangement. Only at the
+      // end of the gesture -- a wheel is fifty transforms and none of the
+      // first forty-nine is where anybody meant to be.
+      .on('end', () => { if (this.onArrange) this.onArrange() })
     select(this.canvas).call(this.zoom)
 
     /** What is being dragged, and everything that came with it. */
@@ -244,7 +253,20 @@ export class TreeGraph {
      * freezing mid-smear. Without them the last ghost of the last movement
      * stays on screen until something else happens to repaint.
      */
-    this.sim.on('end', () => { this.cooling = 24; this.paintSoon() })
+    this.sim.on('end', () => {
+      this.cooling = 24
+      this.paintSoon()
+      /*
+       * And this is where the picture is worth writing down.
+       *
+       * Saving at the moment a folder is clicked saves a layout in mid-air:
+       * the forces have another second or two of settling to do, so the
+       * arrangement that comes back next session is the one from halfway
+       * through the animation rather than the one that was looked at.
+       * Measured -- a node saved at 443,847 and read back at 525,956.
+       */
+      if (this.onArrange) this.onArrange()
+    })
     this.cooling = 0
 
     this.canvas.addEventListener('mousemove', this.onMove)
@@ -267,15 +289,30 @@ export class TreeGraph {
    * reason a node's children can be found without walking anything. Nothing
    * is copied, and nothing below what is open is looked at.
    *
-   * `open` is a list of node indexes to restore, so a map comes back the way
-   * it was left. @see components/CatalogueGraph.vue
+   * `open` is a list of node indexes to restore, `places` a list of
+   * `[at, x, y, pinned]` saying where each of them was left, and `camera` the
+   * transform that was looking at them. Together they are the whole of the
+   * arrangement: a map comes back exactly as it was left, down to a folder
+   * somebody dragged out of the way three days ago.
+   * @see components/CatalogueGraph.vue
    */
-  setTree(source, { open = null } = {}) {
+  setTree(source, { open = null, places = null, camera = null } = {}) {
     this.source = null
     this.live.clear()
     this.open.clear()
     this.chosen = -1
     this.hovered = -1
+    // Where each node was left, consulted by `bornAt` as it materialises
+    // them. Cleared here so a tree arriving without one starts fresh.
+    this.placed = null
+    if (places && places.length) {
+      this.placed = new Map()
+      for (const one of places) {
+        if (!Array.isArray(one) || !Number.isFinite(one[1]) || !Number.isFinite(one[2])) continue
+        this.placed.set(one[0], one)
+      }
+    }
+    if (this.pinned) this.pinned.clear()
 
     if (!source || !source.nodes || !source.nodes.length) {
       this.drawn = []
@@ -334,8 +371,63 @@ export class TreeGraph {
       if (tops.length === 1 && this.hasChildren(tops[0])) this.open.add(tops[0])
     }
 
+    /*
+     * Settle, unless there is nothing to settle.
+     *
+     * The first sight of a catalogue is run to rest before the first paint,
+     * so the window opens with a picture rather than with one forming. But
+     * a remembered arrangement *is* the rest: running the simulation over it
+     * would take every node somebody placed by hand and put it back where
+     * the forces would rather have it, which is the arrangement being
+     * thrown away with extra steps. So it only settles what it had to
+     * invent. @see rebuild
+     */
     this.rebuild({ settle: true })
-    this.fitView()
+    if (camera && Number.isFinite(camera.k) && camera.k > 0) {
+      select(this.canvas).call(this.zoom.transform,
+        zoomIdentity.translate(camera.x || 0, camera.y || 0).scale(camera.k))
+    } else {
+      this.fitView()
+    }
+  }
+
+  /**
+   * Whether everything on screen came back from a remembered place.
+   *
+   * A node that did not is one the arrangement has nothing to say about --
+   * a catalogue that grew, or a folder opened since it was saved -- and the
+   * forces have to find it a spot, which means running them, which moves
+   * everything else too.
+   *
+   * Asked after the seats exist, not before. The first version asked in
+   * `setTree`, where `live` has just been cleared, so it always answered no
+   * and the arrangement was settled away on every single open.
+   */
+  restored() {
+    if (!this.placed || !this.placed.size || !this.drawn.length) return false
+    for (const seat of this.drawn) if (!this.placed.has(seat.at)) return false
+    return true
+  }
+
+  /**
+   * The arrangement, as something that can be written down.
+   *
+   * Positions are rounded: a map is remembered to the pixel, and eight
+   * decimal places of a force simulation's idea of where a dot is are eight
+   * characters of somebody's browser storage per node per axis.
+   */
+  arrangement() {
+    const places = []
+    for (const seat of this.live.values()) {
+      places.push([seat.at, Math.round(seat.x), Math.round(seat.y),
+        this.pinned && this.pinned.has(seat.at) ? 1 : 0])
+    }
+    return {
+      open: [...this.open],
+      places,
+      camera: { x: Math.round(this.at.x), y: Math.round(this.at.y),
+        k: Math.round(this.at.k * 10000) / 10000 },
+    }
   }
 
   /** Every node with no parent: the level a catalogue opens at. */
@@ -403,6 +495,22 @@ export class TreeGraph {
     this.sim.nodes(this.drawn)
     this.sim.force('link').links(this.links)
 
+    /*
+     * Nothing to work out, so nothing is worked out.
+     *
+     * Every node on screen is on a remembered position. Running the
+     * simulation over that -- to settle it, or to bloom it -- would take
+     * each one a little way towards where the forces would rather have it,
+     * and a map somebody arranged by hand would dissolve over a second or
+     * two of watching. So the forces are simply not started.
+     */
+    if (this.restored()) {
+      this.sim.alpha(0)
+      this.sim.stop()
+      this.paintSoon()
+      return
+    }
+
     if (settle) {
       /*
        * The first sight of a catalogue is not an animation of it arriving.
@@ -435,6 +543,39 @@ export class TreeGraph {
     const node = this.source.nodes[at]
     const up = this.live.get(this.source.parents[at])
     const angle = ((at % 997) / 997) * Math.PI * 2
+
+    /*
+     * Unless it has been here before.
+     *
+     * A node with a remembered place is put straight back on it, and one
+     * that was pinned there by hand is pinned again -- otherwise the first
+     * tick of the simulation would pull it towards its parent and the
+     * arrangement would dissolve over about a second.
+     */
+    const was = this.placed && this.placed.get(at)
+    if (was) {
+      const seat = {
+        at,
+        depth: node.depth,
+        clips: node.clips,
+        label: node.label,
+        leaf: node.leaf,
+        family: this.familyOf(at),
+        r: this.radiusOf(node),
+        shape: this.shapeOf(node),
+        colour: this.colourOf(node, this.familyOf(at)),
+        x: was[1],
+        y: was[2],
+        shut: this.hasChildren(at) && !this.open.has(at),
+      }
+      if (was[3]) {
+        seat.fx = was[1]
+        seat.fy = was[2]
+        this.pinned = this.pinned || new Set()
+        this.pinned.add(at)
+      }
+      return seat
+    }
 
     /*
      * How a child leaves its parent.
@@ -791,6 +932,30 @@ export class TreeGraph {
     this.sim.alphaTarget(0).alpha(0.3).restart()
     this.wasDrag = this.dragging.moved > 4
     this.dragging = null
+    // Saved after the branch has relaxed around where it was dropped, not
+    // at the instant of dropping: the positions worth keeping are the ones
+    // that are still there a moment later.
+    // The simulation's own `end` covers the usual case; this covers a drop
+    // that moved nothing far enough to reheat it.
+    if (this.onArrange) setTimeout(() => this.onArrange(), 900)
+  }
+
+  /**
+   * Run the forces to a stop now, rather than over the next few seconds.
+   *
+   * The same thing the first sight of a catalogue does, offered as a verb:
+   * a settled picture is the one worth keeping, and waiting five seconds of
+   * animation to have one is a wait. Bounded, because a simulation that has
+   * not converged in four hundred ticks is not going to.
+   */
+  rest() {
+    if (!this.drawn.length) return
+    const floor = this.sim.alphaMin()
+    for (let i = 0; i < 400 && this.sim.alpha() > floor; i++) this.sim.tick()
+    this.sim.alpha(0)
+    this.sim.stop()
+    this.paintSoon()
+    if (this.onArrange) this.onArrange()
   }
 
   /** Every node on screen under this one, itself included. */

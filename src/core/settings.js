@@ -226,21 +226,8 @@ export function defaultSettings() {
           skipped, so this is a ceiling rather than a quota. */
       mostLabels: 140,
 
-      /**
-       * What was left open, per catalogue: a list of node indexes.
-       *
-       * A catalogue is somewhere somebody is working rather than a picture
-       * they glance at. Three folders down at the shelf they are auditioning
-       * from, closing the window and losing it is the same as never having
-       * opened it -- so the arrangement is remembered, which for this graph
-       * means remembering exactly one thing: which nodes are open.
-       *
-       * Indexes rather than names because the tree is built the same way
-       * every time from the same catalogue, which `graph_check.py` asserts.
-       * A rebuilt catalogue invalidates them, and the worst that does is open
-       * the wrong folder once.
-       */
-      open: {},
+      /* Where each map was left is kept on its own key rather than here.
+         @see GRAPH_ARRANGEMENT_KEY */
 
       /**
        * How the map looks and how it behaves.
@@ -425,6 +412,52 @@ export function saveSettings(settings) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
   } catch {
     /* private browsing, quota, whatever -- not worth interrupting a rehearsal */
+  }
+}
+
+/**
+ * Where each catalogue's map was left.
+ *
+ * `{ [book]: { stamp, open, places, camera } }`: which nodes are open, where
+ * each one on screen sits and whether it was put there by hand, and what the
+ * camera was looking at.
+ *
+ * A catalogue is somewhere somebody is working rather than a picture they
+ * glance at. Three folders down at the shelf they are auditioning from,
+ * closing the window and losing it is the same as never having opened it --
+ * and so is coming back to find the folder you dragged out of the way has
+ * drifted back into the middle.
+ *
+ * Its own key, not part of the settings, for two reasons. It is large: a few
+ * hundred nodes is a few kilobytes and the ceiling is around eighty, against
+ * settings that are two. And the settings are watched -- every change to them
+ * re-saves the lot and recompiles the chart for the plugin -- so keeping a
+ * camera position in there would recompile the song every time somebody
+ * scrolled the map. @see store.js, components/CatalogueGraph.vue
+ *
+ * Nodes are remembered by index, because the tree is built the same way every
+ * time from the same catalogue -- `graph_check.py` asserts it. `stamp` is what
+ * makes that safe: it says which tree the indexes were taken from, so a
+ * filtered view or a re-imported library starts fresh rather than putting node
+ * 412's position onto whatever node 412 has become.
+ */
+export const GRAPH_ARRANGEMENT_KEY = 'jamin.graphArrangement.v1'
+
+export function loadArrangements() {
+  try {
+    const raw = localStorage.getItem(GRAPH_ARRANGEMENT_KEY)
+    const held = raw ? JSON.parse(raw) : null
+    return held && typeof held === 'object' ? held : {}
+  } catch {
+    return {}
+  }
+}
+
+export function saveArrangements(all) {
+  try {
+    localStorage.setItem(GRAPH_ARRANGEMENT_KEY, JSON.stringify(all || {}))
+  } catch {
+    /* no room, private browsing -- a map that forgets is not worth a dialog */
   }
 }
 

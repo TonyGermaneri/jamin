@@ -608,7 +608,7 @@ def eachCatalogue(page):
           const app = window.__jaminApp
           app.state.ui.book = null
           app.state.ui.progressions = false
-          app.state.settings.graph.open = {}
+          app.forgetGraphArrangements()
         }""")
         page.wait_for_timeout(400)
         page.evaluate("""(b) => {

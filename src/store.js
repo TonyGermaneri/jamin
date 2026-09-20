@@ -45,6 +45,7 @@ import { parseScore, PPQN } from './core/score.js'
 import {
   loadSettings,
   saveSettings,
+  saveArrangements,
   defaultSettings,
   mergeSettings,
   TEXT_KEY,
@@ -4298,8 +4299,16 @@ export function applyTheme(id) {
 
 export function resetSettings() {
   Object.assign(state.settings, defaultSettings())
+  // The maps' arrangements live on their own key because of their size, so
+  // "back to the defaults" has to say so out loud or they survive it.
+  forgetGraphArrangements()
   applyPortBindings()
   reparse()
+}
+
+/** Forget where every map was left. @see core/settings.js */
+export function forgetGraphArrangements() {
+  saveArrangements({})
 }
 
 watch(
@@ -5168,5 +5177,8 @@ if (typeof window !== 'undefined') {
     previewGroove,
     cancelPreview,
     notesFor,
+    // Where the maps were left, so a harness can start from nothing --
+    // and so `Back to the defaults` means it. @see core/settings.js
+    forgetGraphArrangements,
   }
 }

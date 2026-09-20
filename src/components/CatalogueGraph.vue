@@ -42,6 +42,7 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vu
 import { state } from '../store.js'
 import { rgba } from '../core/pathTree.js'
 import { TreeGraph } from '../canvas/treeGraph.js'
+import { loadArrangements, saveArrangements } from '../core/settings.js'
 
 const props = defineProps({
   /** `{ nodes, edges, parents, depth, truncated }` from core/pathTree.js. */
@@ -236,6 +237,9 @@ function build() {
     },
     onHover: (seat) => { hovering.value = seat ? seat.label : null },
     onOpen: () => { remember(); refreshLabels() },
+    // A node dragged somewhere, or the camera moved. Both are part of where
+    // things are, and both have to survive the window closing.
+    onArrange: () => remember(),
   })
   dress(graph)
   engine.value = graph
@@ -272,7 +276,10 @@ function build() {
       // pushed off the edge by a fit that did not know about the chrome.
       places: () => graph.drawn.map((one) => {
         const [x, y] = graph.screenOf(one)
-        return { label: one.label, x: Math.round(x), y: Math.round(y) }
+        // The index as well as the name. Two folders can share a name --
+        // the corpus has a dozen called `song` -- so a check comparing one
+        // arrangement against another by name compares the wrong nodes.
+        return { at: one.at, label: one.label, x: Math.round(x), y: Math.round(y) }
       }),
       // Where the camera is, so a check can say that opening a node did not
       // move it. Nothing else can tell the difference between a graph that
@@ -284,6 +291,19 @@ function build() {
       // square from a circle at four pixels across, and nothing else can say
       // whether the shape followed the clip or just the setting.
       // @see canvas/nodeShapes.js, scripts/preview_check.py
+      // Whether the picture on screen is the one that was saved or one the
+      // forces worked out again -- which is the difference between an
+      // arrangement being kept and being re-derived, and nothing visible
+      // separates the two once both have settled.
+      // @see scripts/arrange_check.py
+      // Stop the forces now instead of over the next few seconds, so a
+      // check can compare a settled picture against a settled picture
+      // rather than two frames of the same animation.
+      rest: () => graph.rest(),
+      restored: () => ({ held: graph.placed ? graph.placed.size : 0, from: graph.restored(),
+        // Whether the forces are still running. A map that is still moving
+        // has not finished being arranged, and is not worth writing down.
+        alpha: Math.round(graph.sim.alpha() * 1e4) / 1e4 }),
       shapes: () => graph.drawn.map((one) => ({
         label: one.label, shape: one.shape, depth: one.depth, shut: Boolean(one.shut),
         leaf: !graph.hasChildren(one.at),
@@ -304,7 +324,7 @@ function build() {
    * when it was last looked at -- somebody who left a folder open comes back
    * to it open. @see store.js graphOpen
    */
-  if (source.value) graph.setTree(source.value, { open: remembered() })
+  if (source.value) graph.setTree(source.value, remembered())
   refreshLabels()
 }
 
@@ -374,18 +394,82 @@ function jump(at) {
  * it. The open set is the whole of the state -- it is what `setTree` takes
  * back -- so remembering it is remembering the arrangement.
  */
+/**
+ * Which tree this is, so an arrangement is not put onto a different one.
+ *
+ * Every node is remembered by its index, and an index only means anything
+ * against the tree it was taken from. Filter the catalogue and node 412 is
+ * a different folder; import a library and it is a different one again. So
+ * the arrangement carries a stamp of the tree it describes, and is used
+ * only where that still matches.
+ *
+ * Node count and clip count together, plus the first root's name. Cheap --
+ * all three are already to hand -- and specific enough that two different
+ * views of a catalogue do not collide.
+ */
+function stampOf(tree) {
+  if (!tree || !tree.nodes || !tree.nodes.length) return ''
+  return `${tree.nodes.length}:${tree.clips || 0}:${tree.nodes[0].label || ''}`
+}
+
+/**
+ * How many nodes' positions are worth writing down.
+ *
+ * Settings go to the browser's own storage, which is a few megabytes for
+ * everything jamin keeps. A place is about twenty characters, so this is
+ * around eighty kilobytes at the ceiling -- and somebody with four thousand
+ * nodes on screen has not arranged them by hand anyway.
+ */
+const MOST_PLACES = 4000
+
+/** Read once, written through. @see core/settings.js loadArrangements */
+let arrangements = loadArrangements()
+
+/**
+ * How many views of one catalogue keep an arrangement.
+ *
+ * More than one, because filtering is not leaving. Narrow the drums to
+ * "Rock" and that is a different tree with different indexes, so it gets
+ * its own arrangement -- and clearing the filter has to bring back the one
+ * that was there before it rather than a fresh layout, which is what
+ * keeping a single arrangement per book did. Four is the last few views
+ * somebody was moving between; past that the oldest goes.
+ */
+const MOST_VIEWS = 4
+
+/** Every arrangement kept for this book, newest first. */
+const kept = () => {
+  const mine = arrangements[props.book]
+  return Array.isArray(mine) ? mine : []
+}
+
 function remembered() {
-  const kept = state.settings.graph.open || {}
-  const mine = kept[props.book]
-  return Array.isArray(mine) ? mine : null
+  const stamp = stampOf(source.value)
+  const mine = kept().find((one) => one && one.stamp === stamp)
+  if (!mine) return {}
+  return {
+    open: Array.isArray(mine.open) ? mine.open : null,
+    places: Array.isArray(mine.places) ? mine.places : null,
+    camera: mine.camera || null,
+  }
 }
 
 function remember() {
   const graph = engine.value
-  if (!graph || !props.book) return
-  const kept = { ...(state.settings.graph.open || {}) }
-  kept[props.book] = [...graph.open]
-  state.settings.graph.open = kept
+  if (!graph || !props.book || !source.value) return
+  const stamp = stampOf(source.value)
+  if (!stamp) return
+
+  const now = graph.arrangement()
+  const mine = [{
+    stamp,
+    open: now.open,
+    places: now.places.length <= MOST_PLACES ? now.places : [],
+    camera: now.camera,
+  }, ...kept().filter((one) => one && one.stamp !== stamp)].slice(0, MOST_VIEWS)
+
+  arrangements = { ...arrangements, [props.book]: mine }
+  saveArrangements(arrangements)
 }
 
 /* ---------------- wiring ----------------------------------------------
@@ -401,7 +485,7 @@ watch(source, (next) => {
   const graph = engine.value
   if (!graph) return
   here.value = null
-  if (next) graph.setTree(next, { open: remembered() })
+  if (next) graph.setTree(next, remembered())
   refreshLabels()
 })
 
@@ -414,6 +498,16 @@ watch(look, () => { dress(engine.value); refreshLabels() }, { deep: true })
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(following)
+  /*
+   * What is on screen when the window closes is what comes back.
+   *
+   * The forces take a few seconds to come to rest and the arrangement is
+   * written down when they get there -- but somebody who opens a folder and
+   * shuts the window two seconds later has still left the map somewhere,
+   * and it is where they left it that has to return, not where it was
+   * halfway through the last thing they did.
+   */
+  remember()
   engine.value?.destroy?.()
   engine.value = null
 })
