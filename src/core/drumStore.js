@@ -339,6 +339,8 @@ export async function deleteSet(id, onProgress = null) {
   const db = await open()
   if (!db) return false
 
+  forgetCount()
+
   const range = IDBKeyRange.only(id)
   let total = 0
   try {
@@ -396,6 +398,9 @@ export async function putGrooves(rows) {
   if (!db) return 'NoDatabase'
   if (!rows.length) return ''
 
+  // There are more rows than there were. @see countGrooves
+  forgetCount()
+
   const tx = db.transaction(GROOVES, 'readwrite')
   const store = tx.objectStore(GROOVES)
   try {
@@ -411,12 +416,42 @@ export async function putGrooves(rows) {
   })
 }
 
+/**
+ * How many rows there are, remembered.
+ *
+ * `count()` over an object store reads like a free answer -- the engine
+ * surely knows how many rows it holds -- and measured on 774,986 of them in
+ * the web view the plugin embeds it is 510ms. It walks.
+ *
+ * That number turned up everywhere: every unfiltered search recomputed it to
+ * report a total, so the book's first page cost 509ms, the facet count cost
+ * 505ms, checking whether the map was stale cost 510ms, and streaming the
+ * catalogue into the grid paid it *per batch* -- which is why sixty thousand
+ * rows took two minutes in batches of 250 and three seconds in batches of
+ * ten thousand. The rows were nearly free; the counting was all of it.
+ *
+ * So it is counted once and kept until something changes it. Everything that
+ * writes or deletes calls `forgetCount`, which is four places.
+ */
+const counted = new Map()
+
+export function forgetCount(setId = null) {
+  if (setId) counted.delete(setId)
+  else counted.clear()
+  counted.delete('*')
+}
+
 export async function countGrooves(setId = null) {
+  const key = setId || '*'
+  if (counted.has(key)) return counted.get(key)
+
   const db = await open()
   if (!db) return 0
   try {
     const store = db.transaction(GROOVES, 'readonly').objectStore(GROOVES)
-    return await ask(setId ? store.index('set').count(IDBKeyRange.only(setId)) : store.count())
+    const how = await ask(setId ? store.index('set').count(IDBKeyRange.only(setId)) : store.count())
+    counted.set(key, how || 0)
+    return how || 0
   } catch {
     return 0
   }
@@ -631,7 +666,10 @@ export async function searchGrooves(filters = {}, { limit = 24, offset = 0,
 
   // Nothing indexed at all: the scope is the whole store.
   if (!chosen && !needle && !others.length) {
-    const total = await ask(grooves(db).count()).catch(() => 0)
+    // Through the cache: this is the same count, and asking the store
+    // directly is 510ms of walking every row to learn a number that has not
+    // changed. @see countGrooves
+    const total = await countGrooves(null)
     const page = await pageOf(grooves(db), undefined, offset, limit, after)
     return { ...page, total, exact: true, scanned: page.rows.length }
   }
@@ -965,9 +1003,15 @@ export async function grooveFacets(setId = null) {
   const db = await open()
   if (!db) return emptyFacets()
 
-  const holds = setId
-    ? await countOn(db, 'set', setId)
-    : await ask(grooves(db).count()).catch(() => 0)
+  /*
+   * Through the cache, which is the same count.
+   *
+   * The remembered facets are stamped with how many rows they were counted
+   * from, so this runs before the cache is even consulted -- meaning the
+   * cheap path paid 510ms of walking the store to find out whether it could
+   * take the cheap path. @see countGrooves
+   */
+  const holds = setId ? await countOn(db, 'set', setId) : await countGrooves(null)
 
   const remembered = await rememberedFacets(db, setId, holds)
   if (remembered) return remembered
@@ -1260,6 +1304,7 @@ function order(name, pairs) {
 
 /** Everything, gone. */
 export async function clearImported() {
+  forgetCount()
   const db = await open()
   if (!db) return false
   // The graphs and the remembered dropdowns both describe a catalogue that is

@@ -89,6 +89,37 @@ async () => {
 }
 """
 
+# How big a batch should be.
+#
+# Two numbers pull against each other: how long before the first rows are on
+# screen, and how long before the last ones are. Small batches show something
+# almost at once and then spend their life in round trips; big ones are
+# efficient and leave the window empty while the first one is fetched. The
+# answer is a measurement, not a preference.
+BATCHES = r"""
+async ([sizes, ceiling]) => {
+  const app = window.__jaminApp
+  const out = []
+  for (const batch of sizes) {
+    const at = performance.now()
+    let first = 0
+    let rows = 0
+    await app.streamDrumRows((got) => {
+      if (!first) first = performance.now() - at
+      rows += got.length
+      return true
+    }, { batch, ceiling })
+    out.push({
+      batch,
+      first: Math.round(first),
+      all: Math.round(performance.now() - at),
+      rows,
+    })
+  }
+  return out
+}
+"""
+
 TIMINGS = """
 async ([which]) => {
   const app = window.__jaminApp
@@ -255,6 +286,13 @@ async () => {
   }
   const out = {}
 
+  // Inside the unfiltered query, which costs the same whatever limit it is
+  // given -- so the cost is not the rows. These are the two things it does
+  // besides fetching them.
+  const [counted, howMany] = await ms(() => app.countGrooves(null))
+  out.count = counted
+  out.counted = howMany
+
   // What the book asks for the moment it opens: one page of rows.
   const [page, first] = await ms(() => app.searchGrooves({}, { limit: 24, offset: 0 }))
   out.firstPage = page
@@ -362,6 +400,8 @@ async ([genre]) => {
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--which", default="drums", choices=["drums", "progressions"])
+    parser.add_argument("--batches", action="store_true",
+                        help="sweep the streaming batch size and report")
     parser.add_argument("--no-rebuild", action="store_true",
                         help="skip the rebuild and time whatever map is already stored")
     args = parser.parse_args()
@@ -409,6 +449,13 @@ def main():
                   f"in {built['ms'] / 1000:.1f}s -- the map now reads '{built['state']}'")
 
         found = page.evaluate(TIMINGS, [args.which])
+        if args.batches:
+            swept = page.evaluate(BATCHES, [[250, 500, 1000, 2000, 5000, 10000], 60000])
+            print("\n  batch   first rows    all 60,000")
+            for one in swept:
+                print(f"  {one['batch']:>6}   {one['first']:>7,} ms   {one['all']:>8,} ms")
+            print()
+
         found["queries"] = page.evaluate(QUERIES)
         book = "drums" if args.which == "drums" else "progressions"
         found["show"] = page.evaluate(SHOW, [args.which, book])
@@ -427,6 +474,7 @@ def main():
     q = found.get("queries") or {}
     if q:
         print(f"  --- the queries underneath, over {q['total']:,} rows")
+        print(f"  count     {q['count']:,} ms   (just counting {q['counted']:,} rows)")
         print(f"  page      {q['firstPage']:,} ms   (the list's first page)")
         print(f"  facets    {q['facets']:,} ms   (the filter dropdowns)")
         print(f"  filtered  {q['filterList']:,} ms   (one genre, a page of it: "

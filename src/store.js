@@ -511,6 +511,62 @@ export async function initApp() {
   const build = () => ensureLicks()
   if (typeof requestIdleCallback === 'function') requestIdleCallback(build, { timeout: 4000 })
   else setTimeout(build, 1200)
+
+  warmCaches()
+}
+
+/**
+ * What the books will want, fetched before anybody asks for it.
+ *
+ * Opening the drum book reads the map out of the database and counts the
+ * facet dropdowns. Neither is slow -- 230ms and about half a second -- but
+ * both happen at the one moment somebody is waiting, and they are the
+ * difference between a window that appears and a window that arrives. Done
+ * here they happen while the chart is being read instead, and the book opens
+ * on something already in hand.
+ *
+ * Between idle callbacks, one at a time. A plugin shares its message thread
+ * with the editor and with whatever the DAW is doing; three reads fired at
+ * once during startup is a stutter in the interface, which is worse than the
+ * wait it is saving.
+ *
+ * It reads what exists and builds nothing. Drawing a missing map is twenty
+ * seconds of walking the catalogue, and doing that unasked in the background
+ * would make the whole plugin sluggish at the moment it is least welcome --
+ * which is the fault this is meant to prevent, not commit. A missing map is
+ * still a question, asked where it can be seen. @see graphState
+ */
+let warmed = false
+
+export async function warmCaches() {
+  if (warmed) return
+  warmed = true
+
+  const idle = () => new Promise((go) => {
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(() => go(), { timeout: 3000 })
+    else setTimeout(go, 300)
+  })
+
+  const quietly = async (what, run) => {
+    // An import is already using the database and the message thread, and
+    // is a thing somebody asked for. Warming can wait for the next session.
+    if (state.drumImport.running) return
+    await idle()
+    try {
+      await timed(`warm:${what}`, run)
+    } catch {
+      /* a cache that would not fill is not a failure worth a toast */
+    }
+  }
+
+  await quietly('sets', () => refreshDrumSets())
+  if (!state.drumSets.length) return
+
+  // The map first: it is the thing that used to take three seconds and the
+  // thing somebody notices.
+  await quietly('map', () => storedGraph('drums'))
+  await quietly('facets', () => drumFacetsFor(state.drumFilters.set || ''))
+  await quietly('progressions', () => storedGraph('progressions'))
 }
 
 /**
@@ -3209,7 +3265,32 @@ export async function grooveForNode(path, label) {
  *                 false to stop, which is how a filter change abandons the
  *                 stream it no longer wants.
  */
-export async function streamDrumRows(onBatch, { batch = 2000, ceiling = 400000 } = {}) {
+/**
+ * How many rows to ask for at a time, measured rather than chosen.
+ *
+ * Two numbers pull against each other -- how soon the first rows are on
+ * screen and how soon the last ones are -- and swept over sixty thousand
+ * rows of the real catalogue they land here:
+ *
+ *      batch    first rows    all 60,000
+ *        500          4 ms        410 ms
+ *       1000          7 ms        384 ms
+ *       2000         11 ms        372 ms
+ *       5000         27 ms        363 ms
+ *      10000         56 ms        401 ms
+ *
+ * Two thousand is the corner: eleven milliseconds to something on screen and
+ * within three per cent of the best total. Bigger buys nothing and costs the
+ * first paint; smaller costs the whole.
+ *
+ * Swept before the row count was cached, the same table read 120,729ms at
+ * 250 and 15,371ms at 2000 -- every batch was paying 510ms to recount the
+ * store. The batch size was never the problem, which is the sort of thing a
+ * sweep is for. @see core/drumStore.js countGrooves
+ */
+const BATCH = 2000
+
+export async function streamDrumRows(onBatch, { batch = BATCH, ceiling = 400000 } = {}) {
   let after = null
   let sent = 0
 
@@ -4661,7 +4742,7 @@ function smallList(query) {
  * in one place. @see components/ProgressionBook.vue
  */
 export async function streamProgressions(onBatch, query = '', filters = {},
-                                         { batch = 2000, ceiling = 200000 } = {}) {
+                                         { batch = BATCH, ceiling = 200000 } = {}) {
   let at = 0
   for (;;) {
     const got = await progressionPage(at, batch, query, filters)
@@ -4833,5 +4914,6 @@ if (typeof window !== 'undefined') {
     graphState,
     forgetCatalogueGraph,
     countGrooves,
+    streamDrumRows,
   }
 }
