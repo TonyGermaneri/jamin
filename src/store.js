@@ -2040,9 +2040,31 @@ async function runImport(progress) {
     if (!ok) break
   }
 
+  await refreshDrumSets()
+
+  /*
+   * And the map, now, while somebody is already watching a progress bar.
+   *
+   * It used to be drawn the first time the book was opened, which is twenty
+   * seconds of nothing in a plugin window -- reported as "the initial graph
+   * load is really bad (10-15s)" and it was. Nothing rebuilt it either, so
+   * importing a second library left a map that disagreed with the rows and
+   * a panel saying the map was older than the library.
+   *
+   * Here it costs nothing extra in attention: the import is already a wait,
+   * and this is the last few seconds of it. @see graphState
+   */
+  progress.pack = 'Drawing the map'
+  await forgetCatalogueGraph('drums')
+  try {
+    await buildBulkGraph('drums', { onProgress: (n) => { progress.read = n } })
+  } catch (error) {
+    // A map that could not be drawn is not a failed import: everything plays.
+    noteError(error, 'drawing the map of the catalogue')
+  }
+
   progress.running = false
   progress.pack = ''
-  await refreshDrumSets()
   await rememberBoundGrooves()
 
   // Show what just arrived. Importing fifty libraries and being left looking at
@@ -2484,6 +2506,15 @@ export async function importDrumFolder(files, name) {
   })
   await refreshDrumSets()
 
+  // And the map, while the wait is already being had. @see importDrumFolderByReference
+  progress.name = 'Drawing the map'
+  await forgetCatalogueGraph('drums')
+  try {
+    await buildBulkGraph('drums', { onProgress: (n) => { progress.read = n } })
+  } catch (error) {
+    noteError(error, 'drawing the map of the catalogue')
+  }
+
   progress.running = false
   toast(progress.trouble
     ? progress.trouble
@@ -2555,6 +2586,9 @@ export async function forgetEveryDrumSet() {
   state.drumRemoval = { running: false, name: '', done: 0, total: 0 }
   state.drumFilters.set = ''
   state.drumFilters.source = 'all'
+  // The map described those rows. Nothing ever threw it away, which is how a
+  // catalogue came to be drawn from libraries that were no longer in it.
+  await forgetCatalogueGraph('drums')
   await refreshDrumSets()
   await searchDrums(state.drumFilters)
   state.drumCounts = {}
@@ -2576,8 +2610,10 @@ export async function forgetDrumSet(id) {
     state.drumRemoval = { running: false, name: '', done: 0, total: 0 }
   }
 
-  // Whatever was being shown out of it is not there any more.
+  // Whatever was being shown out of it is not there any more -- including
+  // the part of the map that was drawn from it.
   if (state.drumFilters.set === id) state.drumFilters.set = ''
+  await forgetCatalogueGraph('drums')
   await refreshDrumSets()
   await searchDrums()
   toast(`${name} removed`)
@@ -2939,6 +2975,60 @@ async function shelveTheCorpus(list) {
  * somebody asks and never because a view was opened. The same rule as the
  * filter indexes. @see buildIndexes
  */
+/**
+ * What a map was built from, so it can be told when it is out of date.
+ *
+ * Cheap on purpose: a row count is answered from IndexedDB's own
+ * bookkeeping rather than by reading anything, and the number of libraries
+ * is already in memory. That matters because this is asked every time a book
+ * opens, and the whole point is to avoid the twenty seconds the alternative
+ * costs.
+ *
+ * It catches what actually happens -- a library imported, a library erased,
+ * a catalogue cleared. It does not catch a library whose contents changed
+ * underneath jamin with the count unchanged, and nothing short of reading
+ * the whole thing would.
+ */
+export async function catalogueStamp(which) {
+  if (which === 'progressions') {
+    return { clips: await countProgressions(), sets: 1 }
+  }
+  return { clips: await countGrooves(null), sets: state.drumSets.length }
+}
+
+/**
+ * Whether the stored map still describes the catalogue.
+ *
+ * `missing` means there is none; `stale` means the catalogue has moved on
+ * since it was drawn; `current` means it can be used as it is.
+ *
+ * Nothing rebuilds on the strength of this. Rebuilding is twenty seconds and
+ * a book that quietly spends twenty seconds is a book that looks broken --
+ * which is exactly how this was reported. The view asks, and then asks
+ * somebody. @see components/DrumBook.vue
+ */
+export async function graphState(which) {
+  const now = await catalogueStamp(which)
+  const held = await readGraph(which)
+  const then = (held && held.stamp) || {}
+  const how = !held || !held.nodes ? 'missing'
+    : (then.clips === now.clips && then.sets === now.sets) ? 'current' : 'stale'
+
+  /*
+   * And whether drawing it would be a wait worth asking about.
+   *
+   * The reason to ask is the twenty seconds, so asking is only right when
+   * there will be twenty seconds. A catalogue of a thousand patterns draws
+   * in a few milliseconds and should simply be drawn -- putting "there is no
+   * map yet, rebuild?" in front of somebody who could have had one before
+   * they read the sentence is worse than the silence it replaced.
+   *
+   * Twenty thousand clips is about a fifth of a second of buildTree, which
+   * is measured rather than guessed. @see scripts/graph_check.py
+   */
+  return { how, clips: now.clips, quick: now.clips <= 20000 }
+}
+
 export async function buildBulkGraph(which, { onProgress = null } = {}) {
   const walker = which === 'drums' ? everyPath : everyProgressionText
   const rows = []
@@ -2966,6 +3056,9 @@ export async function buildBulkGraph(which, { onProgress = null } = {}) {
     truncated: tree.truncated,
     clips: seen,
     builtAt: Date.now(),
+    // What it was drawn from, so the next opening can tell whether it still
+    // describes the catalogue. @see graphState
+    stamp: await catalogueStamp(which),
   }
 
   await writeGraph(which, graph)

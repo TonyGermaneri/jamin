@@ -158,8 +158,22 @@ export class TreeGraph {
      * it impossible for reading it to move it.
      */
     this.zoom = zoom().scaleExtent([0.02, 40])
+      // A drag that starts on a node moves the node; one that starts on the
+      // ground moves the view. Without this the two fight and a node cannot
+      // be picked up at all.
+      .filter((event) => {
+        if (event.type === 'wheel') return true
+        if (event.button) return false
+        return !this.spotOf(event)
+      })
       .on('zoom', (event) => { this.at = event.transform; this.paintSoon() })
     select(this.canvas).call(this.zoom)
+
+    /** What is being dragged, and everything that came with it. */
+    this.dragging = null
+    this.canvas.addEventListener('mousedown', this.onDown)
+    window.addEventListener('mousemove', this.onDrag)
+    window.addEventListener('mouseup', this.onUp)
 
     /*
      * The forces, and what each one is for.
@@ -170,9 +184,17 @@ export class TreeGraph {
      *          into the ring a force graph is recognised by.
      * collide  is "push other nodes a bit if they are in the way". It acts on
      *          the drawn radius, so a big node takes the room it occupies.
-     * x, y     pull each node gently towards its parent -- weak enough not to
-     *          fight the bloom, strong enough that a branch stays with its
-     *          branch rather than wandering off across the map.
+     * x, y     hold the whole picture around the origin, very weakly.
+     *
+     * These used to pull each node towards its parent, which sounds better
+     * and is wrong: d3 reads a force's accessor once, when the nodes are
+     * handed over, so "the parent's position" was frozen at the moment of
+     * the last rebuild. A node whose parent then moved was pulled towards
+     * where its parent used to be, and the picture crept -- measured, the
+     * map lost three of its thirty labels over nine seconds as nodes
+     * wandered off the edge. Holding branches together is the link force's
+     * job and it does it live; all these have to do is stop the whole thing
+     * drifting away from the middle.
      */
     this.sim = forceSimulation([])
       .force('link', forceLink([]).id((one) => one.at)
@@ -180,8 +202,8 @@ export class TreeGraph {
         .strength(0.7))
       .force('charge', forceManyBody().strength(-220).distanceMax(700))
       .force('collide', forceCollide().radius((one) => one.r + 5).iterations(2))
-      .force('x', forceX((one) => one.homeX).strength(0.04))
-      .force('y', forceY((one) => one.homeY).strength(0.04))
+      .force('x', forceX(0).strength(0.012))
+      .force('y', forceY(0).strength(0.012))
       .stop()
 
     this.sim.on('tick', () => { this.tree = null; this.paint() })
@@ -334,11 +356,7 @@ export class TreeGraph {
     const spread = Math.max(1, wanted.length)
     for (const at of wanted) if (!this.live.has(at)) this.live.set(at, this.bornAt(at, spread))
 
-    // Where each node is pulled towards: its parent, or the middle.
     for (const seat of this.live.values()) {
-      const up = this.live.get(this.source.parents[seat.at])
-      seat.homeX = up ? up.x : 0
-      seat.homeY = up ? up.y : 0
       seat.shut = this.hasChildren(seat.at) && !this.open.has(seat.at)
     }
 
@@ -409,8 +427,6 @@ export class TreeGraph {
       colour: this.colourOf(node, this.familyOf(at)),
       x: (up ? up.x : 0) + Math.cos(angle) * push,
       y: (up ? up.y : 0) + Math.sin(angle) * push,
-      homeX: up ? up.x : 0,
-      homeY: up ? up.y : 0,
       shut: this.hasChildren(at) && !this.open.has(at),
     }
   }
@@ -520,6 +536,11 @@ export class TreeGraph {
 
   closeAll() {
     if (!this.source) return
+    // And whatever was dragged into place. Collapsing is the "start again"
+    // gesture, and a pinned node surviving it would be a ghost of an
+    // arrangement nobody can see any more.
+    for (const seat of this.live.values()) { seat.fx = null; seat.fy = null }
+    if (this.pinned) this.pinned.clear()
     this.open.clear()
     this.chosen = -1
     this.rebuild({ heat: 0.4 })
@@ -644,6 +665,88 @@ export class TreeGraph {
     this.paintSoon()
   }
 
+  /**
+   * Picking a node up.
+   *
+   * The branch comes with it: dragging a folder and watching its contents
+   * stay behind is the picture coming apart, not the folder moving. Every
+   * descendant on screen is carried by the same offset, and the forces are
+   * left running so whatever is in the way gets out of it.
+   */
+  onDown = (event) => {
+    if (event.button) return
+    const found = this.spotOf(event)
+    if (!found) return
+
+    const carried = this.descendantsOf(found.at)
+    this.dragging = {
+      at: found.at,
+      from: this.at.invert([event.clientX - this.canvas.getBoundingClientRect().left,
+        event.clientY - this.canvas.getBoundingClientRect().top]),
+      moved: 0,
+      held: carried.map((seat) => ({ seat, x: seat.x, y: seat.y })),
+    }
+    for (const { seat } of this.dragging.held) { seat.fx = seat.x; seat.fy = seat.y }
+    this.sim.alphaTarget(0.12).restart()
+    event.preventDefault()
+  }
+
+  onDrag = (event) => {
+    if (!this.dragging) return
+    const box = this.canvas.getBoundingClientRect()
+    const [x, y] = this.at.invert([event.clientX - box.left, event.clientY - box.top])
+    const dx = x - this.dragging.from[0]
+    const dy = y - this.dragging.from[1]
+    this.dragging.moved = Math.max(this.dragging.moved, Math.hypot(dx, dy) * this.at.k)
+
+    for (const one of this.dragging.held) {
+      one.seat.fx = one.x + dx
+      one.seat.fy = one.y + dy
+      one.seat.x = one.seat.fx
+      one.seat.y = one.seat.fy
+    }
+    this.tree = null
+    this.paintSoon()
+  }
+
+  onUp = () => {
+    if (!this.dragging) return
+    /*
+     * Dropped, and left there.
+     *
+     * The node keeps the place it was put -- that is what repositioning
+     * means, and a graph that springs back the moment you let go cannot be
+     * arranged. Its children are let go of, so the branch relaxes around the
+     * new position instead of staying in the rigid shape it was carried in.
+     */
+    const { at } = this.dragging
+    for (const one of this.dragging.held) {
+      if (one.seat.at === at) continue
+      one.seat.fx = null
+      one.seat.fy = null
+    }
+    this.pinned = this.pinned || new Set()
+    this.pinned.add(at)
+    this.sim.alphaTarget(0).alpha(0.3).restart()
+    this.wasDrag = this.dragging.moved > 4
+    this.dragging = null
+  }
+
+  /** Every node on screen under this one, itself included. */
+  descendantsOf(at) {
+    const out = []
+    const queue = [at]
+    for (let i = 0; i < queue.length; i++) {
+      const seat = this.live.get(queue[i])
+      if (!seat) continue
+      out.push(seat)
+      for (const child of this.childrenOf(queue[i])) {
+        if (this.live.has(child)) queue.push(child)
+      }
+    }
+    return out
+  }
+
   onLeave = () => {
     if (this.hovered < 0) return
     this.hovered = -1
@@ -661,6 +764,9 @@ export class TreeGraph {
    * describing. So a click does both, and clicking again closes it.
    */
   onTap = (event) => {
+    // A drag ends in a click event too. Four pixels is further than a hand
+    // moves while pressing a button and nowhere near a deliberate drag.
+    if (this.wasDrag) { this.wasDrag = false; return }
     const found = this.spotOf(event)
     if (!found) return
     this.chosen = found.at
@@ -824,6 +930,9 @@ export class TreeGraph {
     this.canvas.removeEventListener('mouseleave', this.onLeave)
     this.canvas.removeEventListener('click', this.onTap)
     this.canvas.removeEventListener('dblclick', this.onDoubleTap)
+    this.canvas.removeEventListener('mousedown', this.onDown)
+    window.removeEventListener('mousemove', this.onDrag)
+    window.removeEventListener('mouseup', this.onUp)
     select(this.canvas).on('.zoom', null)
     this.canvas.remove()
     this.ctx = null

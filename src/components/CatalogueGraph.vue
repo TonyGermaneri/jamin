@@ -258,6 +258,11 @@ function build() {
         return Boolean(found)
       },
       shutOnes: () => graph.drawn.filter((one) => one.shut).map((one) => one.label),
+      // Actually childless, which `shutOnes` does not say: an open branch is
+      // not shut either, and a check that took "not shut" for "leaf" was
+      // clicking the root and reporting success.
+      leaves: () => graph.drawn.filter((one) => !graph.hasChildren(one.at))
+        .map((one) => one.label),
       // How far down the picture currently goes, so the harness can say that
       // a catalogue opens at its top level rather than pouring its second
       // level onto the screen.

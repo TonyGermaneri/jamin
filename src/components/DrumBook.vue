@@ -40,6 +40,7 @@ import {
   clearEverySlot,
   storedGraph,
   buildBulkGraph,
+  graphState,
   treeOf,
   drumRowsForGraph,
   aimedElsewhere,
@@ -384,7 +385,11 @@ const sorts = computed(() => (ADAPTERS.drums.sorts || []))
  * is fine because this only runs when something changes.
  */
 
+/** `missing`, `stale`, or empty when the map is in step. @see store.graphState */
+const mapIsOld = ref('')
+
 async function drawTheMap() {
+  mapIsOld.value = ''
   building.value = true
   drawn.value = 0
   try {
@@ -1020,10 +1025,34 @@ async function refreshTree() {
   const mine = ++drawing
 
   if (!filtered.value && !sortBy.value) {
+    /*
+     * Never rebuild because a window opened.
+     *
+     * Drawing the map of a real catalogue reads three quarters of a million
+     * rows and takes the better part of twenty seconds. This used to do it
+     * silently whenever there was no stored map -- so opening the book after
+     * an import was ten to fifteen seconds of an empty window, every time,
+     * with nothing to say why. And nothing ever threw the old map away, so
+     * once there was one it stayed wrong: importing a second library left a
+     * map drawn from the first, and picking a pattern in it said the map was
+     * older than the library, which it was.
+     *
+     * The map is drawn at import now, where the wait is already being had.
+     * What is left here is the case where it is missing or out of step
+     * anyway -- an older session, a library removed by hand -- and that is a
+     * question rather than a decision. @see store.js graphState
+     */
+    const said = await graphState('drums')
+    if (mine !== drawing) return
+
     const kept = await storedGraph('drums')
     if (mine !== drawing) return
-    if (kept) { graph.value = kept; return }
-    await drawTheMap()
+    if (kept) graph.value = kept
+    if (said.how === 'current') return
+
+    // Small enough that drawing it is quicker than reading the question.
+    if (said.quick) { await drawTheMap(); return }
+    mapIsOld.value = said.how
     return
   }
 
@@ -1105,7 +1134,13 @@ onMounted(refreshTree)
 </script>
 
 <template>
-  <v-card-title class="d-flex align-center">
+  <!-- The title strip, which the map does without.
+
+       Forty pixels of "Drum book" over a view whose whole job is to fill the
+       screen, on top of the window chrome that already says which book this
+       is. What was actually useful on it -- the count, the warning, the dice
+       -- sits on the glass with the filters instead. -->
+  <v-card-title v-if="!asGraph" class="d-flex align-center">
         <v-icon size="18" class="mr-2">mdi-circle-multiple-outline</v-icon>
         <span class="text-body-1">Drum book</span>
         <!-- Whose drums. Every change below is a request when it is not this
@@ -1132,7 +1167,7 @@ onMounted(refreshTree)
         </v-btn>
       </v-card-title>
 
-      <v-tabs v-model="state.ui.drumsTab">
+      <v-tabs v-if="!asGraph" v-model="state.ui.drumsTab">
         <!-- Everything there is, not the half of it this page used to be able
              to count. @see store.shelveTheCorpus -->
         <v-tab value="grooves">Grooves ({{ everything.toLocaleString() }})</v-tab>
@@ -1161,6 +1196,24 @@ onMounted(refreshTree)
               @pick="pickNode"
             >
               <template #filters>
+                <!-- What the title strip used to carry, on the line it can
+                     share with the filters rather than on one of its own. -->
+                <div class="jamin-map-aside">
+                  <span class="jamin-map-count-inline">
+                    {{ everything.toLocaleString() }} patterns
+                  </span>
+                  <span v-if="waiting" class="text-warning">
+                    {{ waiting }} part{{ waiting === 1 ? '' : 's' }} with no groove
+                  </span>
+                  <v-spacer />
+                  <v-btn icon size="x-small" variant="text" :disabled="!found"
+                         aria-label="A random groove from this list" @click="roll">
+                    <v-icon size="17">mdi-dice-5-outline</v-icon>
+                    <v-tooltip activator="parent" location="bottom">
+                      One of the {{ found.toLocaleString() }} the filters are showing
+                    </v-tooltip>
+                  </v-btn>
+                </div>
                 <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify"
                               clearable density="compact" variant="solo-filled" flat hide-details />
                 <v-select v-model="library" :items="libraries"
@@ -1195,6 +1248,28 @@ onMounted(refreshTree)
               </template>
 
               <template #detail>
+                <!-- The map does not describe the catalogue any more. Asked
+                     rather than acted on: redrawing it reads three quarters
+                     of a million rows, and a window that silently spends
+                     twenty seconds looks broken. -->
+                <v-alert v-if="mapIsOld" type="warning" variant="tonal" density="compact"
+                         class="mb-3">
+                  <div class="text-body-2 mb-2">
+                    <span v-if="mapIsOld === 'missing'">There is no map of this catalogue yet.</span>
+                    <span v-else>The map is out of date — the catalogue has changed since
+                      it was drawn.</span>
+                  </div>
+                  <div class="d-flex ga-2">
+                    <v-btn size="small" variant="flat" color="warning" class="text-none"
+                           :loading="building" @click="drawTheMap">Rebuild</v-btn>
+                    <v-btn size="small" variant="text" class="text-none"
+                           @click="mapIsOld = ''">Cancel</v-btn>
+                  </div>
+                  <div v-if="building" class="text-caption mt-2">
+                    {{ drawn.toLocaleString() }} read
+                  </div>
+                </v-alert>
+
                 <div v-if="!node && !selected"
                      class="text-caption text-medium-emphasis py-6 text-center">
                   Pick anything on the map to see what is in it.

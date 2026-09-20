@@ -1089,8 +1089,11 @@ body,
   flex-direction: column;
   /* Thin enough to see the map through. It was 0.82, which reads as a wall
      with a picture underneath rather than as something floating on one. */
-  background: rgba(var(--v-theme-surface), 0.38);
-  backdrop-filter: blur(22px) saturate(140%);
+  /* Nearly clear, so the map runs right under it. The blur is what keeps
+     the text legible at this little tint -- without it the filters would be
+     unreadable over a bright branch. */
+  background: rgba(var(--v-theme-surface), 0.05);
+  backdrop-filter: blur(26px) saturate(150%);
   border-bottom: 1px solid rgba(var(--v-border-color), 0.10);
 }
 
@@ -1152,6 +1155,24 @@ body,
   font-size: 11px;
 }
 
+/* The line the title strip used to be. Shares the filter grid's full width
+   so the count sits left and the dice right, on a row that was already
+   there. */
+.jamin-map-aside {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: rgba(var(--v-theme-on-surface), 0.66);
+  padding: 2px 2px 0;
+}
+
+.jamin-map-count-inline {
+  font-weight: 600;
+  color: rgba(var(--v-theme-on-surface), 0.85);
+}
+
 /* The one control in the filter row that is not a field. Squeezed to the
    same height so it sits in the row rather than setting its height. */
 .jamin-map-switch {
@@ -1187,8 +1208,8 @@ body,
   /* Glass, like everything else floating over the map. Denser than the bars
      because this one holds a piano roll and a row of pills, and those have
      to be readable over whatever is behind them. */
-  background: rgba(var(--v-theme-surface), 0.55);
-  backdrop-filter: blur(24px) saturate(140%);
+  background: rgba(var(--v-theme-surface), 0.05);
+  backdrop-filter: blur(26px) saturate(150%);
   border: 1px solid rgba(var(--v-border-color), 0.14);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
 }
@@ -1278,8 +1299,8 @@ body,
 .jamin-book-mapped .v-overlay__content > .v-card > .v-tabs {
   position: relative;
   z-index: 3;
-  background: rgba(var(--v-theme-surface), 0.38);
-  backdrop-filter: blur(22px) saturate(140%);
+  background: rgba(var(--v-theme-surface), 0.05);
+  backdrop-filter: blur(26px) saturate(150%);
   border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.06);
 }
 

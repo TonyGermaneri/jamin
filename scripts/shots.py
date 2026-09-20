@@ -101,6 +101,7 @@ def main():
         print(f"  {startsSmall(page)}")
         print(f"  {openingKeepsIt(page)}")
         print(f"  {openingStaysPut(page)}")
+        print(f"  {labelsStay(page)}")
         print(f"  {clickingStaysPut(page)}")
         print(f"  {eachCatalogue(page)}\n")
 
@@ -408,6 +409,24 @@ def clickingStaysPut(page):
     if target["label"] not in said:
         return f"FAIL clicking {target['label']!r} said nothing: {said!r}"
     return f"ok   clicking {target['label']!r} filled the panel and left the camera alone"
+
+
+def labelsStay(page):
+    """Do the names survive being left alone?
+
+    Reported as "the labels vanish after a moment", which is a thing no
+    screenshot taken a second after loading can see. So this counts them,
+    waits the way somebody looking at a map waits, and counts again. It
+    caught the cause: the picture was creeping, and the names were going off
+    the edge with the nodes they belonged to.
+    """
+    first = page.evaluate("() => window.__jaminTreeProbe.labels()")
+    page.wait_for_timeout(9000)
+    later = page.evaluate("() => window.__jaminTreeProbe.labels()")
+    showing = page.evaluate("() => window.__jaminTreeProbe.showing()")
+    if later < first * 0.9:
+        return f"FAIL the names faded away: {first} -> {later} over {showing} nodes"
+    return f"ok   the names stay: {first} -> {later} after nine seconds"
 
 
 def eachCatalogue(page):
