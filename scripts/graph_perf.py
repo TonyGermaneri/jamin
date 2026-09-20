@@ -364,13 +364,38 @@ async () => {
    */
   const tree = await app.storedGraph('drums')
   if (tree) {
-    const leaf = tree.nodes.findIndex((one, at) =>
-      one.leaf && tree.childAt && tree.childAt[at + 1] === tree.childAt[at])
-    if (leaf >= 0) {
-      const path = []
-      for (let up = leaf; up >= 0; up = tree.parents[up]) path.unshift(tree.nodes[up].label)
-      const got = await app.grooveForNode(path, tree.nodes[leaf].label)
+    /*
+     * A leaf under a shelved folder, which is the case that was broken.
+     *
+     * A level wider than 64 is broken into named shelves -- `00032… –
+     * 00034…` -- and those are the map's own invention: no such folder
+     * exists. Handing them out as part of a path produced something that
+     * matched nothing, so every clip under a wide folder came back "not in
+     * the database" on a library imported a minute earlier. Any leaf will
+     * do for the ordinary case; this looks for one with a shelf over it.
+     */
+    const pathOf = (leaf) => {
+      const up = []
+      for (let at = leaf; at >= 0; at = tree.parents[at]) up.unshift(tree.nodes[at])
+      return up
+    }
+    const childless = (at) => tree.childAt && tree.childAt[at + 1] === tree.childAt[at]
+
+    let leaf = -1
+    let shelved = -1
+    for (let at = 0; at < tree.nodes.length && shelved < 0; at++) {
+      if (!tree.nodes[at].leaf || !childless(at)) continue
+      if (leaf < 0) leaf = at
+      if (pathOf(at).some((one) => one.shelf)) shelved = at
+    }
+
+    const which = shelved >= 0 ? shelved : leaf
+    if (which >= 0) {
+      const up = pathOf(which)
+      const path = up.filter((one) => !one.shelf).map((one) => one.label)
+      const got = await app.grooveForNode(path, tree.nodes[which].label)
       out.leaf = path.slice(-2).join('/')
+      out.leafShelved = shelved >= 0
       out.leafFound = Boolean(got)
     }
   }
@@ -572,7 +597,8 @@ def main():
         print(f"  count     {q['count']:,} ms   (just counting {q['counted']:,} rows)")
         if "leaf" in q:
             mark = "ok  " if q["leafFound"] else "FAIL"
-            print(f"  {mark}      a clip on the map resolves to a row -- {q['leaf']}")
+            under = " (under a shelf)" if q.get("leafShelved") else ""
+            print(f"  {mark}      a clip on the map resolves to a row{under} -- {q['leaf']}")
         print(f"  page      {q['firstPage']:,} ms   (the list's first page)")
         print(f"  facets    {q['facets']:,} ms   (the filter dropdowns)")
         print(f"  filtered  {q['filterList']:,} ms   (one genre, a page of it: "

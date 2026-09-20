@@ -520,19 +520,22 @@ async function bringIndexesUpToDate() {
     The catalogue is using {{ inGigabytes(state.drumStorage.usage) }} of the
     {{ inGigabytes(state.drumStorage.quota) }} this machine will give it.
     <InfoTip>
-      None of that is the MIDI: the files stay where they are and the catalogue
-      holds pointers. What it holds is one row per pattern — its name, path, folder,
-      genre, tempo, length and tags — and <strong>ten indexes over those rows</strong>,
-      each of which is another copy of one field plus a key, which is what makes a
-      filter answer without reading anything.
+      None of it is the MIDI: the files stay where they are and this holds pointers.
+      Measured on 774,268 patterns, what jamin puts in there is
+      <strong>232 MB of rows</strong> — a name, a path, a folder, genre, tempo,
+      length and tags, about 300 bytes each — <strong>925 MB of indexes</strong>,
+      and <strong>77 MB of map</strong>. About 1.2 GB.
       <br /><br />
-      The rest is the browser. IndexedDB keeps superseded copies of what it has
-      written until it compacts, and it compacts when it feels like it — an import
-      run twice can leave two of everything for a while. Erasing a library and
-      re-importing it is the way to make it let go.
+      The indexes are the big half and they are the reason a filter answers at all.
+      There are nineteen: one per thing you can narrow by, and one per thing paired
+      with the library it is in. Each entry is its key plus the row's key — and the
+      row's key is a nine-character hash, not a filename, so there is no long string
+      being copied nineteen times.
       <br /><br />
-      Measured here: 774,268 patterns are about 155 MB of rows and 77 MB of map.
-      Anything much past half a gigabyte is the browser holding on, not jamin.
+      Anything past about 1.2 GB is the browser rather than jamin. IndexedDB keeps
+      superseded copies of what it has written until it compacts, and it compacts
+      when it feels like it — importing over a catalogue can leave two of everything
+      for a while. Erasing the libraries and importing again is how to make it let go.
     </InfoTip>
   </div>
 

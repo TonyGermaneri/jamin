@@ -231,8 +231,7 @@ function build() {
        * reduced to looking the name up among the rows the list happened to
        * be showing, so clicking a file did nothing.
        */
-      emit('pick', graph.source.nodes[seat.at], seat.at,
-        graph.ancestorsOf(seat.at).map((up) => graph.source.nodes[up].label))
+      emit('pick', graph.source.nodes[seat.at], seat.at, pathTo(seat.at))
       refreshLabels()
     },
     onHover: (seat) => { hovering.value = seat ? seat.label : null },
@@ -318,6 +317,26 @@ function fit() {
   engine.value?.fitView?.()
 }
 
+/**
+ * The path to a node, as folders only.
+ *
+ * A wide level is broken into named shelves -- `00032… – 00034…` -- so that
+ * a folder with four thousand children is readable. Those shelves are the
+ * map's own invention and no such folder exists, so handing them out as
+ * part of a path produced something that matched nothing in the database:
+ * a clip picked anywhere under a shelved folder came back "not in the
+ * database — the map is older than the library" on a library imported one
+ * minute earlier. @see core/pathTree.js capFanOut, which marks them.
+ */
+function pathTo(at) {
+  const graph = engine.value
+  if (!graph || !graph.source) return []
+  return graph.ancestorsOf(at)
+    .map((up) => graph.source.nodes[up])
+    .filter((one) => !one.shelf)
+    .map((one) => one.label)
+}
+
 /** The way back up, as a line of names. */
 const where = computed(() => {
   const graph = engine.value
@@ -335,8 +354,7 @@ function jump(at) {
   here.value = at
   graph.chosen = at
   graph.zoomToPoint?.(at)
-  emit('pick', graph.source.nodes[at], at,
-    graph.ancestorsOf(at).map((up) => graph.source.nodes[up].label))
+  emit('pick', graph.source.nodes[at], at, pathTo(at))
 }
 
 /* ---------------- what was left open ----------------------------------
