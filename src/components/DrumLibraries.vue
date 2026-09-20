@@ -26,7 +26,9 @@ import {
   buildIndexes,
   indexesAreCurrent,
 } from '../store.js'
-import { DRUM_KITS, DEFAULT_KIT, kitById, mapDrumNote } from '../core/drumKits.js'
+import {
+  DEFAULT_KIT, kitById, mapDrumNote, inboundReadings,
+} from '../core/drumKits.js'
 import DrumLibraryNotes from './DrumLibraryNotes.vue'
 import InfoTip from './InfoTip.vue'
 
@@ -34,6 +36,27 @@ const settings = computed(() => state.settings.drums)
 
 /** What a library written before kits were always named falls back to. */
 const defaultKitId = DEFAULT_KIT
+
+/**
+ * The ways a note can be read, rather than the kits that read them.
+ *
+ * Six kits, two readings: five of them use General MIDI's numbering, which
+ * is the right answer for all five because every one of those samplers
+ * ships a General MIDI preset. Offering six names for two behaviours made
+ * the classifier look broken -- every library came back "General MIDI" and
+ * there was no way to tell a correct verdict from a detector that only knew
+ * one word -- and made four of the six choices do nothing at all.
+ * @see core/drumKits.js inboundReadings
+ */
+const readings = inboundReadings()
+
+/** Which reading a library's stored kit belongs to. */
+function readingOf(set) {
+  const kit = set.kit || defaultKitId
+  const found = readings.find((one) => one.id === kit
+    || one.also.includes(kitById(kit).name))
+  return found ? found.id : defaultKitId
+}
 
 const folderInput = ref(null)
 
@@ -53,11 +76,35 @@ function inGigabytes(bytes) {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`
 }
 
-/** Everything the sampling found, minus the note tallies, which are machinery
-    rather than something to read. */
+/** Everything the sampling found, minus the tallies and the two facts the
+    sentence above already says in words. */
 function setFacts(set) {
-  const { pitches, pitchUse, ...rest } = set.facts || {}
+  const { pitches, pitchUse, range, kit, ...rest } = set.facts || {}
   return rest
+}
+
+/**
+ * How wide this library's numbering is, said as a sentence.
+ *
+ * `facts.range` and `facts.kit` were printed as they are stored -- "range
+ * 22-95" and "kit uses notes below General MIDI" -- which is a machine
+ * talking to itself. The two of them together say one thing worth knowing:
+ * the library plays notes the standard does not name, and that is where the
+ * unplayable share above comes from. Saying them separately, in those
+ * words, left somebody looking at two labels and a percentage with no line
+ * drawn between them.
+ */
+function spread(set) {
+  const notes = (set.facts && set.facts.pitches) || []
+  if (!notes.length) return ''
+
+  const low = notes[0]
+  const high = notes[notes.length - 1]
+  const outside = notes.filter((one) => one < 35 || one > 81).length
+  if (!outside) return `Notes ${low}–${high}, all of them named by General MIDI.`
+
+  return `Notes ${low}–${high}. ${outside} of the ${notes.length} it uses are outside `
+    + 'General MIDI’s 35–81, which is where the silent ones come from.'
 }
 
 /**
@@ -317,13 +364,43 @@ async function bringIndexesUpToDate() {
     />
   </div>
 
+  <!--
+    The two halves of the journey, said once, at the top.
+
+    "Every library says General MIDI and changing it does nothing" was a
+    fair reading of what was here: six kits were offered and five of them
+    read a note identically, so four of the six choices did nothing at all
+    and the detector had only one word to answer with. It now offers the
+    readings there are.
+  -->
+  <div v-if="state.drumSets.length" class="text-caption text-medium-emphasis mb-2">
+    A note read <em>in</em> here becomes one of jamin’s forty voices; the Kit tab decides
+    which note each voice goes <em>out</em> on. This column is the first half — what the
+    files were written in — and it is a fact about the files, not a preference.
+    <InfoTip>
+      There are two readings because there are two. General MIDI, the TR-8S, Ableton’s
+      Drum Rack, Addictive Drums 2 and Abbey Road all read a note the same way: those
+      samplers ship a General MIDI preset and their own layouts carry more articulations
+      than this vocabulary has voices, so the GM preset is the accurate route rather than
+      a guess at a proprietary layout. Set your sampler to its GM map and this is correct.
+      <br /><br />
+      The V-Drums read differently because the shipped corpus was played on one — a TD-11
+      puts its hat edge on 22 and 26 and its floor-tom rim on 58, where General MIDI has a
+      vibraslap.
+      <br /><br />
+      Notes outside the standard’s 35–81 are a library’s own articulations. No published
+      table names them, so jamin does not guess: “Name them” is where you say what they
+      are, once, per library.
+    </InfoTip>
+  </div>
+
   <v-table v-if="state.drumSets.length" density="compact">
     <thead>
       <tr>
         <th class="text-caption">Library</th>
         <th class="text-caption">Patterns</th>
-        <th class="text-caption">Kit its notes were written for</th>
-        <th class="text-caption">What it says about itself</th>
+        <th class="text-caption">How its notes are read</th>
+        <th class="text-caption">What is in it</th>
         <th />
       </tr>
     </thead>
@@ -355,8 +432,8 @@ async function bringIndexesUpToDate() {
                files; it does not change because somebody picked a
                different drum instrument for the track. -->
           <v-select
-            :model-value="set.kit || defaultKitId"
-            :items="DRUM_KITS.map((k) => ({ title: k.name, value: k.id }))"
+            :model-value="readingOf(set)"
+            :items="readings.map((one) => ({ title: one.label, value: one.id }))"
             density="compact" hide-details variant="plain"
             @update:model-value="setDrumSetKit(set.id, $event)"
           />
@@ -389,7 +466,7 @@ async function bringIndexesUpToDate() {
                  written in somebody's numbering; when it is written in
                  its own, no map is, and this is. -->
             <v-btn size="x-small" variant="text" class="text-none ml-1 px-1"
-                   @click="teaching = set.id">Tell jamin what they are</v-btn>
+                   @click="teaching = set.id">Name them</v-btn>
           </div>
           <!-- Why, when the classifier gave up. A pack of chromatic
                runs is how a sample library indexes itself and is not a
@@ -406,6 +483,15 @@ async function bringIndexesUpToDate() {
               {{ Object.keys(set.folderKits).length.toLocaleString() }} with a map of
               their own</span>
           </div>
+          <!-- What the notes themselves say, as a sentence.
+
+               This was the raw contents of `facts` printed as key and
+               value: "range 22-95  kit uses notes below General MIDI",
+               which is a machine talking to itself. It is two useful
+               facts -- how wide the library's numbering is, and that it
+               goes outside the standard -- and neither of them told
+               anybody what to do about it. -->
+          <div v-if="spread(set)" class="mb-1">{{ spread(set) }}</div>
           <span v-for="(value, key) in setFacts(set)" :key="key" class="mr-2">
             <strong>{{ key }}</strong> {{ value }}
           </span>

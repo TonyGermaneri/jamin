@@ -380,6 +380,46 @@ export const DRUM_KITS = [
 ]
 
 /**
+ * The distinct ways a note can be read, and which kits share each one.
+ *
+ * Six kits are offered and five of them read a note identically -- General
+ * MIDI, the TR-8S, Ableton's Drum Rack, Addictive Drums 2 and Abbey Road
+ * all use `GENERAL_MIDI_IN`, because that is the correct answer for all of
+ * them: the samplers ship a General MIDI preset and their own layouts have
+ * more articulations than this vocabulary has voices. Only the V-Drums read
+ * differently, and only because the shipped corpus was played on one.
+ *
+ * Offering six names for two behaviours is a dropdown that appears to do
+ * something and does not. Worse, it makes the classifier look broken --
+ * every library comes back "General MIDI" and it is impossible to tell a
+ * correct verdict from a detector that only knows one word.
+ *
+ * So the choice offered is the reading, and the kits that share it are named
+ * on it. Where jamin *sends* notes is a different question with a different
+ * answer, and it is asked in the Kit tab.
+ */
+export function inboundReadings() {
+  const seen = new Map()
+  for (const kit of DRUM_KITS) {
+    const key = JSON.stringify(Object.entries(kit.in).sort())
+    if (!seen.has(key)) seen.set(key, [])
+    seen.get(key).push(kit)
+  }
+
+  return [...seen.values()].map((kits) => {
+    const others = kits.slice(1).map((one) => one.name)
+    return {
+      id: kits[0].id,
+      name: kits[0].name,
+      also: others,
+      label: others.length ? `${kits[0].name} — also ${others.join(', ')}` : kits[0].name,
+      notes: kits[0].notes,
+      reads: Object.keys(kits[0].in).length,
+    }
+  })
+}
+
+/**
  * What General MIDI calls each percussion note.
  *
  * Shown beside the number in the Kit tab. A mapping that sends the rimshot to
