@@ -26,6 +26,13 @@ of progress bar to arrive at the same tree.
     <venv>/bin/python scripts/shots.py graph-drums-whole graph-progressions-whole
     rm -rf tests/browser/corpora
 
+Worth knowing what they cost: the trees are 77MB, the rows another 297MB,
+and `graph_perf.py` keeps a browser profile beside them that is capped at
+2GB and re-seeds when it is thrown away. All of it is gitignored and none
+of it is needed between sessions -- and a machine with no room left is not
+a neutral state, it is one where IndexedDB refuses a 77MB write and the
+catalogue's map silently fails to save.
+
 @see scripts/graph_check.py, which times buildTree itself at this size.
 """
 import argparse

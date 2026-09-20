@@ -1366,6 +1366,15 @@ onMounted(refreshTree)
                     <span v-else>The map is out of date — the catalogue has changed since
                       it was drawn.</span>
                   </div>
+                  <!-- And if the last attempt was made and could not be kept,
+                       say so. Without this a map that was drawn perfectly and
+                       refused by the database looked exactly like one that had
+                       never been drawn, and Rebuild did the same thing again
+                       every time. @see store.js buildBulkGraph -->
+                  <div v-if="state.graphTrouble" class="text-caption mb-2">
+                    It was drawn last time and could not be kept:
+                    {{ state.graphTrouble }}.
+                  </div>
                   <div class="d-flex ga-2">
                     <v-btn size="small" variant="flat" color="warning" class="text-none"
                            :loading="building" @click="drawTheMap">Rebuild</v-btn>

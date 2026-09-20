@@ -139,6 +139,8 @@ export const state = reactive({
   drumCounts: {},
   // Whether a page of the catalogue is being fetched. @see searchDrums
   drumBusy: false,
+  /** Why the last map could not be kept, if it could not. @see buildBulkGraph */
+  graphTrouble: '',
   /** The one-off counting of the filter dropdowns. @see prepareDrumFilters */
   drumPreparing: { running: false, name: '', done: 0, of: 0, rows: 0 },
   /**
@@ -3172,9 +3174,30 @@ export async function buildBulkGraph(which, { onProgress = null } = {}) {
     stamp: await catalogueStamp(which),
   }
 
-  await writeGraph(which, graph)
+  /*
+   * And it has to have gone in.
+   *
+   * The write's answer was thrown away, so a map that could not be stored
+   * -- no room, a value the database would not take -- was drawn, used for
+   * that session, and gone by the next one. "There is no map of this
+   * catalogue yet", every single time, with a Rebuild button that spent
+   * twenty seconds arriving at the same silence.
+   */
+  const trouble = await writeGraph(which, graph)
   const made = unpackStoredGraph(graph)
   graphsHeld.set(which, made)
+
+  state.graphTrouble = trouble
+    ? (trouble === 'QuotaExceededError'
+      ? 'there is no room left on this machine to keep it'
+      : `the database would not take it (${trouble})`)
+    : ''
+
+  if (trouble) {
+    noteError(`the map of ${which} could not be stored (${trouble})`,
+      'keeping the map of the catalogue')
+    toast(state.graphTrouble)
+  }
   return made
 }
 
@@ -4915,7 +4938,9 @@ if (typeof window !== 'undefined') {
     // there before it. @see storedGraph
     writeGraph: async (which, graph) => {
       graphsHeld.delete(which)
-      return writeGraph(which, graph)
+      const trouble = await writeGraph(which, graph)
+      if (trouble) throw new Error(`the map would not store: ${trouble}`)
+      return true
     },
     storedGraph,
     setText,
@@ -4934,6 +4959,7 @@ if (typeof window !== 'undefined') {
     buildBulkGraph,
     graphState,
     forgetCatalogueGraph,
+    grooveForNode,
     countGrooves,
     streamDrumRows,
   }

@@ -931,12 +931,26 @@ export async function grooveInFolder(folder, name) {
 
   try {
     const store = db.transaction(GROOVES, 'readonly').objectStore(GROOVES)
-    const range = IDBKeyRange.only(String(folder || ''))
-    const found = await ask(store.index('folder').getAll(range, 400))
+    const where = String(folder || '')
+    const found = await ask(store.index('folder').getAll(IDBKeyRange.only(where), 400))
     if (!found || !found.length) return null
-    return found.find((row) => row.n === name)
-      // A folder whose names are not unique, or a label the tree shortened.
-      || found.find((row) => String(row.n || '').startsWith(name))
+
+    /*
+     * By the whole path, which is the only thing both sides agree on.
+     *
+     * The map's leaves are the last segment of the stored path and that
+     * still has its extension on it -- `01 8th Hat.mid` -- while the row's
+     * name has had it taken off -- `01 8th Hat`. Comparing the two matched
+     * nothing at all, so every clip picked on the map came back "not in
+     * the database" and the map looked older than the library it had just
+     * been built from.
+     */
+    const full = where ? `${where}/${name}` : name
+    const bare = String(name).replace(/\.midi?$/i, '')
+
+    return found.find((row) => row.p === full)
+      || found.find((row) => row.n === bare)
+      || found.find((row) => String(row.p || '').endsWith(`/${name}`))
       || null
   } catch {
     return null
@@ -1580,12 +1594,37 @@ export async function readGraph(which) {
 }
 
 /** Keep one. Typed arrays go in as typed arrays; IndexedDB stores them whole. */
+/**
+ * Keep one, and say so if it did not go.
+ *
+ * This returned a bare `false` that nobody looked at, so a map that could
+ * not be written -- no room on the machine, a value the database would not
+ * clone -- vanished without a word and the next opening said "there is no
+ * map of this catalogue yet". Every time, for ever, with a Rebuild button
+ * that did the same thing again.
+ *
+ * @returns {string} empty when it was written, otherwise why not.
+ */
 export async function writeGraph(which, graph) {
   const db = await open()
-  if (!db || !db.objectStoreNames.contains(GRAPHS)) return false
-  const tx = db.transaction(GRAPHS, 'readwrite')
-  tx.objectStore(GRAPHS).put({ ...graph, id: which })
-  return done(tx)
+  if (!db) return 'NoDatabase'
+  if (!db.objectStoreNames.contains(GRAPHS)) return 'NoGraphStore'
+
+  return new Promise((resolve) => {
+    let why = ''
+    try {
+      const tx = db.transaction(GRAPHS, 'readwrite')
+      const put = tx.objectStore(GRAPHS).put({ ...graph, id: which })
+      put.onerror = () => { why = (put.error && put.error.name) || 'PutFailed' }
+      tx.oncomplete = () => resolve('')
+      tx.onerror = () => resolve(why || (tx.error && tx.error.name) || 'WriteFailed')
+      tx.onabort = () => resolve(why || (tx.error && tx.error.name) || 'WriteAborted')
+    } catch (error) {
+      // A value the structured clone refuses throws here rather than
+      // erroring the request, and threw into nothing before.
+      resolve((error && error.name) || 'WriteThrew')
+    }
+  })
 }
 
 /** Forget one, for when the catalogue it described has changed. */

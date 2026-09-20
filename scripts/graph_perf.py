@@ -26,6 +26,7 @@ What it times, in the order somebody meets it:
 """
 import argparse
 import functools
+import shutil
 import http.server
 import json
 import os
@@ -59,6 +60,45 @@ class Both(http.server.SimpleHTTPRequestHandler):
         return super().translate_path(path)
 
 
+# How large the kept browser profile may get before it is thrown away.
+#
+# It exists so that 773,836 rows are seeded once rather than on every run,
+# which saves four minutes a time. Left alone it reached 6.9GB -- Chromium's
+# LevelDB keeps the old copy every time the seed is rewritten and compacts
+# lazily, so 297MB of source became twenty times that across a day of runs.
+# That filled the machine to 86%, and a full machine is exactly what makes
+# IndexedDB refuse a 77MB map with QuotaExceededError.
+#
+# Two gigabytes is comfortably more than one honest copy of the catalogue
+# and far less than a disk. Past it the profile goes and the next run pays
+# the four minutes, which is the right trade in both directions.
+MOST_PROFILE = 2 * 1024 ** 3
+
+
+def sizeOf(where):
+    total = 0
+    for here, _, files in os.walk(where):
+        for one in files:
+            try:
+                total += os.path.getsize(os.path.join(here, one))
+            except OSError:
+                pass
+    return total
+
+
+def prune(profile):
+    """Throw the kept profile away once it has stopped being a saving."""
+    if not os.path.isdir(profile):
+        return
+    size = sizeOf(profile)
+    print(f"  profile   {size / 1024 ** 3:.1f}GB kept from previous runs", end="")
+    if size <= MOST_PROFILE:
+        print()
+        return
+    shutil.rmtree(profile, ignore_errors=True)
+    print(" — over 2GB, thrown away; this run will re-seed")
+
+
 def serve():
     handler = functools.partial(Both, directory=os.path.join(ROOT, "dist"))
     httpd = socketserver.TCPServer(("127.0.0.1", 0), handler)
@@ -80,12 +120,34 @@ async () => {
   const at = performance.now()
   await app.forgetCatalogueGraph('drums')
   const made = await app.buildBulkGraph('drums')
+  const errors = (app.state.errors || []).slice(-3).map((one) =>
+    typeof one === 'string' ? one : (one.what || one.why || JSON.stringify(one)))
+
   return {
     ms: Math.round(performance.now() - at),
     nodes: made ? made.nodes.length : 0,
     rows: await app.countGrooves(null),
+    errors,
     state: (await app.graphState('drums')).how,
   }
+}
+"""
+
+# And does it survive being closed and opened again?
+#
+# `buildBulkGraph` keeps what it made in memory, so a map that failed to
+# write works perfectly for the rest of the session and is gone by the next
+# one -- which is exactly what "no matter how many times I open it, there is
+# no map" looks like from the outside. Only a fresh page can tell, and the
+# first attempt at this check used `forgetCatalogueGraph` to clear the memo,
+# which also deletes the row: it deleted the map and then reported that the
+# map was missing.
+AFTER = r"""
+async () => {
+  const app = window.__jaminApp
+  const said = await app.graphState('drums')
+  const held = await app.storedGraph('drums')
+  return { how: said.how, nodes: held ? held.nodes.length : 0 }
 }
 """
 
@@ -293,6 +355,26 @@ async () => {
   out.count = counted
   out.counted = howMany
 
+  /*
+   * A leaf of the map, looked up the way picking one does.
+   *
+   * The map's leaves keep the file extension the stored name has had taken
+   * off, so every clip picked on the map came back "not in the database --
+   * the map is older than the library" while the map was in fact current.
+   */
+  const tree = await app.storedGraph('drums')
+  if (tree) {
+    const leaf = tree.nodes.findIndex((one, at) =>
+      one.leaf && tree.childAt && tree.childAt[at + 1] === tree.childAt[at])
+    if (leaf >= 0) {
+      const path = []
+      for (let up = leaf; up >= 0; up = tree.parents[up]) path.unshift(tree.nodes[up].label)
+      const got = await app.grooveForNode(path, tree.nodes[leaf].label)
+      out.leaf = path.slice(-2).join('/')
+      out.leafFound = Boolean(got)
+    }
+  }
+
   // What the book asks for the moment it opens: one page of rows.
   const [page, first] = await ms(() => app.searchGrooves({}, { limit: 24, offset: 0 }))
   out.firstPage = page
@@ -414,6 +496,7 @@ def main():
 
     httpd, port = serve()
     profile = os.path.join(CORPORA, "profile")
+    prune(profile)
     with sync_playwright() as pw:
         # Persistent, so 773,836 rows are written once and not on every run.
         # Under the gitignored corpora, and thrown away with them.
@@ -447,6 +530,18 @@ def main():
             built = page.evaluate(REBUILD)
             print(f"\n  rebuilt   {built['nodes']:,} nodes from {built['rows']:,} rows "
                   f"in {built['ms'] / 1000:.1f}s -- the map now reads '{built['state']}'")
+            for one in built.get("errors") or []:
+                print(f"            {one}")
+
+            # Closed and opened again, which is the complaint.
+            page.reload(wait_until="load")
+            page.wait_for_selector(".v-application", timeout=30000)
+            page.wait_for_function("() => Boolean(window.__jaminApp)", timeout=30000)
+            page.wait_for_timeout(1200)
+            again = page.evaluate(AFTER)
+            mark = "ok  " if again["nodes"] == built["nodes"] else "FAIL"
+            print(f"  {mark}      reopened: the map reads '{again['how']}' with "
+                  f"{again['nodes']:,} nodes")
 
         found = page.evaluate(TIMINGS, [args.which])
         if args.batches:
@@ -475,6 +570,9 @@ def main():
     if q:
         print(f"  --- the queries underneath, over {q['total']:,} rows")
         print(f"  count     {q['count']:,} ms   (just counting {q['counted']:,} rows)")
+        if "leaf" in q:
+            mark = "ok  " if q["leafFound"] else "FAIL"
+            print(f"  {mark}      a clip on the map resolves to a row -- {q['leaf']}")
         print(f"  page      {q['firstPage']:,} ms   (the list's first page)")
         print(f"  facets    {q['facets']:,} ms   (the filter dropdowns)")
         print(f"  filtered  {q['filterList']:,} ms   (one genre, a page of it: "
