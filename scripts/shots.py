@@ -694,19 +694,28 @@ def libraryNotes(page):
       }).then(() => app.refreshDrumSets())
     }""")
     page.wait_for_timeout(600)
-    drive(page, "app.state.ui.book = null; app.state.ui.settings = true")
+    # Onto the Libraries tab, which has to be chosen before the dialog opens
+    # or the window item never renders and its inner tabs do not exist.
+    drive(page, "app.state.ui.book = null; app.state.ui.settingsTab = 'libraries';"
+                " app.state.ui.settings = true")
     page.wait_for_timeout(700)
     # The libraries live behind a tab of Settings; which one it is called has
     # changed twice, so try the names rather than an index.
-    for label in ("Drums", "Libraries", "Drum libraries"):
+    for label in ("Drum patterns", "Drums", "Drum libraries"):
         tab = page.locator(f".v-tab:has-text('{label}')").first
         if tab.count():
             tab.click()
             page.wait_for_timeout(500)
             break
-    button = page.locator("button:has-text('Tell jamin what they are')").first
+    button = page.locator("button:has-text('Name them')").first
     if not button.count():
-        raise Missing("no library row offered the note table")
+        said = page.evaluate("""() => JSON.stringify({
+          tabs: [...document.querySelectorAll('.v-tab')].map((one) => one.innerText.trim()),
+          rows: document.querySelectorAll('table tbody tr').length,
+          buttons: [...document.querySelectorAll('button')].map((one) =>
+            one.innerText.trim()).filter(Boolean).slice(0, 12),
+        })""")
+        raise Missing(f"no library row offered the note table -- {said}")
     button.click()
     page.wait_for_timeout(800)
 

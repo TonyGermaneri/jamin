@@ -19,6 +19,33 @@
  * @see core/drumKits.js learnInbound, components/DrumLibraryNotes.vue
  */
 export const PACK_NOTES = {
+  "50\u00b4s Drummer MIDI Files": {
+    /* 23 of its notes are outside General MIDI, 12.0% of everything it plays.
+       Its own folders name 0% of them. */
+    notes: {
+    },
+    /* Inferred from how these notes behave, not read off anything that
+       names them. Offered, never applied: a guess about a drum is worth
+       having in front of somebody and is not worth putting under their
+       song unasked. Covers 2% of what is unnamed. */
+    guesses: {
+      33: "hatPedal", // rides with the hatPedal on 59% of its hits
+    },
+  },
+  "60\u00b4s Drummer MIDI Files": {
+    /* 18 of its notes are outside General MIDI, 19.2% of everything it plays.
+       Its own folders name 0% of them. */
+    notes: {
+    },
+    /* Inferred from how these notes behave, not read off anything that
+       names them. Offered, never applied: a guess about a drum is worth
+       having in front of somebody and is not worth putting under their
+       song unasked. Covers 21% of what is unnamed. */
+    guesses: {
+      31: "snare", // rides with the snare on 73% of its hits
+      33: "snare", // 100% on two and four, in files with no snare
+    },
+  },
   "Asia": {
     /* 7 of its notes are outside General MIDI, 9.2% of everything it plays.
        Its own folders name 52% of them. */
@@ -45,6 +72,47 @@ export const PACK_NOTES = {
       99: "ride", // folder names (100% agreed)
       116: "timbaleHigh", // folder names (100% agreed)
     },
+    /* Inferred from how these notes behave, not read off anything that
+       names them. Offered, never applied: a guess about a drum is worth
+       having in front of somebody and is not worth putting under their
+       song unasked. Covers 17% of what is unnamed. */
+    guesses: {
+      6: "kick", // 100% on one and three, in files with no kick
+      24: "hatClosed", // 7.3 to the bar across 10 sixteenths, in kit files with no closed hat
+      25: "hatClosed", // 24.4 to the bar across 8 sixteenths, in kit files with no closed hat
+      33: "hatClosed", // rides with the hatClosed on 79% of its hits
+      84: "hatClosed", // 6.9 to the bar across 15 sixteenths, in kit files with no closed hat
+      89: "cabasa", // 12.4 to the bar across 13 sixteenths, in files with no kit in them at all — a shaker of some sort
+      93: "cabasa", // 21.6 to the bar across 12 sixteenths, in files with no kit in them at all — a shaker of some sort
+      95: "cabasa", // 22.0 to the bar across 9 sixteenths, in files with no kit in them at all — a shaker of some sort
+      97: "cabasa", // 7.6 to the bar across 8 sixteenths, in files with no kit in them at all — a shaker of some sort
+      100: "cabasa", // 7.6 to the bar across 8 sixteenths, in files with no kit in them at all — a shaker of some sort
+      101: "cabasa", // 7.7 to the bar across 8 sixteenths, in files with no kit in them at all — a shaker of some sort
+      103: "cabasa", // 14.4 to the bar across 13 sixteenths, in files with no kit in them at all — a shaker of some sort
+      108: "cabasa", // 7.5 to the bar across 9 sixteenths, in files with no kit in them at all — a shaker of some sort
+      111: "snare", // 66% on two and four, in files with no snare
+      113: "snare", // 63% on two and four, in files with no snare
+      115: "cabasa", // 7.7 to the bar across 9 sixteenths, in files with no kit in them at all — a shaker of some sort
+    },
+  },
+  "Midi.Styles.Percussion": {
+    /* 29 of its notes are outside General MIDI, 10.4% of everything it plays.
+       Its own folders name 0% of them. */
+    notes: {
+    },
+    /* Inferred from how these notes behave, not read off anything that
+       names them. Offered, never applied: a guess about a drum is worth
+       having in front of somebody and is not worth putting under their
+       song unasked. Covers 94% of what is unnamed. */
+    guesses: {
+      33: "hatClosed", // 9.6 to the bar across 12 sixteenths, in kit files with no closed hat
+      82: "hatClosed", // 6.7 to the bar across 16 sixteenths, in kit files with no closed hat
+      86: "cabasa", // 14.0 to the bar across 8 sixteenths, in files with no kit in them at all — a shaker of some sort
+      87: "cabasa", // 25.3 to the bar across 8 sixteenths, in files with no kit in them at all — a shaker of some sort
+      111: "hatClosed", // 7.9 to the bar across 10 sixteenths, in kit files with no closed hat
+      115: "hatClosed", // 12.0 to the bar across 8 sixteenths, in kit files with no closed hat
+      117: "hatClosed", // 9.8 to the bar across 8 sixteenths, in kit files with no closed hat
+    },
   },
   "Superior Drummer 2 Drum Midi [425,000 files]": {
     /* 79 of its notes are outside General MIDI, 8.0% of everything it plays.
@@ -61,8 +129,47 @@ export const PACK_NOTES = {
       125: "cabasa", // folder names (100% agreed)
       126: "cabasa", // folder names (100% agreed)
     },
+    /* Inferred from how these notes behave, not read off anything that
+       names them. Offered, never applied: a guess about a drum is worth
+       having in front of somebody and is not worth putting under their
+       song unasked. Covers 12% of what is unnamed. */
+    guesses: {
+      21: "hatClosed", // 9.3 to the bar across 8 sixteenths, in kit files with no closed hat
+      32: "hatClosed", // 17.0 to the bar across 8 sixteenths, in kit files with no closed hat
+      95: "snare", // 67% on two and four, in files with no snare
+    },
   },
-}
+  "Vintage Drummer MIDI Files": {
+    /* 30 of its notes are outside General MIDI, 15.6% of everything it plays.
+       Its own folders name 0% of them. */
+    notes: {
+    },
+    /* Inferred from how these notes behave, not read off anything that
+       names them. Offered, never applied: a guess about a drum is worth
+       having in front of somebody and is not worth putting under their
+       song unasked. Covers 7% of what is unnamed. */
+    guesses: {
+      24: "snare", // 97% on two and four, in files with no snare
+      34: "kick", // rides with the kick on 69% of its hits
+      87: "cabasa", // 7.2 to the bar across 8 sixteenths, in files with no kit in them at all — a shaker of some sort
+      90: "cabasa", // 8.0 to the bar across 8 sixteenths, in files with no kit in them at all — a shaker of some sort
+    },
+  },
+  "World Inspire Sets": {
+    /* 27 of its notes are outside General MIDI, 33.3% of everything it plays.
+       Its own folders name 0% of them. */
+    notes: {
+    },
+    /* Inferred from how these notes behave, not read off anything that
+       names them. Offered, never applied: a guess about a drum is worth
+       having in front of somebody and is not worth putting under their
+       song unasked. Covers 13% of what is unnamed. */
+    guesses: {
+      89: "woodBlockHigh", // rides with the woodBlockHigh on 67% of its hits
+      91: "guiroLong", // rides with the guiroLong on 55% of its hits
+    },
+  },}
+
 
 /**
  * The map for a pack, by the name it was imported under.
@@ -72,14 +179,34 @@ export const PACK_NOTES = {
  * the end, so `Superior Drummer 2 Drum Midi [425,000 files]` has to find
  * `Superior Drummer 2 Drum Midi`.
  */
-export function notesForPack(name) {
+function packFor(name) {
   if (!name) return null
-  if (PACK_NOTES[name]) return PACK_NOTES[name].notes
+  if (PACK_NOTES[name]) return PACK_NOTES[name]
 
   const want = String(name).toLowerCase()
   for (const [pack, one] of Object.entries(PACK_NOTES)) {
     const lower = pack.toLowerCase()
-    if (lower === want || want.includes(lower) || lower.includes(want)) return one.notes
+    if (lower === want || want.includes(lower) || lower.includes(want)) return one
   }
   return null
+}
+
+/** What the pack's own folders say. Applied at import. */
+export function notesForPack(name) {
+  const one = packFor(name)
+  return (one && one.notes) || null
+}
+
+/**
+ * What its notes look like they are doing. Offered, never applied.
+ *
+ * A guess about a drum is worth having in front of somebody -- it is a
+ * starting point for an ear, and the alternative is silence -- and is not
+ * worth putting under their song unasked. These are inferences from
+ * rhythm, which is a weaker thing than a folder with an instrument's name
+ * on it, and the interface says which is which.
+ */
+export function guessesForPack(name) {
+  const one = packFor(name)
+  return (one && one.guesses) || null
 }

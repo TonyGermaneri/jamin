@@ -89,6 +89,23 @@ for (const pack of packs) {
   const uses = new Map()
   let notes = 0
 
+  /*
+   * And what each unnamed note *does*, for the packs whose folders say
+   * nothing -- which is most of the ones that need saying. Three things
+   * worth knowing about a note: what it lands on top of, where in the bar
+   * it falls, and how thick it plays.
+   */
+  const behaviour = new Map()
+  const seen = (note) => {
+    let one = behaviour.get(note)
+    if (!one) {
+      one = { hits: 0, alone: 0, withTick: new Map(), slots: new Array(16).fill(0),
+              bars: 0, absent: new Map(), inKit: 0 }
+      behaviour.set(note, one)
+    }
+    return one
+  }
+
   const walk = (dir, top) => {
     let here = []
     try { here = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
@@ -108,6 +125,47 @@ for (const pack of packs) {
         groove = readGrooveFile(new Uint8Array(fs.readFileSync(file)), path.basename(file), file)
       } catch { groove = null }
       if (!groove) continue
+
+      /* What this file has that is already named, and where everything
+         falls in the bar. 24 pulses to the quarter, so a sixteenth is 6. */
+      const named = new Set()
+      const atTick = new Map()
+      for (const n of groove.notes) {
+        if (GENERAL_MIDI_IN[n.note]) named.add(GENERAL_MIDI_IN[n.note])
+        const k = Math.round(n.at)
+        if (!atTick.has(k)) atTick.set(k, [])
+        atTick.get(k).push(n.note)
+      }
+      const perBar = Math.max(1, (groove.beatsPerBar || 4) * 24)
+      const bars = Math.max(1, (groove.lengthPulses || perBar) / perBar)
+
+      for (const n of groove.notes) {
+        if (GENERAL_MIDI_IN[n.note]) continue
+        const one = seen(n.note)
+        one.hits++
+        one.bars += 1 / bars
+        const slot = Math.round((n.at % perBar) / (perBar / 16)) % 16
+        one.slots[slot]++
+        const together = (atTick.get(Math.round(n.at)) || [])
+          .filter((x) => x !== n.note && GENERAL_MIDI_IN[x])
+        if (!together.length) one.alone++
+        for (const other of together) {
+          const voice = GENERAL_MIDI_IN[other]
+          one.withTick.set(voice, (one.withTick.get(voice) || 0) + 1)
+        }
+        // Which of the three anchors this file does *without*. A note that
+        // plays where the snare would, in a file with no snare, is doing
+        // the snare's job.
+        for (const anchor of ['kick', 'snare', 'hatClosed']) {
+          if (named.has(anchor)) continue
+          one.absent.set(anchor, (one.absent.get(anchor) || 0) + 1)
+        }
+        // Whether this is a drum kit at all. A file with a kick or a snare
+        // in it is; one with neither is a percussion part, and the two
+        // want different guesses out of the same evidence.
+        if (named.has('kick') || named.has('snare')) one.inKit++
+      }
+
       for (const note of groove.notes) {
         hist[note.note] = (hist[note.note] || 0) + 1
         uses.set(note.note, (uses.get(note.note) || 0) + 1)
@@ -155,12 +213,102 @@ for (const pack of packs) {
     }
   }
 
+  /*
+   * And the guesses, for the notes nothing named.
+   *
+   * These are inferences from behaviour, not readings of evidence, and
+   * they are kept apart from the named ones for that reason. Three rules,
+   * each with the number that triggered it recorded beside it:
+   *
+   *   layer     more than half its onsets land on the exact tick of one
+   *             known voice, and twice as often as the next. A note that
+   *             rides along with the snare is a snare articulation.
+   *   standing in  it plays where an anchor would, in files that have no
+   *             such anchor. A note on two and four in a file with no
+   *             snare is doing the snare's job.
+   *   density   six or more to the bar, spread across the sixteenths, in
+   *             files with no closed hat. That is a hat part.
+   *
+   * A note that fits none of them gets nothing. `alone` is the check that
+   * keeps `layer` honest: a note that mostly plays by itself is not
+   * riding along with anything.
+   */
+  const guesses = {}
+  const guessWhy = {}
+  const BACKBEAT = [4, 12]
+  const DOWNBEAT = [0, 8]
+
+  for (const [note, one] of behaviour) {
+    if (map[note] || one.hits < 24) continue
+
+    const ranked = [...one.withTick].sort((a, b) => b[1] - a[1])
+    const [top, many] = ranked[0] || ['', 0]
+    const second = ranked[1] ? ranked[1][1] : 0
+    const share = many / one.hits
+    const aloneShare = one.alone / one.hits
+
+    if (top && share >= 0.55 && many >= second * 2 && aloneShare < 0.35) {
+      guesses[note] = top
+      guessWhy[note] = `rides with the ${top} on ${Math.round(share * 100)}% of its hits`
+      continue
+    }
+
+    const onSlots = (slots) => slots.reduce((sum, at) => sum + one.slots[at], 0) / one.hits
+    const missing = (anchor) => (one.absent.get(anchor) || 0) / one.hits
+
+    const back = onSlots(BACKBEAT)
+    if (back >= 0.6 && missing('snare') > 0.5) {
+      guesses[note] = 'snare'
+      guessWhy[note] = `${Math.round(back * 100)}% on two and four, in files with no snare`
+      continue
+    }
+
+    const down = onSlots(DOWNBEAT)
+    if (down >= 0.6 && missing('kick') > 0.5) {
+      guesses[note] = 'kick'
+      guessWhy[note] = `${Math.round(down * 100)}% on one and three, in files with no kick`
+      continue
+    }
+
+    /*
+     * Dense and even: something small played fast. Which small thing
+     * depends on whether there is a kit around it.
+     *
+     * The first version called all of them hi-hats and produced seven
+     * hi-hats for a pack called `Midi.Styles.Percussion`, which has no kit
+     * in it at all -- the rule had found "small thing played fast" and had
+     * only one word for it. In a file with a kick or a snare the hat is
+     * what is missing; in a file with neither, nothing is missing and the
+     * dense part is a shaker.
+     */
+    const perBar = one.hits / Math.max(1, one.bars)
+    const spread16 = one.slots.filter((at) => at > one.hits / 40).length
+    if (perBar < 6 || spread16 < 8) continue
+
+    const kitLike = one.inKit / one.hits
+    if (kitLike > 0.5 && missing('hatClosed') > 0.5) {
+      guesses[note] = 'hatClosed'
+      guessWhy[note] = `${perBar.toFixed(1)} to the bar across ${spread16} sixteenths, `
+        + 'in kit files with no closed hat'
+    } else if (kitLike < 0.2) {
+      guesses[note] = 'cabasa'
+      guessWhy[note] = `${perBar.toFixed(1)} to the bar across ${spread16} sixteenths, `
+        + 'in files with no kit in them at all — a shaker of some sort'
+    }
+  }
+
   const outside = [...uses.entries()].filter(([note]) => !GENERAL_MIDI_IN[note])
   const lost = outside.reduce((sum, [, n]) => sum + n, 0)
   const named = outside.filter(([note]) => map[note]).reduce((sum, [, n]) => sum + n, 0)
 
+  const guessed = outside.filter(([note]) => guesses[note])
+    .reduce((sum, [, n]) => sum + n, 0)
+
   report.push({
     pack,
+    guesses,
+    guessWhy,
+    guessedShare: lost ? guessed / lost : 0,
     notes,
     sections: sections ? [...new Set(sections.values())].length : 0,
     outside: outside.length,
@@ -205,7 +353,8 @@ def main():
     found.sort(key=lambda one: -one["lostShare"])
 
     print(f"\n  {len(found)} packs\n")
-    print(f"  {'pack':<46} {'outside':>8} {'of notes':>9} {'named':>7}  how")
+    print(f"  {'pack':<46} {'outside':>8} {'of notes':>9} {'named':>7} "
+          f"{'guessed':>8}  how")
     for one in found:
         how = ''
         if one["map"]:
@@ -213,13 +362,16 @@ def main():
             if one["sections"]:
                 how += f", {one['sections']} sections"
         print(f"  {one['pack'][:44]:<46} {one['outside']:>8} "
-              f"{one['lostShare']:>8.1%} {one['namedShare']:>7.0%}  {how}")
+              f"{one['lostShare']:>8.1%} {one['namedShare']:>7.0%} "
+              f"{one['guessedShare']:>8.0%}  {how}")
 
     total = sum(one["notes"] for one in found)
     lost = sum(one["notes"] * one["lostShare"] for one in found)
     named = sum(one["notes"] * one["lostShare"] * one["namedShare"] for one in found)
+    guessed = sum(one["notes"] * one["lostShare"] * one["guessedShare"] for one in found)
     print(f"\n  {lost / total:.1%} of every note is outside General MIDI; "
-          f"the packs' own folders name {named / max(1, lost):.0%} of that")
+          f"the packs' own folders name {named / max(1, lost):.0%} of that, "
+          f"and behaviour guesses at a further {guessed / max(1, lost):.0%}")
 
     if args.out:
         write(found, args.out)
@@ -227,7 +379,7 @@ def main():
 
 
 def write(found, where):
-    useful = [one for one in found if one["map"]]
+    useful = [one for one in found if one["map"] or one["guesses"]]
     body = []
     for one in sorted(useful, key=lambda x: x["pack"]):
         lines = [f"  {json.dumps(one['pack'])}: {{"]
@@ -239,6 +391,20 @@ def write(found, where):
             lines.append(f"      {note}: {json.dumps(one['map'][note])}, "
                          f"// {one['why'][note]}")
         lines.append("    },")
+        if one["guesses"]:
+            lines.append("    /* Inferred from how these notes behave, not read off "
+                         "anything that")
+            lines.append("       names them. Offered, never applied: a guess about a drum "
+                         "is worth")
+            lines.append("       having in front of somebody and is not worth putting "
+                         "under their")
+            lines.append(f"       song unasked. Covers {one['guessedShare']:.0%} of what "
+                         "is unnamed. */")
+            lines.append("    guesses: {")
+            for note in sorted(one["guesses"], key=int):
+                lines.append(f"      {note}: {json.dumps(one['guesses'][note])}, "
+                             f"// {one['guessWhy'][note]}")
+            lines.append("    },")
         lines.append("  },")
         body.append("\n".join(lines))
 
@@ -280,16 +446,36 @@ FOOTER = '''}
  * the end, so `Superior Drummer 2 Drum Midi [425,000 files]` has to find
  * `Superior Drummer 2 Drum Midi`.
  */
-export function notesForPack(name) {
+function packFor(name) {
   if (!name) return null
-  if (PACK_NOTES[name]) return PACK_NOTES[name].notes
+  if (PACK_NOTES[name]) return PACK_NOTES[name]
 
   const want = String(name).toLowerCase()
   for (const [pack, one] of Object.entries(PACK_NOTES)) {
     const lower = pack.toLowerCase()
-    if (lower === want || want.includes(lower) || lower.includes(want)) return one.notes
+    if (lower === want || want.includes(lower) || lower.includes(want)) return one
   }
   return null
+}
+
+/** What the pack's own folders say. Applied at import. */
+export function notesForPack(name) {
+  const one = packFor(name)
+  return (one && one.notes) || null
+}
+
+/**
+ * What its notes look like they are doing. Offered, never applied.
+ *
+ * A guess about a drum is worth having in front of somebody -- it is a
+ * starting point for an ear, and the alternative is silence -- and is not
+ * worth putting under their song unasked. These are inferences from
+ * rhythm, which is a weaker thing than a folder with an instrument's name
+ * on it, and the interface says which is which.
+ */
+export function guessesForPack(name) {
+  const one = packFor(name)
+  return (one && one.guesses) || null
 }
 '''
 

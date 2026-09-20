@@ -29,6 +29,7 @@
 import { computed, ref } from 'vue'
 import { state, setDrumSetInbound, clearDrumSetInbound, tapDrum, kitMapFor } from '../store.js'
 import { DRUM_VOICES, kitById, gmName, cleanInMap } from '../core/drumKits.js'
+import { guessesForPack } from '../core/drumPacks.js'
 import InfoTip from './InfoTip.vue'
 
 const props = defineProps({
@@ -46,6 +47,18 @@ const showAll = ref(false)
 
 const mine = computed(() => cleanInMap(props.set.inMap))
 const learned = computed(() => props.set.inLearned || { hints: {}, where: {} })
+
+/**
+ * What this pack's notes look like they are doing.
+ *
+ * Read off the whole collection by `scripts/pack_maps.py` and kept apart
+ * from what its folders actually name, because they are different kinds of
+ * claim: a folder called `48@TIMBALES` that is 96% one note has told you
+ * what that note is, and a note that lands on the snare's beat three times
+ * in four has only told you where it falls. Both are worth having in front
+ * of somebody; only the first is worth applying unasked.
+ */
+const guessed = computed(() => guessesForPack(props.set.name) || {})
 
 /** What the kit alone reads, before this library's own corrections. */
 const fromKit = computed(() => kitById(props.set.kit || 'gm').in || {})
@@ -75,6 +88,7 @@ const rows = computed(() => {
       gm: gmName(pitch),
       voice: mine.value[pitch] || '',
       hint: learned.value.hints[pitch] || null,
+      guess: guessed.value[pitch] || '',
       where: learned.value.where[pitch] || [],
     })
   }
@@ -124,6 +138,18 @@ async function takeHints() {
 
 const hintsOffered = computed(() =>
   rows.value.filter((one) => one.hint && !one.voice).length)
+
+const guessesOffered = computed(() =>
+  rows.value.filter((one) => one.guess && !one.voice && !one.hint).length)
+
+/** Take every guess at once, for somebody who would rather hear something. */
+async function takeGuesses() {
+  for (const row of rows.value) {
+    if (row.guess && !row.voice && !row.hint) {
+      await setDrumSetInbound(props.set.id, row.note, row.guess)
+    }
+  }
+}
 </script>
 
 <template>
@@ -209,8 +235,18 @@ const hintsOffered = computed(() =>
               <!-- The suggestion sits beside the answer rather than in it:
                    an interface that fills the box in has decided, and this
                    has not. One press accepts it. -->
+              <!-- A guess, said to be one. It offers the same one press
+                   as a suggestion and wears a different colour, because
+                   "this rides along with the snare" is a weaker claim than
+                   "the folder it lives in is called SNARE". -->
               <v-btn
-                v-if="row.hint && row.voice !== row.hint.voice"
+                v-if="!row.voice && !row.hint && row.guess"
+                size="x-small" variant="outlined" color="warning" class="text-none"
+                title="A guess from how this note behaves, not from anything naming it"
+                @click="choose(row.note, row.guess)"
+              >{{ nameOf(row.guess) }}?</v-btn>
+              <v-btn
+                v-else-if="row.hint && row.voice !== row.hint.voice"
                 size="x-small" variant="tonal" class="text-none"
                 :title="`${row.hint.share}% of the folders that name an instrument `
                   + `and are mostly this note call it that`
@@ -237,6 +273,10 @@ const hintsOffered = computed(() =>
         <v-btn v-if="hintsOffered" size="small" variant="tonal" class="text-none"
                @click="takeHints">
           Accept {{ hintsOffered }} suggestion{{ hintsOffered === 1 ? '' : 's' }}
+        </v-btn>
+        <v-btn v-if="guessesOffered" size="small" variant="outlined" color="warning"
+               class="text-none" @click="takeGuesses">
+          Take {{ guessesOffered }} guess{{ guessesOffered === 1 ? '' : 'es' }}
         </v-btn>
         <v-btn v-if="answered" size="small" variant="text" class="text-none"
                @click="clearDrumSetInbound(set.id)">
