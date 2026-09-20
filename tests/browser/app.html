@@ -11,7 +11,13 @@
         "imports": {
           "vue": "https://cdn.jsdelivr.net/npm/vue@3.5.42/dist/vue.esm-browser.js",
           "vuetify": "https://cdn.jsdelivr.net/npm/vuetify@3.13.4/dist/vuetify.esm.js",
-          "vue3-sfc-loader": "https://cdn.jsdelivr.net/npm/vue3-sfc-loader@0.9.5/dist/vue3-sfc-loader.esm.js"
+          "vue3-sfc-loader": "https://cdn.jsdelivr.net/npm/vue3-sfc-loader@0.9.5/dist/vue3-sfc-loader.esm.js",
+          "canvas-datagrid": "/node_modules/canvas-datagrid/dist/canvas-datagrid.module.js",
+          "yjs": "https://cdn.jsdelivr.net/npm/yjs@13.6.32/+esm",
+          "d3-force": "https://cdn.jsdelivr.net/npm/d3-force@3.0.0/+esm",
+          "d3-selection": "https://cdn.jsdelivr.net/npm/d3-selection@3.0.0/+esm",
+          "d3-zoom": "https://cdn.jsdelivr.net/npm/d3-zoom@3.0.0/+esm",
+          "d3-quadtree": "https://cdn.jsdelivr.net/npm/d3-quadtree@3.0.1/+esm"
         }
       }
     </script>
@@ -129,8 +135,33 @@
         },
       })
 
+      /*
+       * Bare specifiers, which the SFC loader resolves and the import map
+       * does not reach.
+       *
+       * A `.vue` file's imports go through `pathResolve`, so
+       * `import canvasDatagrid from 'canvas-datagrid'` came out as
+       * `/tests/browser/canvas-datagrid` and 404'd. Anything without a dot
+       * or a slash at the front is a package, and packages live where npm
+       * put them.
+       */
+      const PACKAGES = {
+        'canvas-datagrid': '/node_modules/canvas-datagrid/dist/canvas-datagrid.module.js',
+        'yjs': 'https://cdn.jsdelivr.net/npm/yjs@13.6.32/+esm',
+        'd3-force': 'https://cdn.jsdelivr.net/npm/d3-force@3.0.0/+esm',
+        'd3-selection': 'https://cdn.jsdelivr.net/npm/d3-selection@3.0.0/+esm',
+        'd3-zoom': 'https://cdn.jsdelivr.net/npm/d3-zoom@3.0.0/+esm',
+        'd3-quadtree': 'https://cdn.jsdelivr.net/npm/d3-quadtree@3.0.1/+esm',
+      }
+
       const options = {
         moduleCache: { vue: Vue },
+        pathResolve: ({ refPath, relPath }) => {
+          if (PACKAGES[relPath]) return PACKAGES[relPath]
+          if (relPath === '.') return refPath
+          if (!/^[./]/.test(relPath)) return relPath
+          return String(new URL(relPath, new URL(refPath, location.href)).pathname)
+        },
         getFile: async (url) => {
           const res = await fetch(url)
           if (!res.ok) throw new Error(`${url} ${res.status}`)
@@ -144,7 +175,18 @@
         handleModule: async (type, getContentData, path, opts) => {
           // Plain .js modules load natively so they share one module registry
           // (and therefore one Vue, one store) with this page.
-          if (type === '.js') return await import(new URL(path, location.href).href)
+          //
+          // `__esModule` matters. The loader compiles a `.vue` file's imports
+          // with Babel-style interop, and interop hands a default import the
+          // *whole* module object unless that marker is present -- so
+          // `import canvasDatagrid from 'canvas-datagrid'` came out as the
+          // namespace and calling it threw "default is not a function". Every
+          // other import in jamin is named, which is why this only showed up
+          // when the grid arrived.
+          if (type === '.js') {
+            const mod = await import(new URL(path, location.href).href)
+            return Object.assign({ __esModule: true }, mod)
+          }
           if (type === '.css') { opts.addStyle(await getContentData(false)); return {} }
           if (type === '.json') return JSON.parse(await getContentData(false))
           return undefined
@@ -236,6 +278,56 @@
 
       /* ---------- the dialogs ---------- */
       const { state } = await import('../../src/store.js')
+
+      /*
+       * How the books open, and how a row is chosen in one.
+       *
+       * Both changed and this file did not follow. `state.ui.phrases` is no
+       * longer a flag -- the phrase book and the drum book are one dialog
+       * behind `state.ui.book` -- and setting a key that does not exist on a
+       * reactive object throws nothing and does nothing, so every check that
+       * drove the phrase book here has been passing over an unopened window.
+       * And a catalogue is a canvas now, so there is no `.v-list-item` to
+       * click; the grid is driven through the grid.
+       * @see components/ArticulationBook.vue, components/DataGrid.vue
+       */
+      const openPhrases = async (ms = 700) => { state.ui.book = 'phrases'; await settle(ms) }
+      const closeBook = async (ms = 300) => { state.ui.book = null; await settle(ms) }
+      /*
+       * The visible grid, not the first one in the document.
+       *
+       * Three books can be mounted at once and `.v-overlay--active` does not
+       * reach a fullscreen dialog opened with no scrim, so both the obvious
+       * selectors find either nothing or the wrong one.
+       */
+      const theGrid = () => [...document.querySelectorAll('canvas-datagrid')]
+        .find((one) => one.getClientRects().length) || null
+      /** The one on screen. Same reason as `theGrid`. */
+      const onScreen = (selector) => [...document.querySelectorAll(selector)]
+        .find((one) => one.getClientRects().length) || null
+      const allOnScreen = (selector) => [...document.querySelectorAll(selector)]
+        .filter((one) => one.getClientRects().length)
+      const gridRows = () => { const g = theGrid(); return g ? g.data.length : 0 }
+      /*
+       * Choosing a row, the way the grid itself would.
+       *
+       * `setActiveCell` moves the cell and fires nothing -- selection and
+       * the keyboard are separate inside canvas-datagrid, which is the bug
+       * that made arrowing the catalogue stop auditioning. A synthetic key
+       * event does not drive it either: the grid reads real ones. So the
+       * cell is moved and the grid is told, which is exactly the pair its
+       * own mouse handler performs. That the *real* arrows and wheel drive
+       * it is measured against the built app in scripts/shots.py.
+       */
+      const pickRow = async (at) => {
+        const g = theGrid()
+        if (!g) { problems.push(`no grid to pick row ${at} from`); return }
+        g.focus()
+        g.scrollIntoView(0, at)
+        g.setActiveCell(0, at)
+        g.dispatchEvent(new Event('selectionchanged'))
+        await settle(350)
+      }
       state.ui.settings = true
       await settle(700)
       const tabs = [...document.querySelectorAll('.v-tab')].map((t) => t.textContent.trim())
@@ -264,17 +356,18 @@
 
       state.ui.settings = false
       await settle(400)
-      state.ui.phrases = true
-      await settle(500)
-      const phraseTabs = [...document.querySelectorAll('.v-tab')].map((t) => t.textContent.trim())
-      ok('phrase book opens', phraseTabs.some((t) => t.startsWith('Catalogue')), phraseTabs.join('/'))
-      ok('there is no separate library any more', !phraseTabs.some((t) => t.startsWith('Library')), phraseTabs.join('/'))
-      state.ui.phrasesTab = 'about'
-      await settle(260)
-      state.ui.phrasesTab = 'library'
-      await settle(260)
-      state.ui.phrases = false
-      await settle(300)
+      await openPhrases()
+      ok('phrase book opens', !!document.querySelector('.jamin-book.v-overlay--active'))
+      // No chrome over the catalogue at all: no tab strip, no title, no die.
+      // Everything that used to be up there is on the track's own tab or in
+      // the control panel, and what is left is the list.
+      const bookTabs = allOnScreen('.v-tab').map((t) => t.textContent.trim())
+      ok('and it is nothing but the catalogue',
+        !bookTabs.some((t) => /catalogue|playback|sources|how it works/i.test(t)),
+        bookTabs.join('/') || 'no tabs')
+      ok('the name of the book is not repeated over it',
+        !/Phrase book/.test(onScreen('.jamin-book').innerText))
+      await closeBook()
 
       /* ---------- binding a phrase rewrites the chart ---------- */
       const store = await import('../../src/store.js')
@@ -386,9 +479,7 @@
       field.setSelectionRange(2, 2)
       await settle(150)
       is('the cursor picks the chord', store.targetChord().text, 'G7')
-      state.ui.phrases = true
-      state.ui.phrasesTab = 'licks'
-      await settle(400)
+      await openPhrases(400)
       await store.ensureLicks()
       await settle(600)
       ok('the catalogue loaded', state.licks.length > 9000, `${state.licks.length} entries`)
@@ -452,9 +543,21 @@
       // The whole point: the same stored phrase over four different roots gives
       // the same degrees every time.
       const deg = (n, root) => ((n % 12) - root + 12) % 12
+      /*
+       * Which bar each note fell in, not which quarter of the list it is in.
+       *
+       * This used to slice `played` into four equal parts and call each one
+       * a chord, which is only true if every chord sounds the same number
+       * of notes. It does not -- the last note of one chord and the first
+       * of the next land either side of a boundary that moves -- so the
+       * slices bled into each other and the check reported four notes in a
+       * three-note phrase. The pulse says which chord a note belongs to,
+       * and the pulse is not a guess.
+       */
       const played = []
+      let atPulse = 0
       const fake = {
-        noteOn: (o, c, note) => { played.push(note); return true },
+        noteOn: (o, c, note) => { played.push({ note, at: atPulse }); return true },
         noteOff: () => true,
       }
       const { Player } = await import('../../src/core/player.js')
@@ -462,12 +565,52 @@
       const probe = new Player(fake, JSON.parse(JSON.stringify(state.settings)))
       probe.settings.midi.chordOutputId = 'x'
       probe.settings.chords.bassNote = false
+      /*
+       * Snapping off, because snapping is the thing that deliberately
+       * changes the degrees.
+       *
+       * The invariant here is that a phrase is stored as degrees and
+       * re-pointed, so the same phrase over four roots is the same shape
+       * four times. "Snap passing notes onto the new chord" moves anything
+       * outside the chord to the nearest note that is in it -- which is a
+       * different shape, on purpose. It defaults to on, so this check has
+       * been measuring snapping rather than re-pointing.
+       */
+      probe.settings.accompany.snapNonChordTones = false
+      /*
+       * And restarted on each chord, because otherwise there is nothing to
+       * compare.
+       *
+       * The default fit is "keep the rhythm, follow the chart": the phrase
+       * runs through the song once, so which of its notes land in which bar
+       * depends on how long it is, and a bar can quite properly get none at
+       * all. This check is about re-pointing -- the same phrase over four
+       * roots -- so it has to be the same phrase four times.
+       */
+      probe.settings.accompany.fit = 'restart'
       probe.getPhrase = () => pick
       probe.setScore(parseScore('.C7{x} F7 A7 Eb7', { beatsPerBar: 4 }))
-      for (let p = 1; p <= 383; p++) probe.tick(p)
-      const perChord = [0, 5, 9, 3].map((root, i) => {
-        const slice = played.slice(i * (played.length / 4), (i + 1) * (played.length / 4))
-        return [...new Set(slice.map((n) => deg(n, root)))].sort((a, b) => a - b).join(',')
+      for (let p = 1; p <= 383; p++) { atPulse = p; probe.tick(p) }
+      /*
+       * Which chord a note belongs to, asked of the score.
+       *
+       * Every attempt to work it out from the outside got it wrong -- an
+       * equal quarter of the notes, a bar each, a beat each -- because
+       * where the chords sit is a fact about the chart and not about the
+       * count. The score already knows. @see core/score.js eventAtPulse
+       */
+      const { eventAtPulse } = await import('../../src/core/score.js')
+      const chordAt = (at) => {
+        const event = eventAtPulse(probe.score, at, true)
+        return event ? event.startPulse : -1
+      }
+      const starts = [...new Set(played.map((one) => chordAt(one.at)))]
+        .filter((one) => one >= 0).sort((a, b) => a - b)
+      is('the phrase sounds over all four chords', starts.length, 4)
+      const perChord = starts.map((start, i) => {
+        const root = [0, 5, 9, 3][i]
+        const slice = played.filter((one) => chordAt(one.at) === start)
+        return [...new Set(slice.map((one) => deg(one.note, root)))].sort((a, b) => a - b).join(',')
       })
       ok('the same degrees over every root', new Set(perChord).size === 1, perChord.join(' | '))
       // And the cursor still decides after an edit -- the playing index would be stale.
@@ -481,8 +624,7 @@
       is('cursor on the first chord', store.targetChord().text, 'Dm7')
 
       store.bindPhrase(null)
-      state.ui.phrases = false
-      await settle(200)
+      await closeBook(200)
 
       /* ---------- rebuilding the catalogue in the page ---------- */
       const catalogueSize = state.licks.length
@@ -649,24 +791,23 @@
       await settle(250)
 
       /* ---------- the rebuilt phrase book ---------- */
-      state.ui.phrases = true
-      for (const tab of ['catalogue', 'captured', 'playback', 'sources', 'about']) {
-        state.ui.phrasesTab = tab
-        await settle(350)
-        const shown = document.querySelectorAll('.v-overlay--active .v-window-item--active *').length
-        ok(`the ${tab} tab renders`, shown > 3, `${shown} elements`)
-      }
-
-      state.ui.phrasesTab = 'catalogue'
-      await settle(500)
-      ok('the catalogue is paged like the progressions', !!document.querySelector('.v-overlay--active .v-pagination'))
-      const catRows = [...document.querySelectorAll('.v-overlay--active .v-list-item')].map((el) => el.innerText)
-      ok('a page is a page, not the whole list', catRows.length > 0 && catRows.length <= 14, `${catRows.length} rows`)
-      ok('each row is a name and a length', catRows.every((t) => /beats/.test(t)), catRows[0])
+      await openPhrases(900)
+      // The whole catalogue, not a page of it. Paging is what a list does
+      // when it cannot hold what it is showing, and this one can.
+      ok('the catalogue is one list, not pages of it',
+        !onScreen('.v-pagination'))
+      ok('and it holds every phrase there is',
+        gridRows() === store.visibleLicks('').length,
+        `${gridRows()} rows of ${store.visibleLicks('').length}`)
+      const cols = (theGrid() ? theGrid().schema : []).map((one) => one.name)
+      ok('each row is a name and a length', cols.includes('name') && cols.includes('beats'),
+        cols.join('/'))
+      await pickRow(0)
       // By class, not by column width: where the detail sits is a layout
       // decision and this check is not about layout.
-      const catAside = document.querySelector('.v-overlay--active .jamin-book-detail')
-      ok('the aside shows the one selected', catAside && /played over/i.test(catAside.innerText),
+      const catAside = onScreen('.jamin-book-detail')
+      ok('the aside shows the one selected',
+        catAside && /over\s+\S+\s+·/.test(catAside.innerText),
         catAside && catAside.innerText.slice(0, 60).replace(/\n/g, ' '))
       // innerText is the rendered text, and Vuetify uppercases buttons in CSS.
       /* ---------- categories, taken from the source data ---------- */
@@ -750,8 +891,18 @@
       store.toggleFavourite(favourite)
       await settle(150)
 
-      const hearts = document.querySelectorAll('.v-overlay--active .jamin-heart')
-      ok('every row has a heart', hearts.length > 0, `${hearts.length} hearts`)
+      /*
+       * The heart, which is a column rather than a button now.
+       *
+       * A canvas cannot hold a button, so the control that used to be one
+       * became a column with a mark in it and a click on that column.
+       * @see components/DataGrid.vue, PhraseBook onGridCell
+       */
+      const favColumn = theGrid() && theGrid().schema.some((one) => one.name === 'fav')
+      ok('there is a column for the hearts', favColumn,
+        theGrid() ? theGrid().schema.map((o) => o.name).join('/') : 'no grid')
+      const marked = theGrid() ? theGrid().data.filter((row) => row.fav).length : 0
+      ok('and the starred one carries one', marked > 0, `${marked} marked`)
 
       /* ---------- assigning a phrase to one chord ---------- */
       state.settings.accompany.perChordPhrases = true
@@ -770,14 +921,16 @@
 
       // The book, opened for one chord, assigns to it and closes.
       state.ui.assignTo = 0
-      state.ui.phrases = true
-      await settle(300)
-      const firstRow = document.querySelector('.v-overlay--active .v-list-item')
-      ok('the book opens for that chord', !!firstRow)
-      firstRow.click()
-      await settle(300)
+      await openPhrases(500)
+      ok('the book opens for that chord', gridRows() > 0, `${gridRows()} rows`)
+      // The badge is the one thing kept over the list, because it is not a
+      // label: it says where the next pick is going.
+      ok('and says which chord it is picking for',
+        /for C\b/.test((onScreen('.jamin-book .v-chip') || {}).innerText || ''),
+        (onScreen('.jamin-book .v-chip') || {}).innerText)
+      await pickRow(0)
       ok('picking assigns rather than auditioning', /^\.C\{/.test(state.text), state.text)
-      is('and the book closes', state.ui.phrases, false)
+      is('and the book closes', state.ui.book, null)
       is('and stops assigning', state.ui.assignTo, -1)
       store.unbindPhrase(0)
       state.settings.accompany.perChordPhrases = false
@@ -817,84 +970,82 @@
       is('plain text from elsewhere pastes as itself', state.text, 'Dm7 G7 Cmaj7')
 
       // The assignment checks above closed the book; the next section needs it.
-      state.ui.phrases = true
-      state.ui.phrasesTab = 'catalogue'
-      await settle(300)
+      await openPhrases(500)
 
-      /* ---------- walking the catalogue ---------- */
-      const catList = document.querySelector('.v-overlay--active .v-list')
-      catList.focus()
-      const arrow = async (key, times = 1) => {
-        for (let i = 0; i < times; i++) {
-          catList.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
-          await settle(20)
-        }
-        await settle(250)
-      }
-
+      /*
+       * ---------- walking the catalogue ----------
+       *
+       * That the wheel and the arrows drive the grid at all is measured
+       * against the real build in scripts/shots.py, with a real mouse. What
+       * is the *phrase book's* own is what walking it does: the row under
+       * the keyboard is the phrase that plays, and it can reach any row in
+       * the catalogue rather than the fourteen a page used to hold.
+       */
       state.ui.lickTexture = 'any'
       await settle(200)
-      await arrow('ArrowDown', 3)
-      is('arrowing selects, and selecting plays', typeof store.state.songPhrase, 'string')
+      await pickRow(3)
+      is('choosing a row plays it', typeof store.state.songPhrase, 'string')
       const afterThree = store.state.songPhrase
 
-      // Walk off the end of the page and the page follows.
-      const activePage = () => {
-        const on = document.querySelector('.v-overlay--active .v-pagination__item--is-active')
-        return on ? Number(on.innerText.trim()) : 0
-      }
-      is('it starts on the first page', activePage(), 1)
-      await arrow('ArrowDown', 14)
-      ok('walking past the last row turns the page', activePage() > 1, `now on page ${activePage()}`)
+      await pickRow(40)
+      ok('and the fortieth row is reachable without a pager',
+        store.state.songPhrase !== afterThree, store.state.songPhrase)
       const reached = store.visibleLicks('').findIndex((l) => l.id === store.state.songPhrase)
-      ok('and the selection really is further down the list', reached >= 12, `index ${reached}`)
-      ok('and it is still playing whatever is selected', store.state.songPhrase !== afterThree,
-        store.state.songPhrase)
+      ok('and it really is that far down the list', reached >= 12, `index ${reached}`)
 
-      // The wheel does the same thing.
-      const beforeWheel = store.state.songPhrase
-      for (let i = 0; i < 6; i++) {
-        catList.dispatchEvent(new WheelEvent('wheel', { deltaY: 40, bubbles: true, cancelable: true }))
-        await settle(20)
-      }
-      await settle(300)
-      ok('the wheel walks it too', store.state.songPhrase !== beforeWheel, store.state.songPhrase)
-
-      // Back to the top.
-      await arrow('ArrowUp', 30)
-      await settle(300)
+      await pickRow(0)
       ok('and it walks back', !!store.state.songPhrase)
       store.bindPhrase(null)
       await settle(200)
 
-      const detail = document.querySelector('.v-overlay--active .jamin-book-detail')
-      ok('with one Use button and no keeping step',
-        /\b(use|playing)\b/i.test(detail.innerText) && !/keep/i.test(detail.innerText),
-        detail.innerText.slice(-80).replace(/\n/g, ' '))
+      // Picking can close the book -- that is what it is for when the book
+      // was opened to put something somewhere -- so make sure it is open
+      // before reading what is in it.
+      await openPhrases(400)
+      await pickRow(1)
+      const detail = onScreen('.jamin-book-detail')
+      ok('the aside is there to read', !!detail)
+      ok('with one Use button and no keeping step', detail
+        && /\b(use|playing)\b/i.test(detail.innerText) && !/keep/i.test(detail.innerText),
+        detail ? detail.innerText.slice(-80).replace(/\n/g, ' ') : 'no aside')
 
-      state.ui.phrasesTab = 'playback'
-      await settle(400)
-      const playbackText = document.querySelector('.v-overlay--active .v-window-item--active').innerText
-      for (const wanted of ['Speed', 'Octave', 'Bass note', 'Double bass', 'Snap to chord notes']) {
-        ok(`playback offers ${wanted}`, playbackText.includes(wanted), playbackText.slice(0, 70).replace(/\n/g, ' '))
+      /*
+       * How a phrase is played, which is now one place rather than two.
+       *
+       * It was half here on a Playback tab and half in the control panel's
+       * Accompany tab, with five controls drawn in both -- worded
+       * differently, and one of them hinting at the other copy.
+       * @see components/AccompanySettings.vue
+       */
+      await closeBook()
+      state.ui.settings = true
+      state.ui.settingsTab = 'accompany'
+      await settle(600)
+      const playbackText = document.querySelector('.jamin-settings .v-window-item--active').innerText
+      for (const wanted of ['Speed', 'Octave', 'Bass note', 'Double bass', 'Snap to chord notes',
+                            'Listen to what I play', 'Accent', 'Per-chord articulations']) {
+        ok(`accompany offers ${wanted}`, playbackText.includes(wanted),
+          playbackText.slice(0, 70).replace(/\n/g, ' '))
       }
       is('speed starts at one', state.settings.accompany.speed, 1)
       is('snapping is on to begin with', state.settings.accompany.snapNonChordTones, true)
       is('bass is off to begin with', state.settings.accompany.bass, false)
+      is('and one octave down when turned on', state.settings.accompany.bassOctaves, 1)
       // One bass setting, in one place.
       is('chords no longer carry a bass note of their own', state.settings.chords.bassNote, undefined)
-      state.ui.settings = true
       state.ui.settingsTab = 'chords'
       await settle(500)
       ok('and the Chords tab does not offer one',
         !/root\/slash bass/i.test(document.querySelector('.jamin-settings .v-window-item--active').innerText))
-      state.ui.settings = false
-      await settle(300)
-      state.ui.phrases = true
-      state.ui.phrasesTab = 'playback'
+      // Nothing is asked twice: each of the five that used to be in both
+      // places appears once in the whole panel.
+      state.ui.settingsTab = 'accompany'
       await settle(400)
-      is('and one octave down when turned on', state.settings.accompany.bassOctaves, 1)
-      state.ui.phrases = false
+      const twice = ['Play phrases at all', 'Snap to chord notes',
+                     'Follow the register of the chord before']
+        .filter((label) => playbackText.split(label).length > 2)
+      ok('and no control is drawn twice', twice.length === 0, twice.join(', ') || 'each asked once')
+      state.ui.settings = false
       await settle(300)
 
       /* ---------- the big collection: download, then upload ---------- */
@@ -923,14 +1074,14 @@
 
       // Built-ins have no stored bar count, so the list must work one out.
       state.ui.progressions = true
-      state.ui.progressionsTab = 'library'
-      await settle(700)
-      const listed = [...document.querySelectorAll('.v-overlay--active .v-list-item')].map((el) => el.innerText)
-      ok('the list shows a name and a length, nothing else',
-        listed.length > 0 && listed.every((t) => /\d/.test(t) && /bars/.test(t)), listed[0])
-      ok('no progression text is in the list', !listed.some((t) => /\|/.test(t)), listed[0])
-      ok('there is a pager', !!document.querySelector('.v-overlay--active .v-pagination'))
-      const aside = document.querySelector('.v-overlay--active .v-col-md-6:last-child')
+      await settle(900)
+      const progCols = theGrid() ? theGrid().schema.map((one) => one.name) : []
+      ok('the list names each one and says how long it is',
+        progCols.includes('name') && progCols.includes('bars'), progCols.join('/'))
+      ok('it is one list rather than pages of it',
+        !onScreen('.v-pagination'))
+      await pickRow(0)
+      const aside = onScreen('.v-col-md-6:last-child')
       ok('the aside shows the chart', aside && /\|/.test(aside.innerText), aside && aside.innerText.slice(0, 60).replace(/\n/g, ' '))
       ok('and insert defaults to replacing the song', /Replace the whole song/.test(aside.innerText))
       state.ui.progressions = false
@@ -955,8 +1106,12 @@
       await settle(200)
       state.ui.progressions = true
       await settle(700)
-      const progTabs = [...document.querySelectorAll('.v-tab')].map((t) => t.textContent.trim())
-      ok('progression library opens', progTabs.some((t) => t.startsWith('Library')), progTabs.join('/'))
+      // It keeps its name over it, unlike the phrase book: there are no
+      // track tabs above a progression library to carry one.
+      const progHead = onScreen('.v-card-title').innerText
+      ok('progression library opens', /Progression library/.test(progHead), progHead)
+      const progTabs = allOnScreen('.v-tab').map((t) => t.textContent.trim())
+      ok('and has no tabs over it', progTabs.length === 0, progTabs.join('/'))
       ok('built-ins are listed', store.allProgressions().length >= 15, store.allProgressions().length)
 
       const iiVI = store.allProgressions().find((p) => p.name.includes('ii–V–I major'))
@@ -968,11 +1123,41 @@
       is('forced sharps where it matters', store.renderProgression(iiVI, 5, 'sharps'), '| F-7 | A#7 | D#maj7 | % |')
       is('preview as written', store.renderProgression(iiVI, null), '| D-7 | G7 | Cmaj7 | % |')
 
-      // Insert at the cursor, into a real selection published by the canvas.
+      /*
+       * Insert at the cursor, into a real selection published by the canvas.
+       *
+       * With the library still open this measured the dialog rather than the
+       * chart: `v-dialog` keeps focus inside itself, so focusing the chart's
+       * textarea behind it and setting a range left the selection wherever
+       * it already was. The insert is a store call and needs no window; the
+       * caret does.
+       */
+      state.ui.progressions = false
+      await settle(400)
       await mirrored()
-      field.focus()
-      field.setSelectionRange(2, 3)
-      await settle(120)
+      // Asked for again rather than reused. `field` was captured six hundred
+      // lines ago and the chart has been mounted and unmounted since; a
+      // detached textarea takes focus and a selection without complaint and
+      // publishes neither, which reads exactly like the caret not moving.
+      const caret = document.querySelector('.jamin-input')
+      caret.focus()
+      caret.setSelectionRange(2, 3)
+      caret.dispatchEvent(new Event('select', { bubbles: true }))
+      /*
+       * Waited for, not slept through.
+       *
+       * The canvas publishes the caret from its animation-frame loop, and a
+       * headless browser with nothing moving on screen stops producing
+       * frames -- so a fixed sleep here was measuring whether anything else
+       * happened to repaint in the meantime. Which is why this check passed
+       * and failed on alternate runs.
+       */
+      let frames = 0
+      for (let i = 0; i < 60 && state.status.selection.join(',') !== '2,3'; i++) {
+        requestAnimationFrame(() => { frames++ })
+        await settle(50)
+      }
+      ok('the canvas is still drawing frames', frames > 0, `${frames} frames`)
       is('canvas publishes the selection', state.status.selection.join(','), '2,3')
       store.insertProgression(iiVI, { mode: 'caret', targetPc: 5 })
       await settle(200)
@@ -1049,14 +1234,30 @@
       store.deleteProgression('From the wild')
       await settle(120)
 
-      ok('inserting closes the library', state.ui.progressions === false)
+      ok('inserting leaves the library closed', state.ui.progressions === false)
+
+      /*
+       * Saving the chart, which used to be a tab of its own.
+       *
+       * One field and one button, done in a second and not come back to --
+       * which is not what a tab is for. It cost a third of the chrome over
+       * the library. Import / export went entirely: it was already a
+       * sentence pointing at the control panel.
+       */
       state.ui.progressions = true
-      state.ui.progressionsTab = 'save'
-      await settle(500)
-      ok('save tab renders', document.querySelectorAll('.v-window-item--active *').length > 3)
-      state.ui.progressionsTab = 'transfer'
-      await settle(300)
-      ok('transfer tab renders a textarea', !!document.querySelector('.v-window-item--active textarea'))
+      await settle(700)
+      const saveButton = allOnScreen('.v-card-title button')
+        .find((b) => /save this chart/i.test(b.getAttribute('aria-label') || ''))
+      ok('there is a way to save the chart', !!saveButton)
+      saveButton.click()
+      // A menu is a transition, and how long it takes depends on what else
+      // the page is doing. Waited for rather than guessed at.
+      const findSaveCard = () => [...document.querySelectorAll('.v-overlay .v-card')]
+        .find((c) => c.querySelector('input') && /Save the whole chart/.test(c.innerText))
+      let saveCard = null
+      for (let i = 0; i < 20 && !saveCard; i++) { await settle(100); saveCard = findSaveCard() }
+      ok('it opens a name and a button', !!saveCard,
+        saveCard ? saveCard.innerText.slice(0, 40).replace(/\n/g, ' ') : 'no panel')
       state.ui.progressions = false
       await settle(300)
 
@@ -1066,11 +1267,18 @@
        * nothing throws, nothing warns, it just looks broken. Measure instead.
        */
       const clipped = []
-      for (const dialog of ['settings', 'phrases', 'progressions']) {
-        state.ui[dialog] = true
-        await settle(600)
-        const strip = document.querySelector('.v-overlay--active .v-tabs')
-        const tabs = [...document.querySelectorAll('.v-overlay--active .v-tab')]
+      // `book` is the phrase and drum dialog; the other two are their own
+      // flags. Driving them by name is what let this sweep run for a week
+      // over a phrase book that was never open.
+      const show = async (which, on) => {
+        if (which === 'book') state.ui.book = on ? 'phrases' : null
+        else state.ui[which] = on
+        await settle(on ? 700 : 350)
+      }
+      for (const dialog of ['settings', 'book', 'progressions']) {
+        await show(dialog, true)
+        const strip = onScreen('.v-tabs')
+        const tabs = allOnScreen('.v-tab')
         if (strip && tabs.length) {
           const box = strip.getBoundingClientRect()
           for (const tab of tabs) {
@@ -1091,7 +1299,7 @@
           }
           return null
         }
-        for (const el of document.querySelectorAll('.v-overlay--active .v-field-label, .v-overlay--active .v-tab')) {
+        for (const el of allOnScreen('.v-overlay .v-field-label, .v-overlay .v-tab')) {
           const r = el.getBoundingClientRect()
           if (!r.height || !r.width) continue
           const box = clipperOf(el)
@@ -1100,8 +1308,7 @@
           const cut = Math.max(Math.round(b.top - r.top), Math.round(r.bottom - b.bottom))
           if (cut > 0.5) clipped.push(`${dialog}: "${el.textContent.trim()}" cut ${cut}px`)
         }
-        state.ui[dialog] = false
-        await settle(350)
+        await show(dialog, false)
       }
       ok('nothing is clipped in any dialog', clipped.length === 0, clipped.join(' | ') || 'all three dialogs measure clean')
 

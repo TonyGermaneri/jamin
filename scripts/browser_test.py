@@ -21,8 +21,44 @@ PAGES = sys.argv[1:] or ["tests/browser/modules.html"]
 SHOTS = os.path.join(ROOT, "tests", "browser", "shots")
 
 
+class Bundlerish(http.server.SimpleHTTPRequestHandler):
+    """The repository, with the one thing Vite does that a browser will not.
+
+    `src/core/genres.js` has `import VOCABULARY from '../data/genres.json'`,
+    which a bundler turns into a module and a browser refuses: a JSON file
+    fetched as a module script needs an import attribute, and without one the
+    engine rejects it on MIME type alone. The whole page then fails to load
+    `store.js` and every check in it reports as "never finished" -- which is
+    how this harness came to be broken for a week without anybody noticing.
+
+    So a JSON file *requested as a script* is answered as one. `Sec-Fetch-Dest`
+    is what separates that from an ordinary fetch of the same URL, so nothing
+    else changes. This is the same simulated bundling the page already relies
+    on for bare specifiers and CSS imports.
+    """
+
+    def do_GET(self):
+        clean = self.path.split("?", 1)[0]
+        wanted = self.headers.get("Sec-Fetch-Dest", "")
+        if clean.endswith(".json") and wanted == "script":
+            where = self.translate_path(clean)
+            try:
+                with open(where, "rb") as file:
+                    body = b"export default " + file.read() + b"\n"
+            except OSError:
+                self.send_error(404, "File not found")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/javascript")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        super().do_GET()
+
+
 def serve():
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=ROOT)
+    handler = functools.partial(Bundlerish, directory=ROOT)
     httpd = socketserver.TCPServer(("127.0.0.1", 0), handler)
     httpd.allow_reuse_address = True
     threading.Thread(target=httpd.serve_forever, daemon=True).start()

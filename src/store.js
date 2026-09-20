@@ -273,13 +273,11 @@ export const state = reactive({
      * arrangement -- so it must not follow anybody into their next session.
      */
     sends: 'phrases',
-    phrasesTab: 'catalogue',
     lickTexture: 'any',
     drumsTab: 'grooves',
     drumAccentArmed: false,
     /// Which instance the phrase book is pointed at. Null is this one.
     targetInstance: null,
-    progressionsTab: 'library',
     accentArmed: false,
     /** The chord the phrase book is picking for, when it was opened by
         right-clicking one. -1 means it was opened for the song. */

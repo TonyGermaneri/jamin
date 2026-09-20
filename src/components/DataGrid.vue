@@ -39,14 +39,6 @@ const box = ref(null)
     any of that reactive would proxy a great deal of nothing. */
 const grid = shallowRef(null)
 
-/**
- * The theme, as the grid takes it.
- *
- * Only the keys that matter -- the component has two hundred and seventeen
- * and most of them are for a spreadsheet. What is set here is what somebody
- * can see: the ground, the ink, the lines between rows, the header, and the
- * two kinds of highlight.
- */
 /*
  * A canvas takes a font string and falls back silently.
  *
@@ -59,6 +51,21 @@ const grid = shallowRef(null)
  */
 const FACE = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
 
+/**
+ * The theme, as the grid takes it.
+ *
+ * Every colour the component has, not the ones that looked like they
+ * mattered. The first version set thirty of the two hundred and seventeen
+ * keys and left the rest at their defaults, which are a light spreadsheet's
+ * -- `rgba(202,202,202)` grid border, `rgba(172,172,172)` header border,
+ * `rgba(255,255,255)` selection handle. On a dark theme those are the bright
+ * white outline that was reported around the headers, and black default text
+ * on the hover and active states was the same fault the other way up.
+ *
+ * So the list below is exhaustive: every key from the component's own
+ * defaults that carries a colour, each derived from the theme. The only ones
+ * left alone are the `debug*` set, which are never drawn.
+ */
 function dress() {
   const one = grid.value
   if (!one) return
@@ -67,6 +74,23 @@ function dress() {
   const dim = theme.dim
   // Everything is mixed against the ground, because everything is opaque.
   const ground = theme.bg
+  const accent = theme.accent
+
+  /*
+   * Five tones and two inks, so nothing is a number chosen on the spot.
+   *
+   * `line` is what a border is: far enough off the ground to separate two
+   * cells and nowhere near far enough to be a feature. `edge` is the one
+   * step up from it for the outside of the grid and the header, which are
+   * real edges rather than rules between rows. Anything brighter than
+   * `edge` on this surface reads as a highlight, and a table has nothing
+   * to highlight with a line.
+   */
+  const line = mix(dim, ground, 0.3)
+  const edge = mix(dim, ground, 0.5)
+  const raised = mix(ink, ground, 0.06)
+  const sunk = mix(ink, ground, 0.04)
+  const faint = mix(dim, ground, 0.9)
 
   Object.assign(one.style, {
     /*
@@ -81,66 +105,167 @@ function dress() {
     height: '100%',
     width: '100%',
 
-    /*
-     * Every ground, named.
-     *
-     * The component has a light default for each of these and only paints
-     * the ones it is given, so leaving any out leaves a white strip: the
-     * first attempt set the cells and the header and got a white column
-     * cap past the last column and a white corner above the row numbers.
-     */
+    /* ---- the grid itself ------------------------------------------- */
     gridBackgroundColor: ground,
+    gridBorderColor: edge,
+
+    /* ---- cells ------------------------------------------------------ */
     cellBackgroundColor: ground,
-    columnHeaderCellCapBackgroundColor: mix(ink, ground, 0.06),
-    cornerCellBackgroundColor: mix(ink, ground, 0.06),
-    activeColumnHeaderCellBackgroundColor: mix(theme.accent, ground, 0.22),
-    activeRowHeaderCellBackgroundColor: mix(theme.accent, ground, 0.2),
-    rowHeaderCellHoverBackgroundColor: mix(theme.accent, ground, 0.14),
-    rowHeaderCellSelectedBackgroundColor: mix(theme.accent, ground, 0.22),
-    activeCellHoverBackgroundColor: mix(theme.accent, ground, 0.38),
-    activeCellSelectedBackgroundColor: mix(theme.accent, ground, 0.38),
-    scrollBarCornerBackgroundColor: ground,
-    editCellBackgroundColor: ground,
-    editCellColor: ink,
     cellColor: ink,
     cellFont: `12px ${FACE}`,
     cellPaddingLeft: 10,
     cellPaddingRight: 10,
     cellHeight: 26,
-    cellBorderColor: mix(dim, ground, 0.3),
+    cellBorderColor: line,
     cellBorderWidth: 1,
+    cellHoverBackgroundColor: mix(accent, ground, 0.12),
+    cellHoverColor: ink,
+    cellSelectedBackgroundColor: mix(accent, ground, 0.28),
+    cellSelectedColor: ink,
 
-    columnHeaderCellBackgroundColor: mix(ink, ground, 0.06),
+    /* ---- the one cell the keyboard is on ---------------------------- */
+    activeCellBackgroundColor: mix(accent, ground, 0.34),
+    activeCellColor: ink,
+    activeCellFont: `12px ${FACE}`,
+    activeCellBorderColor: accent,
+    activeCellOverlayBorderColor: accent,
+    activeCellHoverBackgroundColor: mix(accent, ground, 0.38),
+    activeCellHoverColor: ink,
+    activeCellSelectedBackgroundColor: mix(accent, ground, 0.38),
+    activeCellSelectedColor: ink,
+
+    /*
+     * ---- the column headers ------------------------------------------
+     *
+     * Where the white outline was. Four keys draw a line up here -- the
+     * header, the cap past the last column, the corner over the row
+     * numbers, and the grid's own edge -- and three of them were still at
+     * the component's light-grey defaults.
+     */
+    columnHeaderCellBackgroundColor: raised,
     columnHeaderCellColor: mix(ink, ground, 0.72),
     columnHeaderCellFont: `11px ${FACE}`,
-    columnHeaderCellBorderColor: mix(dim, ground, 0.5),
+    columnHeaderCellBorderColor: edge,
     columnHeaderCellHeight: 26,
-    columnHeaderCellHoverBackgroundColor: mix(theme.accent, ground, 0.16),
+    columnHeaderCellHoverBackgroundColor: mix(accent, ground, 0.16),
+    columnHeaderCellHoverColor: ink,
+    columnHeaderCellCapBackgroundColor: raised,
+    columnHeaderCellCapBorderColor: edge,
+    activeColumnHeaderCellBackgroundColor: mix(accent, ground, 0.22),
+    activeColumnHeaderCellColor: ink,
+    // Which way it is sorted, drawn as a little triangle in the header.
+    columnHeaderOrderByArrowColor: mix(ink, ground, 0.55),
+    columnHeaderOrderByArrowBorderColor: edge,
 
-    // The row numbers down the side say how far into three quarters of a
-    // million you are, which is the thing a pager used to say.
-    rowHeaderCellBackgroundColor: mix(ink, ground, 0.04),
-    rowHeaderCellColor: mix(dim, ground, 0.9),
+    /* ---- the row numbers down the side ------------------------------ */
+    // They say how far into three quarters of a million you are, which is
+    // the thing a pager used to say.
+    rowHeaderCellBackgroundColor: sunk,
+    rowHeaderCellColor: faint,
     rowHeaderCellFont: `10px ${FACE}`,
     rowHeaderCellBorderColor: mix(dim, ground, 0.36),
+    rowHeaderCellHoverBackgroundColor: mix(accent, ground, 0.14),
+    rowHeaderCellHoverColor: ink,
+    rowHeaderCellSelectedBackgroundColor: mix(accent, ground, 0.22),
+    rowHeaderCellSelectedColor: ink,
+    rowHeaderCellRowNumberGapColor: line,
+    activeRowHeaderCellBackgroundColor: mix(accent, ground, 0.2),
+    activeRowHeaderCellColor: ink,
+    cornerCellBackgroundColor: raised,
+    cornerCellBorderColor: edge,
 
-    cellHoverBackgroundColor: mix(theme.accent, ground, 0.12),
-    cellHoverColor: ink,
-    cellSelectedBackgroundColor: mix(theme.accent, ground, 0.28),
-    cellSelectedColor: ink,
-    activeCellBackgroundColor: mix(theme.accent, ground, 0.34),
-    activeCellColor: ink,
-    activeCellBorderColor: theme.accent,
-    activeCellOverlayBorderColor: theme.accent,
-    selectionOverlayBorderColor: theme.accent,
-
+    /* ---- the scroll bars -------------------------------------------- */
     scrollBarBackgroundColor: ground,
     scrollBarBoxColor: mix(dim, ground, 0.6),
     scrollBarBoxBorderColor: mix(dim, ground, 0.6),
-    scrollBarBorderColor: ground,
+    scrollBarActiveColor: mix(ink, ground, 0.5),
+    scrollBarBorderColor: line,
+    scrollBarCornerBackgroundColor: ground,
+    scrollBarCornerBorderColor: line,
     scrollBarWidth: 9,
     scrollBarBoxMargin: 2,
     scrollBarBoxMinSize: 24,
+
+    /*
+     * ---- everything else that can draw ------------------------------
+     *
+     * Dragging a column, resizing one, the marks a selection leaves
+     * behind. None of them is on screen often and every one of them was a
+     * bright default when it was: the selection handle is pure white, the
+     * overlays are Google blue, the frozen marker is near-white grey.
+     */
+    selectionOverlayBorderColor: accent,
+    selectionHandleColor: accent,
+    selectionHandleBorderColor: mix(accent, ground, 0.5),
+    fillOverlayBorderColor: mix(dim, ground, 0.7),
+    moveOverlayBorderColor: accent,
+    reorderMarkerBackgroundColor: mix(ink, ground, 0.08),
+    reorderMarkerBorderColor: line,
+    reorderMarkerIndexBorderColor: accent,
+    resizeMarkerColor: mix(accent, ground, 0.6),
+    frozenMarkerColor: line,
+    frozenMarkerBorderColor: line,
+    frozenMarkerHeaderColor: edge,
+    frozenMarkerHoverColor: mix(accent, ground, 0.6),
+    frozenMarkerHoverBorderColor: mix(accent, ground, 0.6),
+    frozenMarkerActiveColor: mix(accent, ground, 0.3),
+    frozenMarkerActiveBorderColor: mix(accent, ground, 0.5),
+    frozenMarkerActiveHeaderColor: mix(accent, ground, 0.7),
+    groupingAreaBackgroundColor: sunk,
+    groupIndicatorColor: faint,
+    groupIndicatorBackgroundColor: raised,
+    unhideIndicatorColor: ink,
+    unhideIndicatorBackgroundColor: raised,
+    unhideIndicatorBorderColor: edge,
+    treeArrowColor: mix(ink, ground, 0.55),
+    treeArrowBorderColor: edge,
+    cellTreeIconLineColor: mix(ink, ground, 0.7),
+    cellTreeIconBorderColor: edge,
+    cellTreeIconFillColor: raised,
+    cellTreeIconHoverFillColor: mix(accent, ground, 0.2),
+
+    /*
+     * ---- the parts that are HTML, not canvas ------------------------
+     *
+     * The filter button, the context menu and the editor are real
+     * elements the component appends to the page, so these take CSS
+     * strings rather than colours. They are styled here for the same
+     * reason as the rest: a white menu over a dark grid is the same bug
+     * as a white line over one.
+     */
+    editCellBackgroundColor: ground,
+    editCellColor: ink,
+    editCellBorder: `solid 1px ${accent}`,
+    editCellFontFamily: FACE,
+    buttonBackgroundColor: raised,
+    buttonBorderColor: edge,
+    buttonHoverBackgroundColor: mix(accent, ground, 0.16),
+    buttonActiveBackgroundColor: mix(accent, ground, 0.24),
+    buttonActiveBorderColor: accent,
+    buttonArrowColor: mix(ink, ground, 0.7),
+    filterButtonBackgroundColor: raised,
+    filterButtonBorderColor: edge,
+    filterButtonHoverBackgroundColor: mix(accent, ground, 0.16),
+    filterButtonActiveBackgroundColor: mix(accent, ground, 0.24),
+    filterButtonArrowColor: mix(ink, ground, 0.7),
+    filterButtonArrowBorderColor: edge,
+    contextMenuBackground: raised,
+    contextMenuColor: ink,
+    contextMenuBorder: `solid 1px ${edge}`,
+    contextMenuArrowColor: mix(ink, ground, 0.7),
+    childContextMenuArrowColor: mix(ink, ground, 0.7),
+    contextMenuHoverBackground: mix(accent, ground, 0.3),
+    contextMenuHoverColor: ink,
+    contextMenuFontFamily: FACE,
+    contextFilterInputBackground: ground,
+    contextFilterInputColor: ink,
+    contextFilterInputBorder: `solid 1px ${edge}`,
+    contextFilterInputFontFamily: FACE,
+    contextFilterButtonBorder: `solid 1px ${edge}`,
+    contextFilterInvalidRegExpBackground: mix(theme.error, ground, 0.6),
+    contextFilterInvalidRegExpColor: ink,
+    contextMenuFilterInvalidExpresion: mix(theme.error, ground, 0.4),
+    mobileEditFontFamily: FACE,
   })
 }
 
@@ -176,6 +301,29 @@ function rowOfChosen() {
   return props.rows.findIndex((row) => row[props.keyed] === want)
 }
 
+/** The row the keyboard was last reported on. @see announce */
+let told = -1
+
+/**
+ * Whichever row is under the active cell, reported.
+ *
+ * `again` is the difference between the mouse and the keyboard. A click is
+ * a deliberate act every time -- clicking the same phrase twice means play
+ * it twice -- so a click always reports. A key press reports only when the
+ * row actually changed, because Left, Right and Tab all fire a keydown on
+ * the same row and none of them is a new choice.
+ */
+function announce(again) {
+  const one = grid.value
+  const at = one && one.activeCell && one.activeCell.rowIndex
+  if (!Number.isInteger(at)) return
+  if (!again && at === told) return
+  const row = props.rows[at]
+  if (!row) return
+  told = at
+  emit('pick', row)
+}
+
 function build() {
   if (!box.value) return
   grid.value = canvasDatagrid({
@@ -201,11 +349,24 @@ function build() {
    * One click chooses, two uses it -- the same pair as everywhere else in
    * jamin, and the same pair the list it replaces had.
    */
-  grid.value.addEventListener('selectionchanged', () => {
-    const at = grid.value.activeCell && grid.value.activeCell.rowIndex
-    const row = Number.isInteger(at) ? props.rows[at] : null
-    if (row) emit('pick', row)
-  })
+  grid.value.addEventListener('selectionchanged', () => announce(true))
+
+  /*
+   * The keyboard moves the active cell and says nothing about it.
+   *
+   * `selectionchanged` fires when the mouse selects; the arrow keys move
+   * the active cell without selecting anything, so walking the list with
+   * the keyboard left the book still pointing at whatever was last
+   * clicked. Measured in a real browser: four presses of Down took the
+   * active cell from row 0 to row 4 and `songPhrase` stayed null, under a
+   * line of help text saying "arrow to hear your way through".
+   *
+   * So the row under the keyboard is read back after the grid has dealt
+   * with the key, and reported if it moved. `setTimeout` rather than
+   * `nextTick` because it is the grid's own handler being waited for, not
+   * Vue's render.
+   */
+  grid.value.addEventListener('keydown', () => setTimeout(() => announce(false), 0))
 
   grid.value.addEventListener('dblclick', (event) => {
     const row = event.cell && event.cell.data
@@ -295,7 +456,8 @@ watch(() => props.chosen, () => {
   const at = rowOfChosen()
   if (at < 0) return
   const here = one.activeCell && one.activeCell.rowIndex
-  if (here === at) return
+  if (here === at) { told = at; return }
+  told = at
   one.setActiveCell(0, at)
   one.scrollIntoView(0, at)
 })

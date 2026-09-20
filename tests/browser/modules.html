@@ -97,10 +97,35 @@
 
       const layout = layoutChart(score, { width: 900, measure, display: settings.display })
       ok('three lines laid out', layout.lines.length === 3, layout.lines.length)
-      ok('lines fill the width', layout.lines.every((l) => Math.abs(l.width - (900 - settings.display.padding * 2)) < 2 || l.fontSize >= settings.display.maxFontSize - 0.01),
-        layout.lines.map((l) => Math.round(l.width)).join(','))
-      ok('lines size independently', new Set(layout.lines.map((l) => Math.round(l.fontSize))).size > 1,
+      /*
+       * One size for the whole chart, unless asked otherwise.
+       *
+       * These two checks were written when every line was scaled on its own
+       * to fill the width. That is now a setting -- `dynamicLineSize` -- and
+       * it is off, because a chart whose every line fills the width is a bar
+       * of four chords small and a single chord huge. Off, the longest line
+       * decides and the shorter ones are simply shorter. @see canvas/layout.js
+       */
+      ok('every line is the same size by default',
+        new Set(layout.lines.filter((l) => l.text.length).map((l) => Math.round(l.fontSize))).size === 1,
         layout.lines.map((l) => Math.round(l.fontSize)).join(','))
+      ok('and the longest line is the one that fills the width',
+        Math.abs(Math.max(...layout.lines.map((l) => l.width)) - (900 - settings.display.padding * 2)) < 2
+          || layout.lines.every((l) => l.fontSize >= settings.display.maxFontSize - 0.01),
+        layout.lines.map((l) => Math.round(l.width)).join(','))
+
+      const perLine = layoutChart(score, {
+        width: 900, measure,
+        display: { ...settings.display, dynamicLineSize: true },
+      })
+      ok('turned on, lines size independently',
+        new Set(perLine.lines.filter((l) => l.text.length).map((l) => Math.round(l.fontSize))).size > 1,
+        perLine.lines.map((l) => Math.round(l.fontSize)).join(','))
+      ok('and then each one fills the width',
+        perLine.lines.filter((l) => l.text.length).every((l) =>
+          Math.abs(l.width - (900 - settings.display.padding * 2)) < 2
+          || l.fontSize >= settings.display.maxFontSize - 0.01),
+        perLine.lines.map((l) => Math.round(l.width)).join(','))
       ok('every token has a rect', layout.lines.reduce((n, l) => n + l.tokens.length, 0) === score.tokens.length)
       ok('runs cover every character', layout.lines.every((line) => {
         let cursor = 0

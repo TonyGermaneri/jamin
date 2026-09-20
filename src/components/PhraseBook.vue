@@ -14,7 +14,6 @@ import {
   deletePhrase,
   renamePhrase,
   usePhrase,
-  setHolding,
   bindPhrase,
   currentToken,
   toast,
@@ -24,18 +23,13 @@ import {
   treeOf,
   setAccentPhrase,
   midiForPhrase,
-  triggerAccent,
   favourite,
   toggleFavourite,
-  randomSongPhrase,
-  instanceLabel,
-  setInstancePhrase,
   setPhrasePool,
   placePick,
 } from '../store.js'
 import { keyPitchClass, phraseCategory, phraseKey, summarize } from '../core/phrases.js'
 import { describeLick } from '../core/licks.js'
-import InfoTip from './InfoTip.vue'
 import CatalogueMap from './CatalogueMap.vue'
 import DataGrid from './DataGrid.vue'
 import PhraseDetail from './PhraseDetail.vue'
@@ -79,21 +73,9 @@ const name = ref('')
 const renaming = ref(null)
 const renameTo = ref('')
 
-/** Which instance the book is pointed at; this one until told otherwise. The
-    tabs that choose it belong to the shell around this. @see ArticulationBook */
-const aimedAt = computed(() => state.ui.targetInstance || state.roster.me)
-
-/** True when the tab open is somebody else's track. */
-const elsewhere = computed(() => state.host.active && aimedAt.value && aimedAt.value !== state.roster.me)
-
 const accompany = computed(() => state.settings.accompany)
 const target = computed(() => currentToken())
 const perChord = computed(() => accompany.value.perChordPhrases)
-const playing = computed(() => state.songPhrase)
-const accentId = computed(() => state.accentPhrase)
-const isAccent = (entry) => !!entry && state.accentPhrase === (entry.id || entry.name)
-const accent = computed(() => matches.value.find((entry) => entry.id === state.accentPhrase) ||
-  catalogue().find((entry) => entry.id === state.accentPhrase) || null)
 const category = ref('any')
 const musicalKey = ref('any')
 const kind = ref('any')
@@ -265,28 +247,13 @@ const activeFilters = computed(() =>
 
 const filtered = computed(() => Boolean(search.value) || activeFilters.value > 0)
 
-/**
- * A phrase at random, from the filtered list rather than the whole catalogue.
+/*
+ * There is no die here any more.
  *
- * The filters are what make this worth having: ten thousand phrases at random is
- * a shrug, but one of the 362 pads in F# is a suggestion. It is also the reason
- * the die sits next to the list and not in the settings.
+ * Every track's tab carries one -- @see components/InstanceTabs.vue -- and
+ * it does the same thing for the track it is on. Two of them on the same
+ * screen is one too many, and this one cost a row of chrome over the list.
  */
-function rollPhrase() {
-  const pool = matches.value
-  if (!pool.length) return
-
-  const pick = pool[Math.floor(Math.random() * pool.length)]
-  if (!pick) return
-
-  selected.value = pick
-  if (elsewhere.value) {
-    setInstancePhrase(aimedAt.value, pick.id || pick.name)
-    toast(`${pick.name} → ${instanceLabel(aimedAt.value)}`)
-  } else {
-    randomSongPhrase([pick])
-  }
-}
 
 function clearFilters() {
   search.value = ''
@@ -409,32 +376,11 @@ function pick(entry) {
   usePhrase(entry)
 }
 
-/** How long a heard chord runs before its phrase comes round again. */
-const LIVE_BARS = [
-  { title: 'one bar', value: 1 },
-  { title: 'two bars', value: 2 },
-  { title: 'four bars', value: 4 },
-]
-
-const SPEEDS = [
-  { title: '1/16×', value: 0.0625 },
-  { title: '1/8×', value: 0.125 },
-  { title: '1/4×', value: 0.25 },
-  { title: '1/3×', value: 0.3333 },
-  { title: '1/2×', value: 0.5 },
-  { title: '2/3×', value: 0.6667 },
-  { title: '1× as played', value: 1 },
-  { title: '1.5×', value: 1.5 },
-  { title: '2×', value: 2 },
-  { title: '3×', value: 3 },
-  { title: '4×', value: 4 },
-]
-
+// The catalogue is all there is now, so opening the book is the whole of
+// the question this used to ask about tabs.
 watch(
-  () => [state.ui.book === 'phrases', state.ui.phrasesTab],
-  ([open, tab]) => {
-    if (open && (tab === 'catalogue' || tab === 'sources')) rebuildLicks()
-  },
+  () => state.ui.book === 'phrases',
+  (open) => { if (open) rebuildLicks() },
   { immediate: true }
 )
 
@@ -443,13 +389,6 @@ function commitRename(entry) {
   const next = renamePhrase(entry.name, renameTo.value)
   if (next) toast(`Renamed to ${next}`)
   renaming.value = null
-}
-
-/** Where the loading actually happens. @see components/PhraseSources.vue */
-function openLibraries() {
-  state.ui.book = null
-  state.ui.settingsTab = 'libraries'
-  state.ui.settings = true
 }
 
 /** A small piano roll, so a phrase is recognisable without playing it. */
@@ -482,38 +421,31 @@ const assigningTo = computed(() => {
 </script>
 
 <template>
-  <v-card-title class="d-flex align-center">
-        <v-icon size="18" class="mr-2">mdi-book-music-outline</v-icon>
-        <span class="text-body-1">Phrase book</span>
-        <v-chip v-if="assigningTo" size="small" class="ml-3" color="primary" variant="tonal"
+  <!--
+        No title, no tabs, no die.
+
+        Everything that used to sit above the list said something that was
+        already on screen or somewhere better: the name of the book is on
+        the tab that opened it, the die is on that tab too, what is playing
+        is in the chart, and Playback belongs with the rest of the settings.
+        Four rows of chrome over a list, and a list is what somebody came
+        for. The only thing kept is the chord badge, because that is not a
+        label -- it says the next phrase picked is going onto that chord,
+        and there is nowhere else to say it.
+      -->
+      <v-card-title v-if="assigningTo" class="d-flex align-center py-2">
+        <v-chip size="small" color="primary" variant="tonal"
                 closable @click:close="state.ui.assignTo = -1">
           for {{ assigningTo }}
         </v-chip>
-        <v-spacer />
-        <span v-if="playing" class="text-caption text-medium-emphasis mr-3">playing “{{ playing }}”</span>
-        <!-- One at random from whatever the filters are showing, which is what
-             makes it useful: narrow to "F# pad" and the die stays inside it. -->
-        <v-btn icon size="small" variant="text" class="mr-1"
-               :disabled="!matches.length"
-               aria-label="A random phrase from this list" @click="rollPhrase">
-          <v-icon size="19">mdi-dice-5-outline</v-icon>
-          <v-tooltip activator="parent" location="bottom">
-            A random phrase from the {{ matches.length.toLocaleString() }} the filters are showing
-          </v-tooltip>
-        </v-btn>
       </v-card-title>
 
-      <v-tabs v-model="state.ui.phrasesTab">
-        <v-tab value="catalogue">Catalogue ({{ total }})</v-tab>
-        <v-tab value="playback">Playback</v-tab>
-        <v-tab value="sources">Sources</v-tab>
-        <v-tab value="about">How it works</v-tab>
-      </v-tabs>
-
       <v-card-text>
-        <v-window v-model="state.ui.phrasesTab">
-          <!-- Catalogue: list on the left, the one you picked on the right -->
-          <v-window-item value="catalogue">
+        <!-- The catalogue: list on the left, the one you picked on the right.
+             `jamin-book-body` is what the v-window used to do: pass the
+             card's height down to the row instead of shrink-wrapping it.
+             @see styles/app.css -->
+        <div class="jamin-book-body">
             <!--
               The map, when that is what is being looked at.
 
@@ -600,7 +532,10 @@ const assigningTo = computed(() => {
                   </span>
                   <v-spacer />
                   <span class="text-caption text-medium-emphasis d-none d-xl-block">
-                    arrow or scroll to hear your way through · right-click to make it the accent
+                    <!-- The wheel scrolls the list rather than walking it, which
+                         is what a wheel does over a grid; the arrows are what
+                         move the selection. @see components/DataGrid.vue -->
+                    arrow down the list to hear your way through · right-click to make it the accent
                   </span>
                 </div>
               </v-col>
@@ -684,257 +619,6 @@ const assigningTo = computed(() => {
                 </div>
               </v-col>
             </v-row>
-          </v-window-item>
-
-          <!-- Playback ---------------------------------------------------- -->
-          <v-window-item value="playback">
-            <!-- Mr. Accompany Me, which is the thing this book is for. It used
-                 to wait for a chord to be written down and record what was
-                 played over it; now it hears what is played and answers it. -->
-            <div class="mb-3">
-              <div class="d-flex align-center">
-                <v-switch v-model="accompany.listen" density="compact" hide-details
-                          color="primary" label="Listen to what I play" />
-                <InfoTip>
-                  Notes come in, the chord they make is named, and that chord is played back
-                  through a phrase — all while the keys are still down. Nothing is recorded and
-                  nothing is kept: what you hear is what is being held, and letting go ends it.
-                  <br /><br />
-                  The phrase it uses is the chart's own — whatever the chord under the playhead is
-                  playing — so it sounds like the song rather than like a second program. An armed
-                  accent beats that, as an accent beats everything.
-                  <br /><br />
-                  A chord is named whether or not the transport is rolling, but it can only be
-                  <em>played</em> while it is: a phrase is a rhythm, and a stopped transport has no
-                  time to lay one on.
-                </InfoTip>
-              </div>
-
-              <div v-if="accompany.listen" class="ml-8">
-                <v-radio-group v-model="accompany.liveMode" density="compact" hide-details
-                               class="mb-2">
-                  <v-radio value="merge" label="Play over the chart" />
-                  <v-radio value="override" label="My chords replace the chart's" />
-                </v-radio-group>
-                <div class="text-caption text-medium-emphasis mb-2">
-                  <span v-if="accompany.liveMode === 'override'">
-                    While you are holding something the chart's harmony gives way. The drums and
-                    the pedal still follow the song — they follow the song, not your hands.
-                  </span>
-                  <span v-else>
-                    The chart plays its own chords and you play over the top, which is what a
-                    second player in the room is.
-                  </span>
-                </div>
-                <v-select v-model="accompany.liveBars" :items="LIVE_BARS" density="compact"
-                          hide-details label="A held chord lasts" style="max-width: 260px" />
-                <div class="text-caption text-medium-emphasis mt-1">
-                  A written chord knows how long it lasts because the bar says so. A held one lasts
-                  until your hands move, so it is given a length and comes round again.
-                </div>
-
-                <!-- Hold. The foot is the ordinary way to reach it, so the
-                     binding sits with the thing it holds rather than in a
-                     list of controllers somewhere else. -->
-                <div class="d-flex align-center flex-wrap ga-2 mt-4">
-                  <v-btn
-                    size="small"
-                    :variant="state.ui.holding ? 'flat' : 'tonal'"
-                    :color="state.ui.holding ? 'primary' : undefined"
-                    class="text-none"
-                    @click="setHolding(!state.ui.holding)"
-                  >{{ state.ui.holding ? 'Holding — let go' : 'Hold the chord' }}</v-btn>
-                  <v-btn
-                    size="small"
-                    :variant="state.ui.learningHold ? 'flat' : 'text'"
-                    :color="state.ui.learningHold ? 'secondary' : undefined"
-                    class="text-none"
-                    @click="state.ui.learningHold = !state.ui.learningHold"
-                  >{{ state.ui.learningHold ? 'Move a control…' : 'Bind to MIDI' }}</v-btn>
-                  <span v-if="state.settings.midi.holdCc !== null" class="text-caption">
-                    CC {{ state.settings.midi.holdCc }}<span
-                      v-if="state.settings.midi.holdCc === 64"> — the sustain pedal</span>
-                    <v-btn size="x-small" variant="text" class="text-none"
-                           @click="state.settings.midi.holdCc = null">clear</v-btn>
-                  </span>
-                </div>
-                <div class="text-caption text-medium-emphasis mt-1">
-                  Your hands can come off the chord and it goes on playing, so the other one is
-                  free. A new chord takes over and is held in its turn; letting go of Hold is what
-                  ends it. Lifting the pedal while the keys are still down does nothing — you have
-                  not stopped playing the chord.
-                </div>
-              </div>
-            </div>
-
-            <v-divider class="mb-3" />
-
-            <v-row dense>
-              <v-col cols="12" md="6">
-                <v-select v-model="accompany.speed" :items="SPEEDS" label="Speed" />
-                <div class="text-caption text-medium-emphasis mt-1 mb-4">
-                  How fast a phrase runs over the chords. At 1× it plays at the rate it was
-                  performed, whatever a chord's length.
-                </div>
-              </v-col>
-              <v-col cols="12" md="6">
-                <div class="text-caption mb-1">Octave — {{ accompany.octave }}</div>
-                <v-slider v-model="accompany.octave" :min="1" :max="7" :step="1" />
-                <div class="text-caption text-medium-emphasis mt-1 mb-4">
-                  Where a phrase sits when it is not following the register of the chord before it.
-                </div>
-              </v-col>
-
-              <v-col cols="12">
-                <v-divider class="mb-3" />
-                <v-switch v-model="accompany.bass" label="Bass note — a held root under everything" />
-                <div class="text-caption text-medium-emphasis mb-2">
-                  Held for the whole chord, under a phrase or a plain chord alike, and a slash
-                  chord puts its own note in the bass.
-                </div>
-              </v-col>
-              <v-col cols="12" md="6">
-                <div class="text-caption mb-1">
-                  {{ accompany.bassOctaves }} octave{{ accompany.bassOctaves === 1 ? '' : 's' }} down
-                </div>
-                <v-slider v-model="accompany.bassOctaves" :min="0" :max="3" :step="1" :disabled="!accompany.bass" />
-              </v-col>
-              <v-col cols="12" md="6">
-                <v-switch
-                  v-model="accompany.doubleBass"
-                  :disabled="!accompany.bass"
-                  label="Double bass — the same root an octave lower again"
-                />
-              </v-col>
-
-              <v-col cols="12">
-                <v-divider class="mb-3" />
-                <div class="d-flex align-center">
-                  <v-switch v-model="accompany.pedal" label="Hold pedal for chord" hide-details />
-                  <InfoTip>
-                    Sustain (CC 64) goes down as each chord starts and lifts on the change, so a
-                    chord rings for its full length without smearing into the next one. It follows
-                    whatever is sounding — the chord channel, and the accompaniment channel when a
-                    phrase is playing.
-                    <br /><br />
-                    <code>[n.p]</code> and <code>[n.p.]</code> mean the same as <code>[np]</code>.
-                    A mark beats this switch from where it appears; this switch is what applies
-                    before the first one.
-                  </InfoTip>
-                </div>
-                <div class="text-caption text-medium-emphasis mb-2 mt-1">
-                  Or write <code>[p]</code> in the chart to hold it from there,
-                  <code>[np]</code> to lift it.
-                </div>
-              </v-col>
-
-              <v-col cols="12">
-                <v-divider class="my-3" />
-                <div class="text-body-2 mb-1">Accent</div>
-                <div class="text-caption text-medium-emphasis mb-2">
-                  <span v-if="accent"><strong>{{ accent.name }}</strong> — right-click any phrase
-                    in the catalogue to change it.</span>
-                  <span v-else>None yet. Right-click a phrase in the catalogue to choose one.</span>
-                  <InfoTip>
-                    It replaces the phrase on the next chord rather than playing over the top of
-                    it, and waits for the chord change to do it — so pressing this half a bar
-                    early means the same thing as pressing it a beat early. Press it again to
-                    cancel.
-                  </InfoTip>
-                </div>
-                <div class="d-flex align-center flex-wrap mb-2" style="gap: 8px">
-                  <v-btn size="small" :prepend-icon="state.ui.accentArmed ? 'mdi-flash' : 'mdi-flash-outline'"
-                         :color="state.ui.accentArmed ? 'warning' : undefined" :disabled="!accent" @click="triggerAccent">
-                    {{ state.ui.accentArmed ? 'Armed — cancel' : 'Play it on the next chord' }}
-                  </v-btn>
-                  <v-btn
-                    size="small"
-                    :variant="state.ui.learningAccent ? 'flat' : 'text'"
-                    :color="state.ui.learningAccent ? 'secondary' : undefined"
-                    @click="state.ui.learningAccent = !state.ui.learningAccent"
-                  >
-                    {{ state.ui.learningAccent ? 'Move a control…' : 'Bind to MIDI' }}
-                  </v-btn>
-                  <span v-if="state.settings.midi.accentCc !== null" class="text-caption">
-                    CC {{ state.settings.midi.accentCc }}
-                    <v-btn size="x-small" variant="text" @click="state.settings.midi.accentCc = null">clear</v-btn>
-                  </span>
-                </div>
-              </v-col>
-              <v-col cols="12">
-                <v-divider class="mb-3" />
-              </v-col>
-              <v-col cols="12" md="6">
-                <v-switch v-model="accompany.enabled" label="Play phrases at all" />
-                <v-switch v-model="accompany.keepRegister" label="Follow the register of the chord before" />
-                <v-switch v-model="accompany.snapNonChordTones" label="Snap to chord notes" />
-                <div class="text-caption text-medium-emphasis">
-                  Anything not in the chord moves to the nearest note that is. Off, a passing
-                  tone stays where the harmony put it, which is more faithful to the phrase and
-                  less certain to fit.
-                </div>
-              </v-col>
-              <v-col cols="12" md="6">
-                <v-select
-                  v-model="accompany.fit"
-                  :items="[
-                    { title: 'Keep the rhythm, follow the chart', value: 'follow' },
-                    { title: 'Keep the rhythm, restart each chord', value: 'restart' },
-                    { title: 'Stretch to fit the chord', value: 'stretch' },
-                  ]"
-                  label="When the phrase and the chord are different lengths"
-                />
-                <div class="text-caption text-medium-emphasis mt-1">
-                  Stretching changes the phrase's tempo; speed above is the deliberate way to do that.
-                </div>
-              </v-col>
-            </v-row>
-          </v-window-item>
-
-          <!-- Sources ----------------------------------------------------- -->
-          <v-window-item value="sources">
-            <!-- The widget itself lives in Settings now, with the other two
-                 catalogues. Loading a collection is one question and it had
-                 three answers depending on which window was open. -->
-            <div class="text-body-2 mb-3">
-              Where articulations come from, and how to add your own, is in
-              <strong>Settings ▸ Libraries</strong> with the progressions and the drums.
-            </div>
-            <v-btn size="small" variant="tonal" class="text-none"
-                   prepend-icon="mdi-cog-outline" @click="openLibraries">
-              Open it
-            </v-btn>
-          </v-window-item>
-
-          <!-- How it works ------------------------------------------------ -->
-          <v-window-item value="about">
-            <div class="text-body-2" style="line-height: 1.7">
-              <p class="mb-3">
-                A phrase is one chord's worth of playing, stored rooted on C — as degrees
-                measured from the chord it was played over, rather than the notes that were
-                played. Capture something over F minor 7 and it is filed as root, ♭3, 5, ♭7.
-              </p>
-              <p class="mb-3">
-                Putting it over a chord happens in that order, and the order matters. The root
-                goes first, so the degrees stay intact. Only if the new chord is a different
-                <em>shape</em> does minimal-movement voice leading get involved, and by then both
-                chords share a root, so the root stays the root. Last, the octave is chosen to
-                sit nearest to where the phrase was over the previous chord.
-              </p>
-              <p class="mb-3">
-                That is why nothing here is filtered by the chord you are on: every phrase fits
-                every chord. The rhythm is never touched either — it runs at the rate it was
-                played and keeps time with the chart, and a chord decides only the harmony for
-                the stretch of time it occupies.
-              </p>
-              <p class="mb-3">
-                One phrase plays for the whole song by default. Turn on
-                <em>per-chord articulations</em> in settings and it instead applies from the
-                chord it is bound to until the next chord wearing a dot — the dot you see above
-                a chord is literally the <code>.</code> in the text.
-              </p>
-            </div>
-          </v-window-item>
-        </v-window>
+        </div>
       </v-card-text>
 </template>

@@ -9,6 +9,7 @@ import DrumLibraries from './DrumLibraries.vue'
 import PhraseSources from './PhraseSources.vue'
 import ProgressionSources from './ProgressionSources.vue'
 import DrumKit from './DrumKit.vue'
+import AccompanySettings from './AccompanySettings.vue'
 import { state, engine, applyTheme, resetSettings, applyPortBindings, forgetErrors, toast } from '../store.js'
 import { THEMES, SHADER_DEFAULTS } from '../core/themes.js'
 import { defaultSettings } from '../core/settings.js'
@@ -711,69 +712,16 @@ async function retryMidi() {
           </v-window-item>
 
           <!-- Accompany -------------------------------------------------- -->
-          <v-window-item value="accompany">
-            <div class="text-caption text-medium-emphasis mb-3">
-              Mr. Accompany Me — play one chord's worth of music and it becomes a phrase that
-              plays over the whole song.
-              <InfoTip>
-                Bind your keyboard as the accompaniment input, arm the red button, and play one
-                chord's worth of music. The phrase lands in the phrase book; choose it and it
-                plays over the whole song, re-pointed at each chord by voice leading. Turn on
-                per-chord articulations below if you want different phrases on different chords.
-              </InfoTip>
-            </div>
-            <v-row dense>
-              <v-col cols="12" md="6">
-                <v-switch v-model="state.settings.accompany.enabled" label="Play bound phrases" />
-                <v-switch
-                  v-model="state.settings.accompany.perChordPhrases"
-                  label="Per-chord articulations"
-                  hint="Off: one phrase plays the whole song. On: bind different phrases to individual chords, marked with a dot."
-                  persistent-hint
-                />
-                <v-switch v-model="state.settings.accompany.monitor" label="Hear your keyboard through the accompaniment output" />
-              </v-col>
-              <v-col cols="12" md="6">
-                <v-switch v-model="state.settings.accompany.keepRegister" label="Keep phrases in the register they were played" />
-                <v-switch v-model="state.settings.accompany.snapNonChordTones" label="Snap passing notes onto the new chord" />
-              </v-col>
-              <v-col cols="12" md="4">
-                <v-select
-                  v-model="state.settings.accompany.mode"
-                  :items="[{ title: 'Phrase replaces the chord', value: 'replace' }, { title: 'Phrase over the chord', value: 'layer' }]"
-                  label="When a phrase is bound"
-                />
-              </v-col>
-              <v-col cols="12" md="4">
-                <v-select
-                  v-model="state.settings.accompany.fit"
-                  :items="[
-                    { title: 'Keep the rhythm, follow the chart', value: 'follow' },
-                    { title: 'Keep the rhythm, restart each chord', value: 'restart' },
-                    { title: 'Stretch to fit the chord', value: 'stretch' },
-                  ]"
-                  label="When the phrase and the chord are different lengths"
-                  hint="Stretching changes the tempo of the phrase: a bar of phrase in half a bar of chord plays twice as fast."
-                  persistent-hint
-                />
-              </v-col>
-              <v-col cols="12" md="4">
-                <!-- Mr. Accompany Me listens rather than records, so the two
-                     controls that shaped a recording have nothing to shape. It
-                     lives on the phrase book's Playback tab, next to the rest of
-                     what a phrase does. -->
-                <v-select
-                  v-model="state.settings.accompany.liveMode"
-                  :items="[{ title: 'Play over the chart', value: 'merge' },
-                           { title: 'My chords replace the chart\'s', value: 'override' }]"
-                  label="When I play along"
-                  :disabled="!state.settings.accompany.listen"
-                  hint="Turn listening on in the phrase book, under Playback."
-                  persistent-hint
-                />
-              </v-col>
-            </v-row>
-          </v-window-item>
+          <!--
+            Everything a phrase does when it plays, in one place.
+
+            Half of it used to be here and half on a Playback tab in the
+            phrase book, with five controls drawn in both -- worded
+            differently each time, and one of them hinting at the other
+            copy. The book keeps the catalogue; how a phrase is played is
+            here. @see components/AccompanySettings.vue
+          -->
+          <v-window-item value="accompany"><AccompanySettings /></v-window-item>
 
           <!-- Libraries: somebody's own MIDI, read from where it lives ---- -->
           <v-window-item value="libraries">

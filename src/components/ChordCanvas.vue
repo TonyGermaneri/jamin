@@ -352,14 +352,12 @@ function insertDrums() {
 /** Put a chord here carrying an articulation, chosen from the phrase book. */
 function insertPhrase() {
   state.ui.insertPhraseAt = menu.value.at
-  state.ui.phrasesTab = 'catalogue'
   openBook('phrases')
   menu.value.open = false
 }
 
 function assignPhrase() {
   state.ui.assignTo = menu.value.token
-  state.ui.phrasesTab = 'catalogue'
   openBook('phrases')
   menu.value.open = false
 }
@@ -472,8 +470,7 @@ function onToolAct(what) {
   }
   if (what === 'articulate') {
     state.ui.assignTo = index
-    state.ui.phrasesTab = 'catalogue'
-    openBook('phrases')
+      openBook('phrases')
     hover.value = -1
     return
   }

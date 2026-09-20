@@ -104,6 +104,8 @@ const targetPc = ref(null)
 const spelling = ref('auto')
 const mode = ref('replace')
 const newName = ref('')
+/** Whether the little save panel is showing. @see saveCurrent */
+const saving = ref(false)
 
 const modes = [
   { title: 'Replace the whole song', value: 'replace' },
@@ -328,21 +330,11 @@ async function rollProgression() {
 function saveCurrent(text, label) {
   if (saveProgression(newName.value || label, text)) {
     newName.value = ''
-    state.ui.progressionsTab = 'library'
+    saving.value = false
   }
 }
 
-/**
- * Inside the plugin a link cannot save a file, and fails silently doing it, so
- * the URL goes to the system browser. In a tab the anchor does its own job and
- * this does nothing.
- */
-/** Where the loading actually happens. @see components/ProgressionSources.vue */
-function openLibraries() {
-  state.ui.progressions = false
-  state.ui.settingsTab = 'libraries'
-  state.ui.settings = true
-}
+
 /*
  * Last in the file, deliberately.
  *
@@ -447,19 +439,45 @@ onMounted(refreshTree)
             One of the {{ total.toLocaleString() }} the filters are showing, picked and applied
           </v-tooltip>
         </v-btn>
+        <!--
+          Saving the chart, which used to be a tab of its own.
+
+          A tab is for a place you go; this is one field and one button,
+          done in a second and not come back to. It cost a third of the
+          chrome over the library for something nobody reads. The two other
+          tabs are gone too: Import / export was already a sentence pointing
+          at Settings.
+        -->
+        <v-menu v-model="saving" :close-on-content-click="false" location="bottom end">
+          <template #activator="{ props }">
+            <v-btn v-bind="props" icon size="small" variant="text" class="mr-1"
+                   :disabled="!state.text.trim()"
+                   aria-label="Save this chart as a progression">
+              <v-icon size="19">mdi-content-save-outline</v-icon>
+              <v-tooltip activator="parent" location="bottom">
+                Save this chart as a progression
+              </v-tooltip>
+            </v-btn>
+          </template>
+          <v-card min-width="360" class="pa-3">
+            <v-text-field v-model="newName" label="Name" density="compact"
+                          placeholder="ii–V–I in Eb" hide-details class="mb-3"
+                          @keyup.enter="saveCurrent(state.text, 'Chart')" />
+            <pre class="jamin-mono text-caption mb-3"
+                 style="white-space: pre-wrap; max-height: 140px; overflow: auto; opacity: .85"
+              >{{ state.text }}</pre>
+            <v-btn size="small" block class="text-none" :disabled="!state.text.trim()"
+                   @click="saveCurrent(state.text, 'Chart')">
+              Save the whole chart
+            </v-btn>
+          </v-card>
+        </v-menu>
+
         <v-btn icon="mdi-close" size="small" variant="text" @click="state.ui.progressions = false" />
       </v-card-title>
 
-      <v-tabs v-model="state.ui.progressionsTab">
-        <v-tab value="library">Library</v-tab>
-        <v-tab value="save">Save</v-tab>
-        <v-tab value="transfer">Import / export</v-tab>
-      </v-tabs>
-
       <v-card-text>
-        <v-window v-model="state.ui.progressionsTab">
-          <!-- Library: list on the left, the one you picked on the right ---- -->
-          <v-window-item value="library">
+        <div class="jamin-book-body">
             <!-- The library as a map, filling the screen.
                  @see components/CatalogueMap.vue -->
             <CatalogueMap
@@ -589,7 +607,9 @@ onMounted(refreshTree)
                 </div>
 
                 <div class="text-caption text-medium-emphasis text-center">
-                  Click the list, then arrow or scroll. Nothing is inserted until you say so.
+                  <!-- The wheel scrolls the list; the arrows move the
+                       selection. @see components/DataGrid.vue -->
+                  Click the list, then arrow down it. Nothing is inserted until you say so.
                 </div>
                 <div v-if="partial" class="text-caption text-medium-emphasis text-center">
                   Showing the first matches found; searching every one of
@@ -650,32 +670,7 @@ onMounted(refreshTree)
                 </div>
               </v-col>
             </v-row>
-          </v-window-item>
-
-          <!-- Save --------------------------------------------------------- -->
-          <v-window-item value="save">
-            <v-text-field v-model="newName" label="Name" class="mb-4" placeholder="ii–V–I in Eb" />
-            <div class="text-caption text-medium-emphasis mb-1">Whole chart</div>
-            <pre class="jamin-mono text-caption mb-2" style="white-space: pre-wrap; max-height: 160px; overflow: auto; opacity: .85">{{ state.text }}</pre>
-            <v-btn size="small" :disabled="!state.text.trim()" @click="saveCurrent(state.text, 'Chart')">
-              Save the whole chart
-            </v-btn>
-          </v-window-item>
-
-          <!-- Import / export ---------------------------------------------- -->
-          <v-window-item value="transfer">
-            <!-- The widget itself lives in Settings now, with the other two
-                 catalogues. @see components/ProgressionSources.vue -->
-            <div class="text-body-2 mb-3">
-              Importing a collection, and exporting yours, is in
-              <strong>Settings ▸ Libraries</strong> with the articulations and the drums.
-            </div>
-            <v-btn size="small" variant="tonal" class="text-none"
-                   prepend-icon="mdi-cog-outline" @click="openLibraries">
-              Open it
-            </v-btn>
-          </v-window-item>
-        </v-window>
+        </div>
       </v-card-text>
     </v-card>
   </v-dialog>

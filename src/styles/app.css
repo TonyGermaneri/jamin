@@ -215,7 +215,14 @@ body,
 }
 
 /* v-window and its active item have to pass the height through rather than
-   shrink-wrap it, or the column below never gets a height to divide up. */
+   shrink-wrap it, or the column below never gets a height to divide up.
+   `jamin-book-body` is the same job where the tabs have gone: the phrase
+   book and the progression library have one pane each now, so there is no
+   window, and the plain div that replaced it broke the chain -- the row
+   shrink-wrapped, the grid was handed a height of nothing, and
+   canvas-datagrid fell back to growing to fit its data, which is how the
+   wheel stops working. @see components/DataGrid.vue */
+.jamin-book .jamin-book-body,
 .jamin-book .v-window,
 .jamin-book .v-window__container,
 .jamin-book .v-window-item--active {
@@ -1258,6 +1265,7 @@ body,
    it came out 144px short, which is exactly the chrome it was supposed to be
    sitting behind. */
 .jamin-book-mapped .v-overlay__content > .v-card > .v-card-text,
+.jamin-book-mapped .jamin-book-body,
 .jamin-book-mapped .v-window,
 .jamin-book-mapped .v-window__container,
 .jamin-book-mapped .v-window-item,
