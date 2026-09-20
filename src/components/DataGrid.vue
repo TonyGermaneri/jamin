@@ -32,7 +32,7 @@ const props = defineProps({
   keyed: { type: String, default: 'id' },
 })
 
-const emit = defineEmits(['pick', 'use', 'key'])
+const emit = defineEmits(['pick', 'use', 'key', 'cell', 'context'])
 
 const box = ref(null)
 /** Shallow: the grid owns a canvas and its own event plumbing, and making
@@ -67,8 +67,27 @@ function dress() {
     height: '100%',
     width: '100%',
 
+    /*
+     * Every ground, named.
+     *
+     * The component has a light default for each of these and only paints
+     * the ones it is given, so leaving any out leaves a white strip: the
+     * first attempt set the cells and the header and got a white column
+     * cap past the last column and a white corner above the row numbers.
+     */
     gridBackgroundColor: 'transparent',
     cellBackgroundColor: 'transparent',
+    columnHeaderCellCapBackgroundColor: rgba(theme.bg, 0.6),
+    cornerCellBackgroundColor: rgba(theme.bg, 0.6),
+    activeColumnHeaderCellBackgroundColor: rgba(theme.accent, 0.2),
+    activeRowHeaderCellBackgroundColor: rgba(theme.accent, 0.18),
+    rowHeaderCellHoverBackgroundColor: rgba(theme.accent, 0.12),
+    rowHeaderCellSelectedBackgroundColor: rgba(theme.accent, 0.2),
+    activeCellHoverBackgroundColor: rgba(theme.accent, 0.34),
+    activeCellSelectedBackgroundColor: rgba(theme.accent, 0.34),
+    scrollBarCornerBackgroundColor: 'transparent',
+    editCellBackgroundColor: rgba(theme.bg, 0.95),
+    editCellColor: ink,
     cellColor: ink,
     cellFont: `12px ${theme.font}`,
     cellPaddingLeft: 10,
@@ -161,6 +180,29 @@ function build() {
   grid.value.addEventListener('dblclick', (event) => {
     const row = event.cell && event.cell.data
     if (row) emit('use', row)
+  })
+
+  /*
+   * Which column was clicked, as well as which row.
+   *
+   * A canvas cannot hold a button, so a control that used to be one -- the
+   * heart on a phrase -- becomes a column with a mark in it and a click on
+   * that column. The book decides what its columns mean; this only says
+   * which one was hit.
+   */
+  grid.value.addEventListener('click', (event) => {
+    const cell = event.cell
+    if (!cell || !cell.data || !cell.header) return
+    emit('cell', cell.header.name, cell.data)
+  })
+
+  grid.value.addEventListener('contextmenu', (event) => {
+    const cell = event.cell
+    if (!cell || !cell.data) return
+    // The grid's own menu is for a spreadsheet -- ordering columns, hiding
+    // them. The books use the right button for something of their own.
+    event.preventDefault()
+    emit('context', cell.data)
   })
 
   /*

@@ -39,6 +39,7 @@ import { keyPitchClass, phraseCategory, phraseKey, summarize } from '../core/phr
 import { describeLick } from '../core/licks.js'
 import InfoTip from './InfoTip.vue'
 import CatalogueMap from './CatalogueMap.vue'
+import DataGrid from './DataGrid.vue'
 import PhraseDetail from './PhraseDetail.vue'
 import { ADAPTERS } from '../core/graphView.js'
 import { vDragMidi } from '../core/dragOut.js'
@@ -306,6 +307,46 @@ function clearFilters() {
   state.ui.lickTexture = 'any'
 }
 const total = computed(() => catalogue().length)
+/**
+ * What the grid shows.
+ *
+ * The same facts the list carried and in the same order, except that they
+ * are columns now rather than a title with things appended to it -- which
+ * is the point of a grid. The heart is a column because a canvas cannot
+ * hold a button; clicking it toggles, which is what clicking it did.
+ */
+const gridColumns = [
+  { name: 'fav', title: '', width: 30 },
+  { name: 'name', title: 'Articulation', width: 260 },
+  { name: 'ref', title: 'Write', width: 120 },
+  { name: 'category', title: 'Kind', width: 130 },
+  { name: 'sourceChord', title: 'Over', width: 80 },
+  { name: 'source', title: 'From', width: 200 },
+  { name: 'beats', title: 'Beats', width: 64 },
+]
+
+/*
+ * The columns the grid reads, put onto the row.
+ *
+ * `matches` is derived, so this maps rather than mutates -- the phrases
+ * themselves belong to the catalogue and adding display fields to them
+ * would follow them everywhere.
+ */
+const gridRows = computed(() => matches.value.map((one) => ({
+  ...one,
+  fav: favourite(one) ? '♥' : '',
+  ref: one.id ? `{${one.id}}` : '',
+  category: categoryOf(one) || one.kind || '',
+  source: sourceOf(one) || '',
+  beats: beatsOf(one),
+})))
+
+function onGridCell(column, row) {
+  if (column !== 'fav') return
+  const one = matches.value.find((entry) => entry.id === row.id)
+  if (one) toggleFavourite(one)
+}
+
 const pageCount = computed(() => Math.max(1, Math.ceil(matches.value.length / perPage.value)))
 const list = computed(() => matches.value.slice((page.value - 1) * perPage.value, page.value * perPage.value))
 
@@ -552,79 +593,25 @@ const assigningTo = computed(() => {
                   </div>
                 </div>
 
-                <v-list
-                  v-else
-                  ref="listBox"
-                  density="compact"
-                  class="py-0 jamin-book-scroll"
-                  tabindex="0"
-                  style="outline: none"
-                  @keydown.down.prevent="step(1)"
-                  @keydown.up.prevent="step(-1)"
-                  @keydown.page-down.prevent="step(perPage)"
-                  @keydown.page-up.prevent="step(-perPage)"
-                  @keydown.home.prevent="step(-matches.length)"
-                  @keydown.end.prevent="step(matches.length)"
-                  @wheel="onWheel"
-                >
-                  <!-- Drag a phrase straight onto a track. @see core/dragOut.js -->
-                  <v-list-item
-                    v-for="entry in list"
-                    :key="entry.id"
-                    v-drag-midi="() => midiForPhrase(entry)"
-                    :active="selected && selected.id === entry.id"
-                    class="px-2"
-                    @click="pick(entry)"
-                    @contextmenu.prevent="setAccentPhrase(entry.id || entry.name)"
-                  >
-                    <template #prepend>
-                      <v-btn
-                        :icon="favourite(entry) ? 'mdi-heart' : 'mdi-heart-outline'"
-                        :color="favourite(entry) ? 'error' : undefined"
-                        size="x-small"
-                        variant="text"
-                        class="mr-1 jamin-heart"
-                        :title="favourite(entry) ? 'Remove from favourites' : 'Add to favourites'"
-                        @click.stop="toggleFavourite(entry)"
-                      />
-                    </template>
-                    <v-list-item-title class="text-body-2 text-truncate">{{ entry.name }}</v-list-item-title>
-                    <!-- The id, because it is what you write in the chart. A
-                         name can be typed too and is nicer to read, but two
-                         phrases can share one and an id never does. -->
-                    <v-list-item-subtitle v-if="entry.id" class="text-caption jamin-mono">
-                      {{ '{' + entry.id + '}' }}
-                    </v-list-item-subtitle>
-                    <!--
-                      What it is, in columns, because there is room for it.
+                <!--
+                  Every match, drawn on a canvas.
 
-                      A name and a beat count across fourteen hundred pixels is
-                      two facts and a great deal of nothing; the collection
-                      knows what kind of line this is, what it was played over
-                      and where it came from, and those are what somebody is
-                      choosing between. They fall away as the window narrows --
-                      inside the plugin's own editor the name is all that fits.
-                    -->
-                    <template #append>
-                      <div class="jamin-row-facts">
-                        <span class="jamin-row-fact d-none d-lg-flex">
-                          {{ categoryOf(entry) || entry.kind }}
-                        </span>
-                        <span class="jamin-row-fact d-none d-xl-flex">
-                          {{ entry.sourceChord }}
-                        </span>
-                        <span class="jamin-row-fact jamin-row-fact-wide d-none d-xl-flex">
-                          {{ sourceOf(entry) }}
-                        </span>
-                        <v-icon v-if="isAccent(entry)" size="14" color="secondary">mdi-flash-outline</v-icon>
-                        <v-icon v-if="playing === entry.id" size="14" color="primary">mdi-play</v-icon>
-                        <span class="jamin-row-fact jamin-row-fact-last">
-                          {{ beatsOf(entry) }} beats
-                        </span>
-                      </div>
-                    </template>
-                  </v-list-item>
-                </v-list>
+                  The phrase book already held them all -- `matches` is the
+                  whole filtered set and the list only ever showed a slice of
+                  it -- so the pager was cutting up something that was
+                  already in hand. @see components/DataGrid.vue
+                -->
+                <DataGrid
+                  v-else
+                  class="jamin-book-scroll"
+                  :rows="gridRows"
+                  :columns="gridColumns"
+                  :chosen="selected"
+                  @pick="pick"
+                  @use="(one) => usePhrase(one)"
+                  @cell="onGridCell"
+                  @context="(one) => setAccentPhrase(one.id || one.name)"
+                />
 
                 <!-- The foot of the list, attached to it rather than floating
                      in the space under it. @see styles/app.css -->
@@ -636,9 +623,6 @@ const assigningTo = computed(() => {
                       · <a href="#" @click.prevent="clearFilters">clear filters</a>
                     </template>
                   </span>
-                  <v-spacer />
-                  <v-pagination v-model="page" :length="pageCount" :total-visible="7"
-                                density="comfortable" class="flex-grow-0" />
                   <v-spacer />
                   <span class="text-caption text-medium-emphasis d-none d-xl-block">
                     arrow or scroll to hear your way through · right-click to make it the accent

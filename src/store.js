@@ -4651,6 +4651,31 @@ function smallList(query) {
  * One page of the library, drawn from the small list first and the big store
  * after it. Only the page is ever in memory.
  */
+/**
+ * Every progression the filters match, a batch at a time.
+ *
+ * The same shape as `streamDrumRows` and for the same reason: the grid holds
+ * whatever it is given and a list of six hundred thousand is not something
+ * to page through twelve at a time. Built on `progressionPage` rather than
+ * beside it, so the filtering and the "first matches found" behaviour stay
+ * in one place. @see components/ProgressionBook.vue
+ */
+export async function streamProgressions(onBatch, query = '', filters = {},
+                                         { batch = 2000, ceiling = 200000 } = {}) {
+  let at = 0
+  for (;;) {
+    const got = await progressionPage(at, batch, query, filters)
+    const rows = (got && got.rows) || []
+    if (!rows.length) return at
+
+    at += rows.length
+    if (onBatch(rows, got.total, got.partial) === false) return at
+    if (at >= Math.min(ceiling, got.total || ceiling)) return at
+    // A turn for the interface, or the grid never paints while it fills.
+    await new Promise((go) => setTimeout(go, 0))
+  }
+}
+
 export async function progressionPage(offset, limit, query = '', filters = {}) {
   const small = smallList(query).filter((item) => {
     // The hand-written progressions carry neither, so asking for a genre or a

@@ -17,6 +17,7 @@ import {
   importProgressionJson,
   exportProgressionJson,
   progressionPage,
+  streamProgressions,
   progressionFacetList,
   importChordonomiconFile,
   forgetBulkProgressions,
@@ -34,6 +35,7 @@ import { summarizeProgression } from '../core/progressions.js'
 import { parseScore } from '../core/score.js'
 import InfoTip from './InfoTip.vue'
 import CatalogueMap from './CatalogueMap.vue'
+import DataGrid from './DataGrid.vue'
 import { ADAPTERS } from '../core/graphView.js'
 import { vDragMidi } from '../core/dragOut.js'
 import { pcName } from '../core/chordParser.js'
@@ -127,6 +129,30 @@ const keyOptions = computed(() => [
   })),
 ])
 
+/**
+ * What the grid shows.
+ *
+ * The list carried a name and a bar count. There is room for what somebody
+ * is actually choosing between -- how long it is, what genre it came from,
+ * when -- and a grid is what puts those in line with each other.
+ */
+const gridColumns = [
+  { name: 'name', title: 'Progression', width: 340 },
+  { name: 'bars', title: 'Bars', width: 64 },
+  { name: 'genre', title: 'Genre', width: 150 },
+  { name: 'decade', title: 'Decade', width: 90 },
+  { name: 'text', title: 'Chords', width: 520 },
+]
+
+/* Bars are counted from the text for the hand-written ones, which carry no
+   count -- so it is done once here rather than per repaint. */
+const gridRows = computed(() => rows.value.map((one) => ({
+  ...one,
+  bars: barsOf(one),
+  genre: one.genre || '',
+  decade: one.decade || '',
+})))
+
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PER_PAGE)))
 
 /*
@@ -196,20 +222,39 @@ function barsOf(row) {
 }
 const preview = computed(() => (selected.value ? renderProgression(selected.value, targetPc.value, spelling.value) : ''))
 
+/**
+ * Everything the filters match, streamed into the grid.
+ *
+ * This fetched one page of twelve and a pager walked them. The grid holds
+ * the lot, so the rows arrive in batches and it grows -- the first batch is
+ * on screen in about the time one page used to take. @see store.js
+ * streamProgressions
+ */
+const streaming = ref(false)
+let loadRun = 0
+
 async function load() {
+  const mine = ++loadRun
   loading.value = true
+  streaming.value = true
+  rows.value = []
   try {
-    const result = await progressionPage((page.value - 1) * PER_PAGE, PER_PAGE, search.value,
-                                         { genre: genre.value, decade: decade.value,
-                                           fits: onlyFitting.value ? songBars.value : 0 })
-    rows.value = result.rows
-    total.value = result.total
-    partial.value = result.partial
-    if (!rows.value.some((row) => row.name === (selected.value && selected.value.name))) {
-      selected.value = rows.value[0] || null
-    }
+    await streamProgressions((batch, count, some) => {
+      if (mine !== loadRun) return false
+      // A new array each time: the grid remeasures on assignment, not on a
+      // push into the one it already has.
+      rows.value = rows.value.concat(batch)
+      total.value = count
+      partial.value = some
+      loading.value = false
+      if (!selected.value) selected.value = rows.value[0] || null
+      return true
+    }, search.value, {
+      genre: genre.value, decade: decade.value,
+      fits: onlyFitting.value ? songBars.value : 0,
+    })
   } finally {
-    loading.value = false
+    if (mine === loadRun) { loading.value = false; streaming.value = false }
   }
 }
 
@@ -550,42 +595,32 @@ onMounted(refreshTree)
                   correct -- the harness had no library imported, so the
                   filters were absent and the list appeared. @see scripts/shots.py
                 -->
-                <v-list
+                <!--
+                  Every match, drawn on a canvas.
+
+                  Six hundred thousand progressions is not something to page
+                  through twelve at a time, and a canvas grid does not need
+                  to: it paints the rows on screen and no others.
+                  @see components/DataGrid.vue
+                -->
+                <DataGrid
                   v-if="rows.length"
-                  density="compact"
-                  class="py-0 jamin-book-scroll"
-                  tabindex="0"
-                  style="outline: none"
-                  @keydown.down.prevent="step(1)"
-                  @keydown.up.prevent="step(-1)"
-                  @wheel="onWheel"
-                >
-                  <!-- Drag a progression onto a track: the chords voiced the
-                       way the chart would play them. @see core/dragOut.js -->
-                  <v-list-item
-                    v-for="row in rows"
-                    :key="row.id || row.name"
-                    v-drag-midi="() => midiForProgression(row)"
-                    :active="selected && selected.name === row.name"
-                    class="px-2"
-                    @click="selected = row"
-                  >
-                    <v-list-item-title class="text-body-2 text-truncate">{{ row.name }}</v-list-item-title>
-                    <template #append>
-                      <span class="text-caption text-medium-emphasis">{{ barsOf(row) }} bars</span>
-                    </template>
-                  </v-list-item>
-                </v-list>
+                  class="jamin-book-scroll"
+                  :rows="gridRows"
+                  :columns="gridColumns"
+                  :chosen="selected"
+                  keyed="name"
+                  @pick="(one) => { selected = one }"
+                  @use="(one) => { selected = one; insert() }"
+                />
                 <div v-else-if="loading" class="text-caption text-medium-emphasis py-6 text-center">Loading…</div>
                 <div v-else class="text-caption text-medium-emphasis py-6 text-center">Nothing matches “{{ search }}”.</div>
 
-                <v-pagination
-                  v-model="page"
-                  :length="pageCount"
-                  :total-visible="6"
-                  density="comfortable"
-                  class="mt-2"
-                />
+                <div v-if="streaming" class="text-caption text-medium-emphasis mt-1">
+                  <v-progress-circular indeterminate size="12" width="2" class="mr-1" />
+                  {{ rows.length.toLocaleString() }} of {{ total.toLocaleString() }} loaded
+                </div>
+
                 <div class="text-caption text-medium-emphasis text-center">
                   Click the list, then arrow or scroll. Nothing is inserted until you say so.
                 </div>
