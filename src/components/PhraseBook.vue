@@ -19,8 +19,6 @@ import {
   currentToken,
   toast,
   ensureLicks as rebuildLicks,
-  defaultVocabularyUrl,
-  importMidiPhrases,
   visibleLicks,
   catalogue,
   treeOf,
@@ -80,10 +78,6 @@ const search = ref('')
 const name = ref('')
 const renaming = ref(null)
 const renameTo = ref('')
-const vocabUrl = ref('')
-const vocabFile = ref(null)
-const midiFile = ref(null)
-const midiBars = ref(1)
 
 /** Which instance the book is pointed at; this one until told otherwise. The
     tabs that choose it belong to the shell around this. @see ArticulationBook */
@@ -93,8 +87,6 @@ const aimedAt = computed(() => state.ui.targetInstance || state.roster.me)
 const elsewhere = computed(() => state.host.active && aimedAt.value && aimedAt.value !== state.roster.me)
 
 const accompany = computed(() => state.settings.accompany)
-const report = computed(() => state.lickReport)
-const defaultVocab = computed(() => defaultVocabularyUrl())
 const target = computed(() => currentToken())
 const perChord = computed(() => accompany.value.perChordPhrases)
 const playing = computed(() => state.songPhrase)
@@ -453,28 +445,11 @@ function commitRename(entry) {
   renaming.value = null
 }
 
-async function rebuild(options) {
-  await rebuildLicks(options)
-  const r = state.lickReport
-  if (r && !r.error) toast(`${r.total + (r.parts || 0)} in the catalogue`)
-}
-
-async function openVocabulary(event) {
-  const file = event.target.files && event.target.files[0]
-  if (!file) return
-  await rebuild({ text: await file.text() })
-  event.target.value = ''
-}
-
-async function openMidi(event) {
-  const file = event.target.files && event.target.files[0]
-  if (!file) return
-  importMidiPhrases(new Uint8Array(await file.arrayBuffer()), {
-    segmentBars: midiBars.value,
-    trackFilter: /piano|accomp|keys|chord/i,
-  })
-  event.target.value = ''
-  state.ui.phrasesTab = 'catalogue'
+/** Where the loading actually happens. @see components/PhraseSources.vue */
+function openLibraries() {
+  state.ui.book = null
+  state.ui.settingsTab = 'libraries'
+  state.ui.settings = true
 }
 
 /** A small piano roll, so a phrase is recognisable without playing it. */
@@ -918,51 +893,17 @@ const assigningTo = computed(() => {
 
           <!-- Sources ----------------------------------------------------- -->
           <v-window-item value="sources">
-            <div class="text-caption text-medium-emphasis mb-1">
-              Two-handed parts cut from
-              <a href="https://github.com/music-x-lab/POP909-Dataset" target="_blank" rel="noreferrer">POP909</a>
-              (MIT), and single-line licks, cells and idioms from
-              <a href="https://github.com/Impro-Visor/Impro-Visor" target="_blank" rel="noreferrer">Impro-Visor</a>
-              (GPL-2.0-or-later).
-              <span v-if="report && !report.error">
-                <strong>{{ report.parts }}</strong> parts and <strong>{{ report.total }}</strong> licks,
-                built here in {{ report.ms }}ms.
-              </span>
+            <!-- The widget itself lives in Settings now, with the other two
+                 catalogues. Loading a collection is one question and it had
+                 three answers depending on which window was open. -->
+            <div class="text-body-2 mb-3">
+              Where articulations come from, and how to add your own, is in
+              <strong>Settings ▸ Libraries</strong> with the progressions and the drums.
             </div>
-
-            <div class="d-flex flex-wrap align-center my-3" style="gap: 8px">
-              <v-btn size="small" :loading="state.licksLoading" @click="rebuild({ force: true })">
-                Rebuild from Impro-Visor
-              </v-btn>
-              <v-btn size="small" variant="text" @click="vocabFile && vocabFile.click()">Open a .voc file…</v-btn>
-              <input ref="vocabFile" type="file" accept=".voc,text/plain" style="display: none" @change="openVocabulary" />
-            </div>
-            <div class="d-flex align-center mb-2" style="gap: 8px">
-              <v-text-field v-model="vocabUrl" label="…or a vocabulary URL" :placeholder="defaultVocab" density="compact" hide-details />
-              <v-btn size="x-small" :disabled="!vocabUrl.trim()" @click="rebuild({ url: vocabUrl.trim() })">Load</v-btn>
-            </div>
-            <v-alert v-if="report && report.error" type="warning" variant="tonal" density="compact" class="mb-4 text-caption">
-              {{ report.error }}
-            </v-alert>
-
-            <v-divider class="my-4" />
-            <div class="text-caption text-medium-emphasis mb-2">
-              A recorded keyboard part is a run of phrases already: this cuts one at the chord
-              changes and reads the chord off the notes, so you get two hands, real voicings and
-              real rhythm rather than a single line.
-            </div>
-            <div class="d-flex align-center flex-wrap" style="gap: 8px">
-              <v-btn size="small" prepend-icon="mdi-import" @click="midiFile && midiFile.click()">
-                Import a MIDI file…
-              </v-btn>
-              <input ref="midiFile" type="file" accept=".mid,.midi,audio/midi" style="display: none" @change="openMidi" />
-              <v-select
-                v-model="midiBars"
-                :items="[{ title: 'One bar each', value: 1 }, { title: 'Two bars each', value: 2 }, { title: 'Four bars each', value: 4 }]"
-                label="Cut into"
-                style="max-width: 180px"
-              />
-            </div>
+            <v-btn size="small" variant="tonal" class="text-none"
+                   prepend-icon="mdi-cog-outline" @click="openLibraries">
+              Open it
+            </v-btn>
           </v-window-item>
 
           <!-- How it works ------------------------------------------------ -->

@@ -616,6 +616,27 @@ def eachCatalogue(page):
     return "  |  ".join(out)
 
 
+def libraries(page, which):
+    """The one place all three catalogues are loaded from."""
+    page.evaluate("""(which) => {
+      const app = window.__jaminApp
+      app.state.ui.book = null
+      app.state.ui.progressions = false
+      app.state.ui.settingsTab = 'libraries'
+      app.state.ui.settings = true
+      window.__jaminLibraryTab = which
+    }""", which)
+    page.wait_for_timeout(700)
+    # By its words. Vuetify does not put the window item's value into the
+    # DOM, so there is nothing to scope to -- and these three names appear
+    # nowhere else, which is what makes that safe.
+    tab = page.locator(f".v-tab:has-text('{which}')").first
+    if not tab.count():
+        raise Missing(f"no {which} tab under Libraries")
+    tab.click()
+    page.wait_for_timeout(600)
+
+
 def libraryNotes(page):
     """The table that asks what a library's own notes mean.
 
@@ -762,6 +783,9 @@ VIEWS = [
     ("graph-progressions", lambda page: (graph(page, True), show(page, "progressions"))),
     # At the size somebody's own collection actually is. Only when the corpora
     # are there: they are downloaded, gitignored and thrown away afterwards.
+    ("libraries-progressions", lambda page: libraries(page, "Progressions")),
+    ("libraries-phrases", lambda page: libraries(page, "Articulations")),
+    ("libraries-drums", lambda page: libraries(page, "Drum patterns")),
     ("library-notes", libraryNotes),
     ("chart-tools", lambda page: onChart(page, "tools")),
     ("chart-picker-roots", lambda page: onChart(page, "picker")),

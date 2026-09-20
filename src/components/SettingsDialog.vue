@@ -6,6 +6,8 @@
 import { computed, ref, watch } from 'vue'
 import InfoTip from './InfoTip.vue'
 import DrumLibraries from './DrumLibraries.vue'
+import PhraseSources from './PhraseSources.vue'
+import ProgressionSources from './ProgressionSources.vue'
 import DrumKit from './DrumKit.vue'
 import { state, engine, applyTheme, resetSettings, applyPortBindings, forgetErrors, toast } from '../store.js'
 import { THEMES, SHADER_DEFAULTS } from '../core/themes.js'
@@ -78,6 +80,9 @@ function resetShaders() {
   Object.assign(state.settings.shader, SHADER_DEFAULTS)
 }
 
+/** Which catalogue's loading is showing. @see the Libraries tab. */
+const libraryTab = ref('progressions')
+
 /** The map's own dials, which live under the graph settings. */
 const map = computed(() => state.settings.graph.look)
 
@@ -116,9 +121,7 @@ async function retryMidi() {
         <!-- Both were tabs in the drum book, which was four tabs of which one
              was a catalogue. Pointing at a folder and fixing a note map are
              things somebody does once and never while choosing a groove. -->
-        <v-tab value="libraries">
-          Libraries<span v-if="state.drumSets.length"> ({{ state.drumSets.length }})</span>
-        </v-tab>
+        <v-tab value="libraries">Libraries</v-tab>
         <v-tab value="kit">Kit</v-tab>
         <v-tab value="random">Dice</v-tab>
         <v-tab value="errors">
@@ -752,7 +755,30 @@ async function retryMidi() {
 
           <!-- Libraries: somebody's own MIDI, read from where it lives ---- -->
           <v-window-item value="libraries">
-            <DrumLibraries />
+            <!--
+              All three catalogues, loaded from one place.
+
+              Pointing jamin at a collection is a thing somebody does once
+              and then not again for a month, and it used to be in three
+              different windows behind three differently named tabs --
+              "Sources" in the phrase book, "Import / export" in the
+              progression library, "Libraries" here. One question with three
+              answers depending on which window happened to be open.
+            -->
+            <v-tabs v-model="libraryTab" density="compact" class="mb-4">
+              <v-tab value="progressions">Progressions</v-tab>
+              <v-tab value="phrases">Articulations</v-tab>
+              <v-tab value="drums">
+                Drum patterns<span v-if="state.drumSets.length">
+                  ({{ state.drumSets.length }})</span>
+              </v-tab>
+            </v-tabs>
+
+            <v-window v-model="libraryTab">
+              <v-window-item value="progressions"><ProgressionSources /></v-window-item>
+              <v-window-item value="phrases"><PhraseSources /></v-window-item>
+              <v-window-item value="drums"><DrumLibraries /></v-window-item>
+            </v-window>
           </v-window-item>
 
           <!-- Kit: where the drums actually are --------------------------- -->
