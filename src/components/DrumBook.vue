@@ -350,10 +350,16 @@ const { box: listBox, rows: rowsThatFit } = useRowsThatFit(71, { least: 6, most:
 watch(listEl, (el) => { listBox.value = el }, { immediate: true })
 
 watch(rowsThatFit, (many) => {
+  // There is no list on the map, so there is nothing to fit rows to -- and
+  // this used to re-run the whole query anyway, the moment the book opened,
+  // on top of the one onMounted had already started. Two searches over three
+  // quarters of a million rows for a list that is not on screen: 5.6 of the
+  // 3.4 seconds the book took to open, concurrently. @see scripts/graph_perf.py
+  if (asGraph.value) return
   if (state.drumFilters.perPage === many) return
   state.drumFilters.perPage = many
   state.drumFilters.page = 1
-  searchDrums()
+  searchDrums(null, null, 'rows-fit')
 }, { immediate: false })
 const graph = ref(null)
 /** True while the whole catalogue is being read, which happens once. */
@@ -471,15 +477,19 @@ const filterValues = () => {
  * the database is asked for whatever is left of the page after the corpus has
  * filled what it can.
  */
-function ask({ fresh = false } = {}) {
+function ask({ fresh = false, why = 'ask' } = {}) {
   // Filters go down only when they have changed. Passing them again on a page
   // turn is how the store learns the question is new, and a new question throws
   // away where the last page ended -- which is the whole of what makes turning
   // to page eighty thousand cost the same as turning to page two.
   searchDrums(fresh ? filterValues() : null, {
     offset: Math.max(0, (page.value - 1) * PER_PAGE),
-    limit: PER_PAGE,
-  })
+    // No rows on the map: there is no list to put them in. The count is
+    // shown and the count is what an index answers without reading a row,
+    // so asking for a page of grooves as well is a page of work thrown
+    // away. @see store.runDrumSearch
+    limit: asGraph.value ? 0 : PER_PAGE,
+  }, why)
 }
 
 /*
@@ -499,11 +509,32 @@ watch(
   () => [library.value, shelf.value, search.value, kind.value, bars.value, signature.value,
          genre.value, feel.value, surface.value, partTag.value, era.value,
          onlyFavourites.value, onlyFitting.value],
-  () => { page.value = 1; ask({ fresh: true }) }
+  () => {
+    /*
+     * One query, not two.
+     *
+     * Setting the page back to one is itself watched, so a filter change
+     * fired this *and* the page watcher below -- two searches over three
+     * quarters of a million rows for one act. Measured on opening the drum
+     * book: 5.4 seconds of searching where 2.7 would do.
+     *
+     * The page watcher is left to do the asking when the page really moves;
+     * when it is already on one there is nothing to move and this asks.
+     */
+    if (page.value === 1) ask({ fresh: true, why: 'filters' })
+    else { freshNext = true; page.value = 1 }
+  }
 )
 
-watch(page, () => ask())
-onMounted(() => ask({ fresh: true }))
+/** Whether the page change that is about to fire came from a filter. */
+let freshNext = false
+
+watch(page, () => {
+  const fresh = freshNext
+  freshNext = false
+  ask(fresh ? { fresh: true, why: 'page-fresh' } : { why: 'page' })
+})
+onMounted(() => ask({ fresh: true, why: 'mounted' }))
 
 const drums = computed(() => state.drums)
 const settings = computed(() => state.settings.drums)

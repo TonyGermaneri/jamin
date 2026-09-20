@@ -67,6 +67,28 @@ def serve():
     return httpd, httpd.server_address[1]
 
 
+# The rebuild, driven the way the Rebuild button drives it.
+#
+# Writing a tree straight into the store measures deserialising; it does not
+# measure what somebody actually waits through, which is the map being drawn
+# from three quarters of a million rows. So this throws the map away and
+# rebuilds it through `buildBulkGraph`, exactly as the panel's Rebuild does,
+# and then asks how long the book takes to open afterwards.
+REBUILD = r"""
+async () => {
+  const app = window.__jaminApp
+  const at = performance.now()
+  await app.forgetCatalogueGraph('drums')
+  const made = await app.buildBulkGraph('drums')
+  return {
+    ms: Math.round(performance.now() - at),
+    nodes: made ? made.nodes.length : 0,
+    rows: await app.countGrooves(null),
+    state: (await app.graphState('drums')).how,
+  }
+}
+"""
+
 TIMINGS = """
 async ([which]) => {
   const app = window.__jaminApp
@@ -77,16 +99,31 @@ async ([which]) => {
   }
   const out = {}
 
-  const held = await fetch(`corpora/${which}-tree.json`)
-  if (!held.ok) throw new Error(`no ${which} tree: ${held.status}`)
-  const [fetched, tree] = await ms(() => held.json())
-  out.parse = fetched
-  out.nodes = tree.nodes.length
-  out.clips = tree.clips
-
-  // Writing it: the once-ever cost, and the only one allowed to be slow.
-  const [wrote] = await ms(() => app.writeGraph(which, tree))
-  out.write = wrote
+  /*
+   * Only when there is nothing real to measure.
+   *
+   * With the catalogue's own rows in the database the map has just been
+   * rebuilt from them, and writing the file's copy over the top would
+   * measure deserialising a fixture instead of opening the catalogue -- and
+   * would leave a map that does not match the rows, which is the exact
+   * fault this harness exists to catch.
+   */
+  const already = await app.storedGraph(which)
+  if (already) {
+    out.parse = 0
+    out.write = 0
+    out.nodes = already.nodes.length
+    out.clips = already.clips || 0
+  } else {
+    const held = await fetch(`corpora/${which}-tree.json`)
+    if (!held.ok) throw new Error(`no ${which} tree: ${held.status}`)
+    const [fetched, tree] = await ms(() => held.json())
+    out.parse = fetched
+    out.nodes = tree.nodes.length
+    out.clips = tree.clips
+    const [wrote] = await ms(() => app.writeGraph(which, tree))
+    out.write = wrote
+  }
 
   // Opening it: what happens every single time, and what has to be instant.
   const [opened, got] = await ms(() => app.storedGraph(which))
@@ -149,7 +186,7 @@ SEED = r"""
 async ([rows]) => {
   const app = window.__jaminApp
   await app.refreshDrumSets()
-  const already = app.state.drumSets.find((one) => one.id === 'seeded')
+  const already = app.state.drumSets.find((one) => one.id === 'seeded2')
   if (already && already.count >= rows - 10) return { already: already.count }
 
   const at = performance.now()
@@ -184,9 +221,19 @@ async ([rows]) => {
   await flush()
 
   await app.putSet({
-    id: 'seeded', name: 'the whole collection', kit: 'gm', customMap: {},
+    id: 'seeded2', name: 'the whole collection', kit: 'gm', customMap: {},
     folderKits: {}, count: put, addedAt: Date.now(), facts: {},
   })
+
+  /*
+   * And the facet tallies, which a real import writes as it goes.
+   *
+   * Seeding rows straight into the store skips that, so the book recounted
+   * nine fields over three quarters of a million rows every time it opened
+   * and the harness reported that as the cost of opening the book. It is
+   * the cost of not having imported. @see store.js runImport
+   */
+  await app.materialiseFacets(() => {})
   await app.refreshDrumSets()
   return { seeded: put, ms: Math.round(performance.now() - at) }
 }
@@ -315,6 +362,8 @@ async ([genre]) => {
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--which", default="drums", choices=["drums", "progressions"])
+    parser.add_argument("--no-rebuild", action="store_true",
+                        help="skip the rebuild and time whatever map is already stored")
     args = parser.parse_args()
 
     if not os.path.exists(os.path.join(ROOT, "dist", "index.html")):
@@ -353,6 +402,11 @@ def main():
             else:
                 print("  rows      none; see scripts/corpus_rows.py -- "
                       "the filter timing below is meaningless without them")
+
+        if args.which == "drums" and not args.no_rebuild:
+            built = page.evaluate(REBUILD)
+            print(f"\n  rebuilt   {built['nodes']:,} nodes from {built['rows']:,} rows "
+                  f"in {built['ms'] / 1000:.1f}s -- the map now reads '{built['state']}'")
 
         found = page.evaluate(TIMINGS, [args.which])
         found["queries"] = page.evaluate(QUERIES)

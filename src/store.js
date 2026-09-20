@@ -2020,6 +2020,18 @@ async function runImport(progress) {
   const already = new Set(state.drumSets.filter((set) => !set.partial).map((set) => set.id))
   const unfinished = new Set(state.drumSets.filter((set) => set.partial).map((set) => set.id))
 
+  /*
+   * One tally across every pack, for the view the book opens on.
+   *
+   * Each pack writes its own as it finishes, and writing one deletes the
+   * all-libraries entry -- correctly, because the whole catalogue has just
+   * changed. Nothing ever wrote it back, so "Everything" recounted nine
+   * fields over three quarters of a million rows every time the book opened.
+   * Filled here as the rows go past, at the cost of one more Map update per
+   * clip. @see core/drumStore.js rememberFacetsFor
+   */
+  const everything = emptyTally()
+
   for (const pack of packs) {
     if (progress.cancel) break
 
@@ -2035,9 +2047,15 @@ async function runImport(progress) {
     // would leave the tail of the first one orphaned.
     if (unfinished.has(pack.id)) await deleteSet(pack.id)
 
-    const ok = await importOnePack(pack, progress)
+    const ok = await importOnePack(pack, progress, hostReader, everything)
     progress.packsDone++
     if (!ok) break
+  }
+
+  // Last, after every pack: a pack finishing deletes this entry, so writing
+  // it any earlier would write it into a hole.
+  if (progress.read > 0) {
+    await rememberFacetsFor(null, progress.read, finishTally(everything))
   }
 
   await refreshDrumSets()
@@ -2113,7 +2131,7 @@ const hostReader = {
  * else that can go wrong with a scraped collection is one bad file, and one bad
  * file is skipped.
  */
-async function importOnePack(pack, progress, reader = hostReader) {
+async function importOnePack(pack, progress, reader = hostReader, everything = null) {
   const perFolder = new Map()
   /*
    * What the filter dropdowns will say, counted as the rows go by.
@@ -2174,6 +2192,9 @@ async function importOnePack(pack, progress, reader = hostReader) {
       // Without the notes: this row is a pointer, not a copy.
       const row = packGroove(groove, pack.id, index++, { byReference: true })
       tallyRow(tally, row)
+      // And into the whole catalogue's, so "Everything" is a row read too.
+      // @see runImport
+      if (everything) tallyRow(everything, row)
       batch.push(row)
     }
 
@@ -2734,7 +2755,16 @@ export async function openDrumBook() {
   if (state.drumFilters.set && !state.drumSets.some((set) => set.id === state.drumFilters.set)) {
     state.drumFilters.set = ''
   }
-  await searchDrums()
+  /*
+   * The book asks its own question when it mounts.
+   *
+   * This used to ask one here as well, so opening the drum book ran two
+   * full queries over three quarters of a million rows -- 1.9 seconds and
+   * 2.7, concurrently, which is most of the three seconds it took to open.
+   * They were never identical, so coalescing them did nothing; the answer
+   * was that one of them was simply not needed. The component's is the one
+   * with the filters in it. @see components/DrumBook.vue ask
+   */
   measureStorage()
 }
 
@@ -2795,11 +2825,15 @@ export async function timed(what, run) {
   }
 }
 
-export async function searchDrums(filters = null, window = null) {
+export async function searchDrums(filters = null, window = null, why = '') {
   drumSearches++
   state.drumBusy = true
   try {
-    return await timed('searchDrums', () => runDrumSearch(filters, window))
+    // Tagged with where it came from. Opening the drum book runs two of
+    // these and four separate guesses at which two were wrong, so the
+    // harness is told rather than asked to infer. @see scripts/graph_perf.py
+    return await timed(why ? `searchDrums:${why}` : 'searchDrums',
+      () => runDrumSearch(filters, window))
   } finally {
     if (--drumSearches <= 0) { drumSearches = 0; state.drumBusy = false }
   }
@@ -4716,5 +4750,11 @@ if (typeof window !== 'undefined') {
     materialiseFacets,
     putProgressions,
     timings,
+    // The rebuild, as the interface runs it: the harness times the real
+    // path rather than writing a tree in behind it. @see scripts/graph_perf.py
+    buildBulkGraph,
+    graphState,
+    forgetCatalogueGraph,
+    countGrooves,
   }
 }
