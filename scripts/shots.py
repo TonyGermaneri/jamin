@@ -103,6 +103,7 @@ def main():
         print(f"  {openingStaysPut(page)}")
         print(f"  {labelsStay(page)}")
         print(f"  {clickingStaysPut(page)}")
+        print(f"  {glassIsGlass(page)}")
         print(f"  {gridWorks(page)}")
         print(f"  {eachCatalogue(page)}\n")
 
@@ -525,6 +526,32 @@ def gridWorks(page):
 
     return (f"ok   the grid holds all {found['rows']:,} rows in {found['columns']} columns, "
             f"and the wheel and arrows drive it")
+
+
+def glassIsGlass(page):
+    """How much of the map can be seen through the things floating on it.
+
+    Reported twice as "not translucent enough", so the numbers are read off
+    the rendered page rather than off the stylesheet -- a rule can be
+    overridden, and a pane can be perfectly translucent over nothing.
+    """
+    said = page.evaluate("""() => {
+      const of = (sel) => {
+        const el = document.querySelector(sel)
+        if (!el) return null
+        const s = getComputedStyle(el)
+        const r = el.getBoundingClientRect()
+        return { background: s.backgroundColor, blur: s.backdropFilter,
+                 box: [Math.round(r.width), Math.round(r.height)] }
+      }
+      return JSON.stringify({
+        chrome: of('.jamin-book-chrome'),
+        glass: of('.jamin-map-glass'),
+        detail: of('.jamin-map-detail'),
+        card: of('.jamin-book-mapped .v-overlay__content > .v-card'),
+      }, null, 0)
+    }""")
+    return f"glass  {said}"
 
 
 def eachCatalogue(page):

@@ -1197,12 +1197,21 @@ body,
 }
 
 /* What is chosen, down the right, over the map. */
+/*
+ * The panel, as tall as what is in it.
+ *
+ * It was pinned top and bottom, so an empty one was a 900-pixel pane of
+ * frosted glass over the middle of the map saying "pick anything on the map"
+ * -- which is a great deal of the map to cover in order to say nothing. It
+ * now grows from the top and stops, and only reaches the bottom when it has
+ * that much to show.
+ */
 .jamin-map-detail {
   position: absolute;
   top: 12px;
   right: 12px;
-  bottom: 12px;
   width: 360px;
+  max-height: calc(100% - 24px);
   z-index: 2;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1317,11 +1326,15 @@ body,
   border-bottom: 1px solid rgba(var(--v-border-color), 0.12);
 }
 
-/* And the filters sit at the top of the body, which is under the tabs. */
+/* And the filters sit at the top of the body, which is under the tabs.
+
+   The tint is the one from the rule above and is not restated here: it was,
+   at 0.72, which is where "the header is still not translucent enough" was
+   coming from -- the thin glass was being set on one selector and overridden
+   on a more specific one forty lines later. @see .jamin-map-glass */
 .jamin-book-mapped .jamin-map-glass {
   position: relative;
   z-index: 2;
-  background: rgba(var(--v-theme-surface), 0.72);
 }
 
 /* A pattern's grid, small enough to sit in the map's aside. The full keyboard,

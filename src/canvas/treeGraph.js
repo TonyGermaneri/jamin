@@ -605,11 +605,25 @@ export class TreeGraph {
       if (there.right <= mine.left || there.left >= mine.right) continue
       if (there.bottom <= mine.top || there.top >= mine.bottom) continue
 
+      /*
+       * A panel down one side only counts if it is down one side.
+       *
+       * The detail panel is as tall as what is in it, and with nothing
+       * picked that is about a hundred pixels -- reserving the whole
+       * right-hand column for it would give away a third of the map to
+       * something occupying a tenth of that edge. So a side panel shorter
+       * than a third of the canvas is treated as floating rather than as an
+       * edge, and the fit ignores it. Whether that ever hides a node is
+       * asserted rather than assumed. @see scripts/shots.py eachCatalogue
+       */
+      const sideways = side === 'left' || side === 'right'
+      if (sideways && there.height < mine.height / 3) continue
+
       const deep = side === 'top' ? there.bottom - mine.top
         : side === 'bottom' ? mine.bottom - there.top
           : side === 'left' ? there.right - mine.left
             : mine.right - there.left
-      const most = (side === 'top' || side === 'bottom' ? mine.height : mine.width) * 0.5
+      const most = (sideways ? mine.width : mine.height) * 0.5
       box[side] = Math.max(box[side], Math.min(deep, most))
     }
     return box
