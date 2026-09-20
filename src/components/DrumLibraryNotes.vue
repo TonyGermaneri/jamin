@@ -141,6 +141,14 @@ const hintsOffered = computed(() =>
       </InfoTip>
     </div>
 
+    <!-- Where the answers came from, when they came from the analysis
+         rather than from somebody sitting here. -->
+    <div v-if="set.inFrom" class="text-caption mb-2">
+      {{ answered }} of these were worked out by reading
+      <strong>{{ set.inFrom }}</strong>’s own folder names across the whole pack.
+      Change any of them.
+    </div>
+
     <div class="text-caption text-medium-emphasis mb-3">
       <span v-if="answered">{{ answered }} answered</span>
       <span v-else>None answered yet</span>

@@ -35,6 +35,7 @@ import { resourceOk } from './core/fetchResource.js'
 import { rebuild, docSize } from './core/crdt.js'
 import { sameGenre } from './core/genres.js'
 import { buildTree, withChildren } from './core/pathTree.js'
+import { notesForPack } from './core/drumPacks.js'
 import { applyEdit, insertAt, setDrumPattern } from './core/chartEdit.js'
 import { ADAPTERS } from './core/graphView.js'
 import { realizeChord } from './core/voicing.js'
@@ -2306,6 +2307,23 @@ async function importOnePack(pack, progress, reader = hostReader, everything = n
    */
   const learned = learnInbound(perFolder, kitById(setKit || 'gm').in)
 
+  /*
+   * And the map worked out for this pack, if it is one that has been read.
+   *
+   * Every sampled library hangs its own articulations off numbers General
+   * MIDI does not name, and no two vendors agree -- so those notes are
+   * silent unless something says what they are. Nobody publishes a table,
+   * but the packs write their key down in their own folder names, and
+   * `scripts/pack_maps.py` reads it back off a whole collection at once.
+   *
+   * Applied rather than offered in a dialogue: it is the same evidence
+   * somebody would be shown and asked to confirm, and asking them to
+   * confirm forty notes one at a time for a pack jamin has already read is
+   * a question with a known answer. Every one of them is visible and
+   * changeable under "Name them". @see core/drumPacks.js
+   */
+  const known = notesForPack(pack.name) || {}
+
   await putSet({
     id: pack.id,
     name: pack.name,
@@ -2326,8 +2344,11 @@ async function importOnePack(pack, progress, reader = hostReader, everything = n
     kitReason: setKit ? '' : reason,
     // Nothing yet: what somebody tells jamin these notes mean. Its seed is
     // `learned`, which is evidence rather than an answer.
-    inMap: {},
+    inMap: { ...known },
     inLearned: learned,
+    // Where the map came from, so the panel can say so rather than leaving
+    // somebody wondering who decided.
+    inFrom: Object.keys(known).length ? pack.name : '',
     facts: drawn.length
       ? describeSet(drawn, { pitches: [...pitches.keys()].sort((a, b) => a - b), uses: pitches })
       : {},

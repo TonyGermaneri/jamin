@@ -39,6 +39,7 @@ import {
   classifyFolders, kitById, mapDrumNote, mapDrumNotes, learnInbound, cleanInMap,
   DRUM_KITS, DEFAULT_KIT,
 } from 'SRC/core/drumKits.js'
+import { notesForPack } from 'SRC/core/drumPacks.js'
 
 const ROOT = process.argv[2]
 const PER_SHELF = Number(process.argv[3] || 40)
@@ -106,8 +107,13 @@ const { folderKits, setKit, reason } = classifyFolders(perFolder)
  * inventing anything. @see components/DrumLibraryNotes.vue
  */
 const learned = learnInbound(perFolder, kitById(setKit || DEFAULT_KIT).in)
-const taught = cleanInMap(Object.fromEntries(
-  Object.entries(learned.hints).map(([note, one]) => [note, one.voice])))
+/*
+ * What the pack analysis worked out for this pack, which is what an import
+ * now applies. Measured here against the same library it was read off, so
+ * the number below is what somebody actually gets rather than what the
+ * analysis hoped for. @see scripts/pack_maps.py
+ */
+const taught = cleanInMap(notesForPack(NAME) || {})
 const facts = describeSet(grooves.slice(0, 120),
   { pitches: [...uses.keys()].sort((a, b) => a - b), uses })
 const set = { id: 'probe', name: NAME, kit: setKit, folderKits, facts }
@@ -230,8 +236,8 @@ def main():
     if now["silent"]:
         print(f"            still silent: {', '.join(str(n) for n in now['silent'][:24])}")
 
-    print(f"  asked     {found['asked']} notes have no voice; the library's own folder "
-          f"names answer {len(found['taught'])} of them")
+    print(f"  asked     {found['asked']} notes have no voice; the pack analysis "
+          f"names {len(found['taught'])} of them")
     if found["taught"]:
         print("            " + ", ".join(f"{n}->{v}" for n, v in found["taught"][:14]))
     print("  playing every pattern through each kit:")
