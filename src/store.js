@@ -430,6 +430,11 @@ export function controlIn(controller, value) {
     setHolding(value >= 64)
   }
 
+  // And out again, if the pedal is being passed on. Not conditional on
+  // listening: passing your own pedal through is about the rig, not about
+  // whether jamin is answering what you play. @see core/player.js passControl
+  player.passControl(controller, value)
+
   if (state.settings.midi.accentCc === null || controller !== state.settings.midi.accentCc) return
   const down = value >= 64
   if (down && !accentHeld) triggerAccent()
@@ -706,6 +711,13 @@ async function adoptHost() {
     },
     noteOff: (out, channel, note) => {
       callHost('jaminSendNote', note, channel, 0, false).catch(() => {})
+      return true
+    },
+    // The sustain pedal, passed through. Same road as the notes: the page
+    // has no port of its own in a plugin, so it goes into the block the
+    // host is about to collect. @see native/plugin/PluginProcessor.cpp
+    controlChange: (out, channel, controller, value) => {
+      callHost('jaminSendCc', controller, value, channel).catch(() => {})
       return true
     },
   }

@@ -741,14 +741,45 @@ export class Player {
   /** One note in or out, from a keyboard or from the host. */
   noteIn(note, velocity, on, now = Date.now()) {
     const midi = this.settings.midi
-    if (this.settings.accompany.monitor && midi.accompOutputId) {
-      if (on) this.engine.noteOn(midi.accompOutputId, midi.accompChannel, note, velocity)
-      else this.engine.noteOff(midi.accompOutputId, midi.accompChannel, note)
+    /*
+     * Passed on, if asked. Through `liveOut`, not the engine.
+     *
+     * This used to go straight out of the MIDI engine, which works in a
+     * browser and does nothing at all in a plugin -- the page has no port
+     * of its own there. `liveOut` is the one path that reaches an output
+     * in both: the engine in a tab, the processor's own block in a DAW.
+     * It is the same route a heard chord takes. @see store.js liveOut
+     */
+    if (this.settings.accompany.passNotes) {
+      if (on) this.liveOut.noteOn(midi.accompOutputId, midi.accompChannel, note, velocity)
+      else this.liveOut.noteOff(midi.accompOutputId, midi.accompChannel, note)
     }
 
     if (!this.settings.accompany.listen) return
     this.listener.settleMs = this.settings.accompany.settleMs || 60
     this.listener.note(note, on, now)
+  }
+
+  /**
+   * A control change in, passed on if asked.
+   *
+   * Only sustain. A keyboard sends a great deal down this wire -- mod
+   * wheel, expression, whatever a fader is assigned to this week -- and
+   * forwarding all of it would make this a MIDI thru with a switch on it
+   * rather than the one thing it says it is.
+   *
+   * Worth knowing what else is on that pedal: Hold is bound to CC 64 by
+   * default and the chart's own `pedal` switch sends sustain of its own on
+   * the same channel. With all three on, one press latches the chord, the
+   * chart pedals each chord, and the raw pedal goes out too -- which is
+   * three things a player might reasonably want at once and one they
+   * might not, so each is its own switch.
+   */
+  passControl(controller, value) {
+    if (!this.settings.accompany.passPedal || controller !== SUSTAIN) return
+    const midi = this.settings.midi
+    if (!this.liveOut.controlChange) return
+    this.liveOut.controlChange(midi.accompOutputId, midi.accompChannel, SUSTAIN, value)
   }
 
   /**

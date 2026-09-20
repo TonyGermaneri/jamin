@@ -254,8 +254,30 @@ const FIT = [
           hint="Off: one phrase plays the whole song. On: bind different phrases to individual chords, marked with a dot."
           persistent-hint
         />
-        <v-switch v-model="accompany.monitor"
-                  label="Hear your keyboard through the accompaniment output" />
+        <!--
+          Your own playing, sent on as well as listened to.
+
+          Both off, because most keyboards already reach a sound some other
+          way -- straight to their own, or through a track the DAW is
+          monitoring -- and passing them on again is every note twice.
+        -->
+        <v-switch v-model="accompany.passNotes" label="Pass through played notes" />
+        <div class="d-flex align-center">
+          <v-switch v-model="accompany.passPedal" density="compact" hide-details
+                    color="primary" label="Pass through sustain pedal" />
+          <InfoTip>
+            Sustain — CC 64 — as it comes off your keyboard, sent to the
+            accompaniment output. Nothing else is passed: a keyboard sends a
+            great deal down that wire and forwarding all of it would make this
+            a MIDI thru rather than the one thing it says it is.
+            <br /><br />
+            Three things can be on that pedal at once and each is its own
+            switch. <strong>Hold</strong> is bound to CC 64 by default and
+            latches the chord; <strong>Hold pedal for chord</strong> above
+            sends jamin's own sustain around each chord; and this passes yours
+            straight through.
+          </InfoTip>
+        </div>
       </v-col>
       <v-col cols="12" md="6">
         <v-switch v-model="accompany.keepRegister"

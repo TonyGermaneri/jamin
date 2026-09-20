@@ -36,7 +36,7 @@ export const STORAGE_KEY = 'jamin.settings.v1'
  *        chord alike; `chords.bassNote` and `accompany.keepBass` are gone, and
  *        anyone who had the chord one on gets the remaining one on.
  */
-export const SETTINGS_VERSION = 12
+export const SETTINGS_VERSION = 13
 export const TEXT_KEY = 'jamin.chart.v1'
 export const PHRASE_KEY = 'jamin.phrases.v1'
 export const SONG_PHRASE_KEY = 'jamin.songPhrase.v1'
@@ -134,7 +134,31 @@ export function defaultSettings() {
       fit: 'follow',
       keepRegister: true,
       snapNonChordTones: true,
-      monitor: true,
+      /*
+       * Your own playing, sent on as well as listened to.
+       *
+       * Mr. Accompany Me hears a chord and answers it; whether the keys
+       * themselves are heard is a question about the rest of the rig. Most
+       * of the time the keyboard is already going somewhere -- straight to
+       * its own sound, or to a track the DAW is monitoring -- and passing
+       * it on again is the same notes twice. So both are off, and somebody
+       * whose keyboard has no other way out turns them on.
+       *
+       * This was `monitor`, which defaulted to on and only worked in a
+       * browser: it sent through the raw engine, and the page has no MIDI
+       * output of its own inside a plugin. It goes out the same way a
+       * heard chord does now. @see core/player.js noteIn, passControl
+       */
+      passNotes: false,
+      /*
+       * And the pedal, which is not a note and was never passed at all.
+       *
+       * Only sustain -- CC 64 -- because that is the pedal a keyboard has
+       * and the one this is about. Worth knowing that Hold is bound to the
+       * same pedal by default, so with both on one press latches the chord
+       * *and* sustains it, which is usually what a player means by it.
+       */
+      passPedal: false,
       // How fast a phrase plays over the chords: 1 is as it was played.
       speed: 1,
       // The register phrases sit in, when they are not following the chord before.
@@ -402,6 +426,21 @@ export function migrateSettings(stored) {
     // Mr. Accompany Me stopped recording and started listening. The capture
     // quantiser has nothing left to quantise.
     delete next.accompany.quantize
+  }
+
+  if (version < 13) {
+    /*
+     * `monitor` becomes `passNotes`, and goes off.
+     *
+     * Not carried over, deliberately. It defaulted to on and, in a plugin,
+     * did nothing at all -- it sent through the raw MIDI engine, which
+     * inside a plugin has no ports -- so "on" meant one thing in a browser
+     * and nothing in a DAW. Now that it works in both, leaving it on for
+     * everybody who never knowingly chose it would double every note for
+     * the people whose keyboard is already monitored by the host, which is
+     * most of them. Both pass-throughs start off and are one switch away.
+     */
+    delete next.accompany.monitor
   }
 
   next.version = SETTINGS_VERSION

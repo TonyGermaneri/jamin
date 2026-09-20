@@ -117,6 +117,16 @@ public:
     */
     void sendNote (int note, int velocity, int channel, bool on);
 
+    /**
+        A control change the page wants sent on, now.
+
+        One thing only in practice: the sustain pedal, passed through from
+        the keyboard when somebody has asked for it. A pedal is not a note
+        and went nowhere at all before -- the page hears every control
+        change and had no way to send one back out.
+    */
+    void sendControl (int controller, int value, int channel);
+
     /** Mute or solo any instance in this host, quantised as the settings say. */
     void setInstanceMuted (const juce::String& id, bool muted);
     void setInstanceSoloed (const juce::String& id, bool soloed);

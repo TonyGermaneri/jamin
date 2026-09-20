@@ -390,6 +390,25 @@ void JaminProcessor::sendNote (int note, int velocity, int channel, bool on)
     slot.bytes[2] = (uint8_t) (on ? juce::jlimit (1, 127, velocity) : 0);
 }
 
+void JaminProcessor::sendControl (int controller, int value, int channel)
+{
+    if (controller < 0 || controller > 127 || tapFifo.getFreeSpace() <= 0)
+        return;
+
+    const auto scope = tapFifo.write (1);
+    if (scope.blockSize1 <= 0)
+        return;
+
+    // `held` is about note-offs owing, and a control change owes none: the
+    // pedal's own release is another control change the page will send.
+    auto& slot = tapRing[(size_t) scope.startIndex1];
+    slot.length = 3;
+    slot.held = false;
+    slot.bytes[0] = (uint8_t) (0xb0 | (channel & 0x0f));
+    slot.bytes[1] = (uint8_t) controller;
+    slot.bytes[2] = (uint8_t) juce::jlimit (0, 127, value);
+}
+
 void JaminProcessor::setInstanceMuted (const juce::String& id, bool muted)
 {
     jamin::Roster::instance().setMuted (id.toStdString(), muted, nextBoundaryPpq());

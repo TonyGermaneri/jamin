@@ -188,6 +188,18 @@ JaminEditor::JaminEditor (JaminProcessor& p)
                                                 (int) args[1], (bool) args[3]);
                            complete (juce::var (true));
                        })
+                   .withNativeFunction ("jaminSendCc",
+                       [this] (const juce::Array<juce::var>& args, auto complete)
+                       {
+                           // The sustain pedal, passed through from the
+                           // keyboard. The page hears every control change
+                           // and, until this, had no way to send one on.
+                           // @see JaminProcessor::sendControl
+                           if (args.size() >= 3)
+                               plugin.sendControl ((int) args[0], (int) args[1],
+                                                   (int) args[2]);
+                           complete (juce::var (true));
+                       })
                    .withNativeFunction ("jaminRoster",
                        [this] (const juce::Array<juce::var>&, auto complete)
                        {

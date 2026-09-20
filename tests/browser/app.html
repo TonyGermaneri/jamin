@@ -1023,13 +1023,18 @@
       await settle(600)
       const playbackText = document.querySelector('.jamin-settings .v-window-item--active').innerText
       for (const wanted of ['Speed', 'Octave', 'Bass note', 'Double bass', 'Snap to chord notes',
-                            'Listen to what I play', 'Accent', 'Per-chord articulations']) {
+                            'Listen to what I play', 'Accent', 'Per-chord articulations',
+                            'Pass through played notes', 'Pass through sustain pedal']) {
         ok(`accompany offers ${wanted}`, playbackText.includes(wanted),
           playbackText.slice(0, 70).replace(/\n/g, ' '))
       }
       is('speed starts at one', state.settings.accompany.speed, 1)
       is('snapping is on to begin with', state.settings.accompany.snapNonChordTones, true)
       is('bass is off to begin with', state.settings.accompany.bass, false)
+      // Both pass-throughs off: most keyboards already reach a sound some
+      // other way, and passing them on again is every note twice.
+      is('and so is passing your own notes on', state.settings.accompany.passNotes, false)
+      is('and your own pedal', state.settings.accompany.passPedal, false)
       is('and one octave down when turned on', state.settings.accompany.bassOctaves, 1)
       // One bass setting, in one place.
       is('chords no longer carry a bass note of their own', state.settings.chords.bassNote, undefined)
@@ -1048,8 +1053,22 @@
       state.ui.settings = false
       await settle(300)
 
-      /* ---------- the big collection: download, then upload ---------- */
-      // A real slice of the real CSV, streamed through the real importer.
+      /*
+       * ---------- the big collection: download, then upload ----------
+       *
+       * A real slice of the real CSV, streamed through the real importer --
+       * when there is one. `chordonomicon-sample.csv` is CC-BY-NC-4.0 and
+       * gitignored: it is not in a clean checkout and it is not in an
+       * archive of this directory, both deliberately. Without the guard the
+       * fetch returned a 404 page, the importer was handed HTML, and the
+       * whole suite reported "never finished" -- one missing optional file
+       * taking every check after it with it.
+       */
+      const csvThere = (await fetch('./chordonomicon-sample.csv', { method: 'HEAD' })).ok
+      if (!csvThere) {
+        results.push({ name: 'the big collection is skipped — no local CSV sample',
+                       pass: true, detail: 'tests/browser/chordonomicon-sample.csv' })
+      } else {
       const csvBlob = await (await fetch('./chordonomicon-sample.csv')).blob()
       const csvFile = new File([csvBlob], 'chordonomicon_v2.csv', { type: 'text/csv' })
       ok('the sample is a real chunk of the file', csvBlob.size > 1e6, `${Math.round(csvBlob.size / 1e6)}MB`)
@@ -1100,6 +1119,7 @@
       is('clearing empties it', state.bulk.count, 0)
       const afterClear = await store.progressionPage(0, 12)
       is('and the library is the small list again', afterClear.total, store.allProgressions().length)
+      }
 
       /* ---------- the progression library ---------- */
       store.setText('C F G')

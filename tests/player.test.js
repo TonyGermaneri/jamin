@@ -10,6 +10,9 @@ class FakeEngine {
   constructor() { this.log = [] }
   noteOn(out, ch, note, vel) { this.log.push(['on', note, ch]); return true }
   noteOff(out, ch, note) { this.log.push(['off', note, ch]); return true }
+  // The pedal, which is not a note. Recorded the same way so a check can
+  // say what left and on which channel. @see Player.passControl
+  controlChange(out, ch, cc, value) { this.log.push(['cc', cc, ch, value]); return true }
 }
 
 function makeSettings(patch = {}) {
@@ -72,7 +75,7 @@ const livePhrase = {
 function listening(patch = {}) {
   const e = new FakeEngine()
   const s = makeSettings()
-  s.accompany.monitor = false
+  s.accompany.passNotes = false
   s.accompany.listen = true
   s.accompany.liveBars = 1
   s.accompany.settleMs = 10
@@ -618,7 +621,7 @@ check('released on the port it was sounded on',
   const bare = new FakeEngine()
   // Monitoring off, or the keys passing through would answer this on their
   // own and the check would pass with the live path doing nothing.
-  const set = makeSettings({ accompany: { listen: true, liveBars: 1, monitor: false } })
+  const set = makeSettings({ accompany: { listen: true, liveBars: 1, passNotes: false } })
   const p = new Player(bare, set)
   p.getLivePhrase = () => arp            // the last articulation chosen
   p.setScore(parseScore('', { beatsPerBar: 4 }))
@@ -648,7 +651,7 @@ check('released on the port it was sounded on',
     notes: [{ at: 0, note: 60, velocity: 100, duration: 96 }],
   }
   const out = new FakeEngine()
-  const set = makeSettings({ accompany: { listen: true, monitor: false } })
+  const set = makeSettings({ accompany: { listen: true, passNotes: false } })
   const p = new Player(out, set)
   p.getLivePhrase = () => pad
   p.setScore(parseScore('', { beatsPerBar: 4 }))
@@ -696,7 +699,7 @@ check('released on the port it was sounded on',
     notes: [{ at: 0, note: 60, velocity: 100, duration: 96 }],
   }
   const out = new FakeEngine()
-  const p = new Player(out, makeSettings({ accompany: { listen: true, monitor: false } }))
+  const p = new Player(out, makeSettings({ accompany: { listen: true, passNotes: false } }))
   p.getLivePhrase = () => pad
   p.setScore(parseScore('', { beatsPerBar: 4 }))
   p.noteIn(60, 100, true, 1000)
@@ -718,7 +721,7 @@ check('released on the port it was sounded on',
     notes: [{ at: 0, note: 60, velocity: 100, duration: 96 }],
   }
   const out = new FakeEngine()
-  const p = new Player(out, makeSettings({ accompany: { listen: true, monitor: false } }))
+  const p = new Player(out, makeSettings({ accompany: { listen: true, passNotes: false } }))
   p.getLivePhrase = () => pad
   p.setScore(parseScore('', { beatsPerBar: 4 }))
   p.noteIn(60, 100, true, 1000)
@@ -743,7 +746,7 @@ check('released on the port it was sounded on',
     notes: [{ at: 0, note: 60, velocity: 100, duration: 96 }],
   }
   const p = new Player(engineOut,
-                       makeSettings({ accompany: { listen: true, monitor: false } }))
+                       makeSettings({ accompany: { listen: true, passNotes: false } }))
   p.liveOut = elsewhere
   p.getLivePhrase = () => pad
   p.setScore(parseScore('', { beatsPerBar: 4 }))
@@ -753,6 +756,83 @@ check('released on the port it was sounded on',
   for (let pulse = 1; pulse <= 20; pulse++) p.tick(pulse)
   check('a heard chord leaves by the live route', elsewhere.log.length > 0, true)
   check('and not through the engine', engineOut.log.length, 0)
+}
+
+/* ---------------- passing your own playing on ---------------------------
+ *
+ * Mr. Accompany Me hears a chord and answers it. Whether the keys and the
+ * pedal themselves are sent on is a separate question -- about the rig
+ * rather than about the accompaniment -- so it is two switches, and both
+ * start off: most keyboards already reach a sound some other way, and
+ * passing them on again is every note twice.
+ */
+{
+  const quiet = new FakeEngine()
+  const p = new Player(quiet, makeSettings())
+  check('nothing is passed through by default',
+        [p.settings.accompany.passNotes, p.settings.accompany.passPedal], [false, false])
+  p.noteIn(60, 100, true, 1000)
+  p.noteIn(60, 0, false, 1100)
+  p.passControl(64, 127)
+  check('so playing sends nothing on', quiet.log.length, 0)
+}
+
+{
+  const out = new FakeEngine()
+  const p = new Player(out, makeSettings({ accompany: { passNotes: true } }))
+  p.settings.midi.accompChannel = 3
+  p.noteIn(60, 100, true, 1000)
+  p.noteIn(60, 0, false, 1100)
+  check('turned on, the keys go out on the accompaniment channel',
+        out.log, [['on', 60, 3], ['off', 60, 3]])
+}
+
+{
+  // And out by the live route, not the raw engine -- which is the whole of
+  // why this was rewritten. Inside a plugin the page has no MIDI port of
+  // its own, so the old monitor switch worked in a browser and did nothing
+  // at all in a DAW. @see store.js liveOut
+  const engineOut = new FakeEngine()
+  const elsewhere = new FakeEngine()
+  const p = new Player(engineOut, makeSettings({ accompany: { passNotes: true } }))
+  p.liveOut = elsewhere
+  p.noteIn(60, 100, true, 1000)
+  check('and by the route that works inside a plugin', elsewhere.log.length, 1)
+  check('not straight out of the engine', engineOut.log.length, 0)
+}
+
+{
+  const out = new FakeEngine()
+  const p = new Player(out, makeSettings({ accompany: { passPedal: true } }))
+  p.settings.midi.accompChannel = 2
+  p.passControl(64, 127)
+  p.passControl(64, 0)
+  check('the pedal goes through when asked',
+        out.log, [['cc', 64, 2, 127], ['cc', 64, 2, 0]])
+
+  // Sustain only. A keyboard sends a great deal down that wire and
+  // forwarding all of it would make this a MIDI thru with a switch on it.
+  out.log = []
+  p.passControl(1, 127)
+  p.passControl(11, 64)
+  check('and nothing else does', out.log.length, 0)
+}
+
+{
+  // The notes switch and the pedal switch are separate, because the two
+  // questions are: one is "can my keyboard be heard", the other is "does
+  // my pedal reach the sound".
+  const out = new FakeEngine()
+  const p = new Player(out, makeSettings({ accompany: { passNotes: true, passPedal: false } }))
+  p.noteIn(60, 100, true, 1000)
+  p.passControl(64, 127)
+  check('notes without the pedal', out.log.map((one) => one[0]), ['on'])
+
+  const other = new FakeEngine()
+  const q = new Player(other, makeSettings({ accompany: { passNotes: false, passPedal: true } }))
+  q.noteIn(60, 100, true, 1000)
+  q.passControl(64, 127)
+  check('and the pedal without the notes', other.log.map((one) => one[0]), ['cc'])
 }
 
 console.log(failed === 0 ? 'player: all checks passed' : `player: ${failed} FAILED`)
