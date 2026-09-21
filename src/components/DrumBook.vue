@@ -479,6 +479,7 @@ async function pickNode(picked, at, path) {
 
   selected.value = groove
   if (autoSelect.value) assignEverywhere(groove)
+  if (autoPreview.value) previewGroove(groove)
 }
 
 const filterValues = () => {
@@ -667,6 +668,22 @@ const parts = computed(() => sectionBars())
 
 const filtered = computed(() => Boolean(search.value) || activeFilters.value > 0)
 
+/**
+ * Whether anything at all narrows the catalogue, the library included.
+ *
+ * `filtered` deliberately leaves the library out: it is what decides
+ * whether the *list* is showing a filtered view, and which library you are
+ * in is a place rather than a filter there.
+ *
+ * On the map it is a filter like any other, and leaving it out meant the
+ * marks were only computed when something else was also on -- so choosing
+ * a library dimmed nothing, and it appeared to work only in company.
+ * Which it did: the marks are read from `state.drumFilters`, and the
+ * library is in there, so a second filter would bring the library's effect
+ * along with it. @see refreshMarks
+ */
+const narrowed = computed(() => filtered.value || Boolean(state.drumFilters.set))
+
 function clearFilters() {
   search.value = ''
   kind.value = 'any'
@@ -733,6 +750,7 @@ function choose(groove) {
   }
 
   if (autoSelect.value) assignEverywhere(groove)
+  if (autoPreview.value) previewGroove(groove)
 }
 
 /**
@@ -1040,6 +1058,25 @@ function onGridKey(event, row) {
  */
 const autoSelect = ref(false)
 
+/**
+ * Auto-preview: picking one plays it, without reaching for the button.
+ *
+ * Hunting through a catalogue is listening, not reading -- the name of a
+ * groove says almost nothing and the roll says a little more, and the only
+ * thing that answers "is this the one" is hearing it. With this on, a
+ * pattern sounds the moment it is picked, which turns walking the map into
+ * auditioning it.
+ *
+ * Separate from auto-select on purpose, and the pairing is the point:
+ * auto-select is a decision, auto-preview is a question. Most of the
+ * hunting is done with this on and that off.
+ *
+ * It is `previewGroove`, the same call the button makes -- so with the
+ * transport stopped it plays at once and with it rolling it waits for the
+ * next bar line. @see store.js previewGroove
+ */
+const autoPreview = ref(false)
+
 /* ---------------- parts ---------------- */
 const rows = computed(() => drumRows())
 const liveRows = computed(() => rows.value.filter((row) => !row.stale))
@@ -1223,7 +1260,7 @@ async function refreshTree() {
  * folders that are mostly still closed.
  */
 async function refreshMarks(mine, { bulk }) {
-  if (!filtered.value) { marked.value = null; return }
+  if (!narrowed.value) { marked.value = null; return }
   const rows = await drumRowsForGraph()
   if (mine !== drawing) return
   marked.value = markGraphRows('drums', graph.value, rows,
@@ -1304,7 +1341,10 @@ watch([asGraph, graphFilters], () => {
  */
 if (typeof window !== 'undefined') {
   const dials = {
-    genre, kind, bars, signature, feel, surface, partTag, era, shelf, search,
+    // `library` included: on the map it is a filter like any other, and
+    // leaving it out of the harness is how it went unchecked that choosing
+    // one dimmed nothing. @see narrowed
+    library, genre, kind, bars, signature, feel, surface, partTag, era, shelf, search,
   }
   window.__jaminBookProbe = {
     filter: (name, value) => {
@@ -1417,6 +1457,13 @@ onMounted(refreshTree)
                      and off while hunting, not configured once. -->
                 <v-switch v-model="autoSelect" density="compact" hide-details
                           color="primary" label="Auto-select"
+                          class="jamin-map-switch" />
+                <!-- And hearing it, which is the other half of hunting. A
+                     name says almost nothing and the roll says a little
+                     more; the only thing that answers "is this the one" is
+                     playing it. @see store.js previewGroove -->
+                <v-switch v-model="autoPreview" density="compact" hide-details
+                          color="primary" label="Auto-preview"
                           class="jamin-map-switch" />
               </template>
 
@@ -1570,6 +1617,16 @@ onMounted(refreshTree)
                     v-model="autoSelect" density="compact" hide-details color="primary"
                     label="Auto-select"
                   />
+                  <v-switch
+                    v-model="autoPreview" density="compact" hide-details color="primary"
+                    label="Auto-preview"
+                  />
+                  <InfoTip>
+                    With this on, picking a pattern plays it — stopped it sounds at once,
+                    rolling it waits for the next bar line, the same as the Preview button.
+                    Auto-select is a decision and this is a question, which is why they are
+                    two switches.
+                  </InfoTip>
                   <InfoTip>
                     With this on, clicking a groove puts it on every part at once. Most songs
                     have one feel, so binding the same beat to five sections one at a time is five

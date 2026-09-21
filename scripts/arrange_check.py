@@ -96,6 +96,40 @@ STATE = r"""
 """
 
 
+# A second library, so "only this one" has something to exclude.
+#
+# Rows in the shape the store keeps them: an id, the set it belongs to, a
+# name, the path the tree is built from, and the facet fields. Small --
+# forty clips is enough to make a branch on the map and nothing here is
+# about size. @see core/drumStore.js
+SECOND_LIBRARY = r"""
+async () => {
+  const app = window.__jaminApp
+  const rows = []
+  for (let n = 0; n < 40; n++) {
+    rows.push({
+      id: `two:${n}`, s: 'shot-two', n: `clip ${n}`,
+      p: `Second Library/Shelf ${n % 4}/clip ${n}`,
+      f: `Second Library/Shelf ${n % 4}`,
+      k: n % 5 ? 'beat' : 'fill', r: (n % 4) + 1, t: '4-4',
+      g: 'rock', b: 120, x: {}, v: [], m: {},
+    })
+  }
+  if (await app.putGrooves(rows)) return false
+  await app.putSet({
+    id: 'shot-two', name: 'Second Library', root: '', byReference: false,
+    kit: 'gm', customMap: {}, folderKits: {}, folders: 4,
+    count: rows.length, addedAt: Date.now(),
+  })
+  await app.refreshDrumSets()
+  // The map is drawn at import, and this is an import by another name.
+  await app.forgetCatalogueGraph('drums')
+  await app.buildBulkGraph('drums')
+  return true
+}
+"""
+
+
 def look(page):
     return page.evaluate(STATE)
 
@@ -374,6 +408,62 @@ def main():
         else:
             print(f"ok    and thrown away, it opens at its top level again "
                   f"({clean['showing']} nodes)")
+
+        # ---- the library on its own ------------------------------------
+        #
+        # The filter people reach for first, and the one that did nothing.
+        # `filtered` leaves the library out on purpose -- in the list it is
+        # a place rather than a filter -- so the marks were only computed
+        # when something *else* was also on. Choosing a library dimmed
+        # nothing until it had company, and then appeared to work.
+        #
+        # It needs two libraries to say anything at all: with one, every
+        # clip matches and a correct answer lights the whole map. The
+        # built-in corpus is one, so this seeds a second.
+        seeded = page.evaluate(SECOND_LIBRARY)
+        if not seeded:
+            failures.append("FAIL could not seed a second library")
+        else:
+            page.wait_for_timeout(500)
+            page.reload(wait_until="load")
+            page.wait_for_function("() => Boolean(window.__jaminApp)", timeout=30000)
+            page.wait_for_timeout(900)
+            page.evaluate(OPEN_MAP, [True])
+            page.wait_for_timeout(4000)
+            for _ in range(3):
+                page.evaluate(DIG)
+                page.wait_for_timeout(500)
+            both = still(page)
+            print(f"  with two libraries: {both['showing']} nodes, {both['lit']} lit")
+
+            page.evaluate("() => window.__jaminBookProbe.filter('library', 'builtin')")
+            page.wait_for_timeout(3500)
+            one = look(page)
+            moved_by_library = same(both, one)
+
+            if not one["dim"]:
+                failures.append("FAIL choosing one of two libraries dimmed nothing")
+            elif not one["lit"]:
+                failures.append("FAIL choosing a library dimmed everything")
+            elif moved_by_library:
+                failures.append(f"FAIL choosing a library moved "
+                                f"{len(moved_by_library)} node(s)")
+            else:
+                print(f"ok    a library on its own dims {one['dim']} of "
+                      f"{one['dim'] + one['lit']} and moves nothing")
+
+            # And back, which is the other half: changing the library has to
+            # re-apply, not just apply once.
+            page.evaluate("() => window.__jaminBookProbe.filter('library', 'shot-two')")
+            page.wait_for_timeout(3500)
+            other = look(page)
+            if other["lit"] == one["lit"] and other["dim"] == one["dim"]:
+                failures.append("FAIL changing the library changed nothing")
+            elif not other["dim"]:
+                failures.append("FAIL the second library dimmed nothing")
+            else:
+                print(f"ok    and changing it re-applies — {other['dim']} dim, "
+                      f"{other['lit']} lit")
 
         if trouble:
             failures.append("FAIL the page threw: " + "; ".join(trouble[:3]))

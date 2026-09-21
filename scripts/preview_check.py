@@ -353,6 +353,14 @@ def main():
             elif folders:
                 print(f"ok    and all {len(folders)} folders stayed circles")
 
+            # Stopped, so a coordinate read now is still true when the mouse
+            # gets there. The forces take seconds to settle on a real machine
+            # and a minute and a half in a headless one with a software GPU,
+            # and a click at a place a node has drifted away from lands on
+            # nothing. @see canvas/treeGraph.js rest
+            page.evaluate("() => window.__jaminTreeProbe.rest()")
+            page.wait_for_timeout(400)
+
             # A clip well inside the picture, clicked with the mouse.
             spots = page.evaluate(SPOTS, [leaves])
             inside = [one for one in spots
@@ -402,6 +410,61 @@ def main():
                         failures.append("FAIL the playhead stayed after Cancel")
                     else:
                         print("ok    and went away when it was cancelled")
+
+                    # ---- and without pressing anything ------------------
+                    #
+                    # Hunting a catalogue is listening rather than reading:
+                    # the name says almost nothing, the roll a little more,
+                    # and only playing it answers "is this the one". With
+                    # Auto-preview on, picking is playing.
+                    switch = page.locator(
+                        ".jamin-map-glass .v-switch:has-text('Auto-preview') input")
+                    if not switch.count():
+                        failures.append("FAIL there is no Auto-preview switch on the map")
+                    else:
+                        switch.first.check(force=True)
+                        page.wait_for_timeout(400)
+                        # Read again rather than reused, and after the forces
+                        # have been stopped again: a coordinate taken half a
+                        # minute ago is a click on empty space.
+                        page.evaluate("() => window.__jaminTreeProbe.rest()")
+                        page.wait_for_timeout(300)
+                        now = page.evaluate(SPOTS, [leaves])
+                        others = [one for one in now
+                                  if one["at"] != target["at"]
+                                  and 300 < one["y"] < TALL - 200
+                                  and 200 < one["x"] < WIDE - 500]
+                        if not others:
+                            failures.append("FAIL only one clip was reachable to pick")
+                        else:
+                            next_one = others[0]
+                            page.evaluate(LISTEN)
+                            page.mouse.click(next_one["x"], next_one["y"])
+                            page.wait_for_timeout(1500)
+                            heard_now = page.evaluate("() => (window.__heard || []).length")
+                            page.evaluate("() => window.__jaminApp.cancelPreview()")
+                            if not heard_now:
+                                failures.append(
+                                    f"FAIL Auto-preview was on and picking "
+                                    f"{next_one['label']!r} played nothing")
+                            else:
+                                print(f"ok    with Auto-preview on, picking "
+                                      f"{next_one['label']!r} played {heard_now} notes "
+                                      f"with nothing pressed")
+
+                            # Off again, and picking is silent again --
+                            # otherwise the switch is decoration.
+                            switch.first.uncheck(force=True)
+                            page.wait_for_timeout(300)
+                            page.evaluate(LISTEN)
+                            page.mouse.click(target["x"], target["y"])
+                            page.wait_for_timeout(1200)
+                            quiet = page.evaluate("() => (window.__heard || []).length")
+                            if quiet:
+                                failures.append(f"FAIL with Auto-preview off, picking "
+                                                f"still played {quiet} notes")
+                            else:
+                                print("ok    and turned off, picking is silent again")
 
         if trouble:
             failures.append("FAIL the page threw: " + "; ".join(trouble[:3]))
