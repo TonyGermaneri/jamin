@@ -80,6 +80,36 @@ function(jamin_bundle_web target)
             "  Run `npm run build` -- it makes both -- and build again.")
     endif()
 
+    #[[
+      Where the page goes, which is not the same question on every platform.
+
+      The runtime answer does not vary and is one line: the plugin looks for a
+      Resources/web beside its own binary. @see plugin/PluginPaths.cpp
+
+      What varies is where CMake says that is. An .app is a bundle, and so is a
+      VST3 -- the format defines that layout on Windows too, which is why a
+      .vst3 there is a folder and not a DLL. A Windows standalone is a bare
+      .exe with no Contents and no bundle of any kind, and asking CMake for its
+      TARGET_BUNDLE_CONTENT_DIR is not a warning but a generate-time error:
+
+        TARGET_BUNDLE_CONTENT_DIR is allowed only for Bundle targets.
+
+      That error is every Windows configure this repository has ever run. It
+      could not have been caught here, because on macOS all three formats are
+      bundles and the question never comes up.
+
+      Asked of the target rather than of the platform. MACOSX_BUNDLE is the
+      property an .app carries and BUNDLE is the one a plugin bundle carries;
+      a target with neither has its resources beside the executable.
+    ]]
+    get_target_property(_bundle     ${target} BUNDLE)
+    get_target_property(_app_bundle ${target} MACOSX_BUNDLE)
+    if(_bundle OR _app_bundle)
+        set(_web_dest "$<TARGET_BUNDLE_CONTENT_DIR:${target}>/Resources/web")
+    else()
+        set(_web_dest "$<TARGET_FILE_DIR:${target}>/Resources/web")
+    endif()
+
     # A target of its own rather than POST_BUILD on the plugin, because
     # POST_BUILD only fires when the plugin relinks -- so a `npm run build` with
     # no C++ change left a stale page inside the bundle, and the tests were
@@ -91,7 +121,7 @@ function(jamin_bundle_web target)
                 # No quotes: VERBATIM passes each argument exactly as written,
                 # so a quote here arrives as part of the path.
                 -DSRC=${JAMIN_WEB_DIST}
-                -DDEST=$<TARGET_BUNDLE_CONTENT_DIR:${target}>/Resources/web
+                -DDEST=${_web_dest}
                 -DEXCLUDE=${JAMIN_WEB_EXCLUDE}
                 -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/CopyWeb.cmake"
         COMMENT "Copying the web build into ${target}"
