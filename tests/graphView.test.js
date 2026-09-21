@@ -48,13 +48,25 @@ check('one captured here says so',
       ADAPTERS.phrases.treePath({ name: 'held', kind: 'lick' }),
       'captured here/lick/held')
 
-// The importer stores a decade as the year it starts -- `1950`, not `1950s` --
-// so the `s` belongs to whoever writes the label. @see core/csvImport.js
-check('a progression is its genre, then its decade',
-      ADAPTERS.progressions.treePath({ genre: 'jazz', decade: '1950', name: 'ii-V-I' }),
-      'jazz/1950s/ii-V-I')
-check('and an untagged one is not a blank branch',
-      ADAPTERS.progressions.treePath({ name: 'I-IV-V' }), 'untagged/I-IV-V')
+/* ---------------- a progression is its shape ----------------------------
+ *
+ * It used to be genre, then decade, then length -- three facts about where
+ * a progression was found rather than about the progression. Two copies of
+ * ii-V-I tagged differently sat in different halves of the map, and the
+ * same progression in two keys shared no node at all, because the chord
+ * symbols have nothing in common. @see core/degrees.js
+ */
+check('a progression hangs at its first chords as degrees',
+      ADAPTERS.progressions.treePath({ text: '| D-7 | G7 | Cmaj7 | % |' }, { chords: 3 }),
+      'ii7/V7/Imaj7')
+check('the same progression in another key is the same branch',
+      ADAPTERS.progressions.treePath({ text: '| F-7 | Bb7 | Ebmaj7 | % |' }, { chords: 3 }),
+      'ii7/V7/Imaj7')
+check('how deep it groups is the dial',
+      ADAPTERS.progressions.treePath({ text: '| D-7 | G7 | Cmaj7 | % |' }, { chords: 1 }),
+      'ii7')
+check('and a progression with no chords in it says so',
+      ADAPTERS.progressions.treePath({ text: '' }, { chords: 2 }), '(no chords)')
 
 /* ---------------- what "group the graph by" means ----------------------- */
 // Choosing a facet re-roots the tree: that facet becomes the top level and the
@@ -90,6 +102,16 @@ check('progressions sort by decade',
 for (const [name, adapter] of Object.entries(ADAPTERS)) {
   check(`${name} has a tree path`, typeof adapter.treePath, 'function')
   check(`${name} has a label`, typeof adapter.label, 'string')
+
+  /*
+   * A catalogue may offer no grouping choice at all, and one does.
+   * Progressions are grouped by what a progression *is* -- its first few
+   * chords as degrees -- and there is no second arrangement of that worth
+   * offering, so the dropdown is gone and a slider says how deep. An empty
+   * list is a statement; a list whose first entry is not the default is a
+   * view that opens on something nobody chose.
+   */
+  if (!adapter.sorts.length) continue
   check(`${name} opens on its own arrangement`, adapter.sorts[0].value, '')
   const answered = adapter.sorts
     .slice(1)
@@ -125,16 +147,15 @@ check('a captured phrase is filed by its kind',
       'captured here/lick/held')
 
 /* ---------------- a progression is filed by when and how long ---------- */
-/*
- * Genre and decade alone leave tens of thousands in one heap -- 25,000 under a
- * single decade in a Chordonomicon-shaped collection. How long a sequence runs
- * is the next thing anybody narrows by, and the row already carries it.
- */
-const prog = { name: '#41', genre: 'rock', decade: 1970, bars: 4 }
-check('a progression is genre, decade, then length',
-      ADAPTERS.progressions.treePath(prog), 'rock/1970s/4 bars/#41')
 check('one bar is singular', ADAPTERS.progressions.facet({ bars: 1 }, 'bars'), '1 bar')
-check('an untagged one is not a blank branch',
-      ADAPTERS.progressions.treePath({ name: 'x' }), 'untagged/x')
+
+/* A shape shorter than the dial is not padded out. A two-chord vamp under
+   a setting of four sits two levels deep, beside everything else that
+   starts the same way -- which is where somebody looking for it would go.
+   The depth, not the names: which key `| C | G |` is in is a coin flip on
+   two chords and the detector's business, not this check's. */
+check('a short progression is as deep as it is long',
+      ADAPTERS.progressions.treePath({ text: '| C | G |' }, { chords: 4 }).split('/').length,
+      2)
 
 console.log(failed ? `graph-view: ${failed} FAILED` : 'graph-view: all checks passed')

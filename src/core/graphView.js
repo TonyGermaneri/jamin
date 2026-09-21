@@ -11,6 +11,8 @@
  * rather than importing one.
  */
 
+import { degreePath } from './degrees.js'
+
 /**
  * Where a catalogue's tree comes from, per kind of catalogue.
  *
@@ -141,30 +143,31 @@ export const ADAPTERS = {
   progressions: {
     label: 'Progressions',
     /*
-     * Genre, then when, then how long -- the three things a progression row
-     * actually carries besides its chords. Length matters more than it looks:
-     * a genre and a decade alone leaves tens of thousands of progressions in
-     * one heap, and how many bars a sequence runs for is the next thing
-     * anybody narrows by. @see capFanOut for what happens when even that
-     * leaves a node too wide.
+     * By what the progression *is*, which is its first few chords as
+     * degrees.
+     *
+     * It was genre, then decade, then length -- the three things the row
+     * carries besides its chords -- and all three are facts about where a
+     * progression was found rather than about the progression. Two copies
+     * of ii-V-I, one tagged jazz and one tagged soul, sat in different
+     * halves of the map with nothing to say they were the same thing; and
+     * `D-7 G7 Cmaj7` and `F-7 Bb7 Ebmaj7`, which are the same progression
+     * in two keys, shared no node at all.
+     *
+     * Read as degrees they are one branch, and the map becomes a few dozen
+     * shapes with variations under them instead of four thousand names.
+     * @see core/degrees.js
      */
-    treePath: (one) => [
-      one.genre || 'untagged',
-      one.decade ? `${one.decade}s` : '',
-      one.bars ? `${one.bars} bar${one.bars === 1 ? '' : 's'}` : '',
-      one.name || '',
-    ].filter(Boolean).join('/'),
+    treePath: (one, { chords = 2 } = {}) => degreePath(one.text, chords).join('/'),
     facet: (one, by) => {
       if (by === 'genre') return one.genre || ''
       if (by === 'decade') return one.decade ? `${one.decade}s` : ''
       if (by === 'bars') return one.bars ? `${one.bars} bar${one.bars === 1 ? '' : 's'}` : ''
       return ''
     },
-    sorts: [
-      { title: 'Genre', value: '' },
-      { title: 'Decade', value: 'decade' },
-      { title: 'Length', value: 'bars' },
-    ],
+    // No grouping choice. The degrees are the grouping; what is adjustable
+    // is how many of them, which is a slider rather than a dropdown.
+    sorts: [],
   },
 }
 

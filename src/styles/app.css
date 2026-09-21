@@ -1182,6 +1182,31 @@ body,
   opacity: 0.8;
 }
 
+/* The one dial the progression map has: how many chords deep it groups.
+   Wide enough to be draggable and narrow enough to sit in a filter row.
+   @see components/ProgressionBook.vue */
+.jamin-map-slider {
+  /* The filter row is a grid of equal columns; this takes one of them and
+     no more, or a single control stretches to the whole window. */
+  /* The filter row is a grid of wide auto-fit columns; a slider left to
+     fill one of them stretches most of the window and reads as a progress
+     bar. It takes what a slider needs. */
+  max-width: 260px;
+  justify-self: start;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 210px;
+  padding: 0 10px;
+}
+
+.jamin-map-slider .text-caption {
+  font-size: 11px;
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
 .jamin-map-filters .v-input__details {
   display: none;
 }

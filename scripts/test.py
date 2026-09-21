@@ -41,7 +41,8 @@ SUITES = [
     (["src/core/genres.js", "src/core/drumStore.js"], "tests/drumSearch.test.js"),
     # What the graph looks like and how the keyboard walks it -- the arithmetic
     # that decides the picture, without a GPU to decide it on.
-    (["src/core/graphView.js"], "tests/graphView.test.js"),
+    (["src/core/chordParser.js", "src/core/score.js", "src/core/key.js",
+      "src/core/degrees.js", "src/core/graphView.js"], "tests/graphView.test.js"),
     # The catalogue as the tree it already is, which is what replaced the
     # co-occurrence hairball.
     (["src/core/pathTree.js"], "tests/pathTree.test.js"),

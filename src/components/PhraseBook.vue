@@ -384,8 +384,22 @@ function pick(entry) {
     return
   }
 
-  usePhrase(entry)
+  /*
+   * Otherwise picking is auditioning, and whether an audition commits is
+   * what Auto-select decides.
+   *
+   * On by default here, unlike the drum book's and the progression
+   * library's, and the difference is what committing costs. A phrase is an
+   * overlay: turning one on changes what you hear and leaves the chart
+   * exactly as it was, so hearing the one you clicked is what clicking it
+   * meant. A drum groove goes onto every part and a progression rewrites
+   * the song -- those are edits, and an edit should be reached for.
+   */
+  if (autoSelect.value) usePhrase(entry)
 }
+
+/** @see pick -- on, because using a phrase is not an edit. */
+const autoSelect = ref(true)
 
 // The catalogue is all there is now, so opening the book is the whole of
 // the question this used to ask about tabs.
@@ -477,6 +491,13 @@ const assigningTo = computed(() => {
               <template #filters>
                 <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify"
                               clearable density="compact" variant="solo-filled" flat hide-details />
+                <!-- Picking on the map plays the phrase over the song rather
+                     than only filling the panel. On by default: a phrase is
+                     an overlay and turning one on is not an edit.
+                     @see pick -->
+                <v-switch v-model="autoSelect" density="compact" hide-details
+                          color="primary" label="Auto-select"
+                          class="jamin-map-switch" />
                 <v-select v-model="sortBy" :items="sorts"
                           density="compact" variant="solo-filled" flat hide-details />
                 <v-select v-model="category" :items="categories"
@@ -535,6 +556,10 @@ const assigningTo = computed(() => {
                 <!-- The foot of the list, attached to it rather than floating
                      in the space under it. @see styles/app.css -->
                 <div class="jamin-book-foot d-flex align-center flex-wrap" style="gap: 12px">
+                  <!-- The same switch as the map's, because it is the same
+                       question: does picking one play it. @see pick -->
+                  <v-switch v-model="autoSelect" density="compact" hide-details
+                            color="primary" label="Auto-select" />
                   <span class="text-caption text-medium-emphasis">
                     <strong>{{ matches.length.toLocaleString() }}</strong> of
                     {{ total.toLocaleString() }}

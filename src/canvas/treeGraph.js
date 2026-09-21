@@ -560,7 +560,25 @@ export class TreeGraph {
   bornAt(at, spread) {
     const node = this.source.nodes[at]
     const up = this.live.get(this.source.parents[at])
-    const angle = ((at % 997) / 997) * Math.PI * 2
+    /*
+     * Where it comes from, as an angle.
+     *
+     * A child is nudged off its parent by its own index, which spreads a
+     * folder's contents around it and is the whole reason a bloom opens
+     * out rather than staying a pile.
+     *
+     * A root has no parent to be nudged off, and the same arithmetic gives
+     * neighbouring roots neighbouring angles: nodes 0 to 7 all leave along
+     * the same ray within a fortieth of a radian, and collide then pushes
+     * them apart *along* it. Eight top-level nodes came out as a vertical
+     * line. A catalogue with one root never showed it; the progression map
+     * has one per shape. So the roots share the circle between them.
+     */
+    const roots = this.source.parents[at] < 0 ? this.roots() : null
+    const among = roots ? roots.indexOf(at) : -1
+    const angle = among >= 0 && roots.length > 1
+      ? (among / roots.length) * Math.PI * 2
+      : ((at % 997) / 997) * Math.PI * 2
 
     /*
      * Unless it has been here before.

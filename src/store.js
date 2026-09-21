@@ -3439,7 +3439,8 @@ export async function drumRowsForGraph(mostRows = 60000, { everything = false } 
  * `null` means everything, which is what no filter means.
  * @see core/pathTree.js markPaths, canvas/treeGraph.js setMarked
  */
-export function markGraphRows(which, tree, rows, { sortBy = '', bulk = false } = {}) {
+export function markGraphRows(which, tree, rows,
+  { sortBy = '', bulk = false, how = {} } = {}) {
   if (!tree || !tree.nodes || !rows) return null
   const adapter = ADAPTERS[which]
   if (!adapter) return null
@@ -3462,7 +3463,7 @@ export function markGraphRows(which, tree, rows, { sortBy = '', bulk = false } =
       levels.push(labelFor(which, row.setId))
       levels.push(...String(row.path || row.name || '').split('/'))
     } else {
-      levels.push(...String(adapter.treePath(row) || '').split('/'))
+      levels.push(...String(adapter.treePath(row, how) || '').split('/'))
     }
     return levels.filter(Boolean)
   })
@@ -3472,13 +3473,18 @@ export function markGraphRows(which, tree, rows, { sortBy = '', bulk = false } =
   return found
 }
 
-export function treeOf(which, rows, sortBy = '') {
+export function treeOf(which, rows, sortBy = '', how = {}) {
   const adapter = ADAPTERS[which]
   if (!adapter || !rows || !rows.length) return null
 
   const at = performance.now()
   const tree = buildTree(rows, {
-    pathOf: (one) => adapter.treePath(one),
+    // `how` is whatever the catalogue's own grouping needs -- for
+    // progressions, how many chords deep the degrees go. Passed rather
+    // than read from the settings so that the marking below builds the
+    // identical path; two callers disagreeing about the shape of a path
+    // is a filter that lights nothing.
+    pathOf: (one) => adapter.treePath(one, how),
     facetOf: sortBy ? (one) => adapter.facet(one, sortBy) : null,
     fillOf: adapter.isFill || null,
   })
@@ -4987,7 +4993,8 @@ export function renderProgression(progression, targetPc, spelling = 'auto') {
  * `caret` drops it where the cursor is (replacing a selection), `append` starts
  * a fresh line at the end, `replace` takes the whole chart over.
  */
-export function insertProgression(progression, { mode = 'replace', targetPc = null, spelling = 'auto' } = {}) {
+export function insertProgression(progression,
+  { mode = 'replace', targetPc = null, spelling = 'auto', keepOpen = false } = {}) {
   let body = renderProgression(progression, targetPc, spelling)
   if (!body) return
 
@@ -5015,7 +5022,16 @@ export function insertProgression(progression, { mode = 'replace', targetPc = nu
     setText(before + pad + body + tail + after)
   }
 
-  state.ui.progressions = false
+  /*
+   * Closed, unless the point was to keep looking.
+   *
+   * Inserting by hand is the end of the errand: you came for a
+   * progression, you have put one in, and a window still covering the
+   * chart is a window in the way. Auto-select is the opposite errand --
+   * walking the map trying one shape after another against the song -- and
+   * closing the book on the first one makes that impossible.
+   */
+  if (!keepOpen) state.ui.progressions = false
   toast(`${progression.name} → chart`)
 }
 

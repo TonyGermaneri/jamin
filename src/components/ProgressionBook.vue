@@ -22,16 +22,12 @@ import {
   midiForProgression,
   allProgressions,
   treeOf,
-  markGraphRows,
-  storedGraph,
-  buildBulkGraph,
 } from '../store.js'
 import { summarizeProgression } from '../core/progressions.js'
 import { parseScore } from '../core/score.js'
 import InfoTip from './InfoTip.vue'
 import CatalogueMap from './CatalogueMap.vue'
 import DataGrid from './DataGrid.vue'
-import { ADAPTERS } from '../core/graphView.js'
 import { vDragMidi } from '../core/dragOut.js'
 import { pcName } from '../core/chordParser.js'
 
@@ -49,8 +45,6 @@ const PER_PAGE = 12
 const asGraph = computed(() => state.settings.graph.progressions)
 const graph = ref(null)
 /** True while the whole library is being read, which happens once. */
-const building = ref(false)
-const drawn = ref(0)
 
 /*
  * Two libraries, and only one of them fits in memory.
@@ -60,9 +54,9 @@ const drawn = ref(0)
  * as the drum catalogue: read once, built once, kept -- and asked for rather
  * than sprung on somebody who opened a view.
  */
-const sortBy = ref('')
-const sorts = ADAPTERS.progressions.sorts
-/** True while a narrowing is being fetched for the graph. */
+/* No grouping choice: the degrees are the grouping and the slider is the
+   only dial on it. @see core/degrees.js */
+/** True while the rows behind the map are being fetched. */
 const reading = ref(false)
 /** As many as a tree is worth drawing from. A narrowing is usually thousands. */
 const MOST_GRAPH_ROWS = 60000
@@ -76,28 +70,71 @@ const MOST_GRAPH_ROWS = 60000
  * once, kept.
  */
 
-async function drawTheMap() {
-  building.value = true
-  drawn.value = 0
-  try {
-    graph.value = await buildBulkGraph('progressions', { onProgress: (n) => { drawn.value = n } })
-  } finally {
-    building.value = false
+/*
+ * The stored map is no longer what this view draws.
+ *
+ * `buildBulkGraph` still exists and the drum catalogue still needs it --
+ * three quarters of a million rows cannot be laid out on every open. Four
+ * thousand progressions read as degrees is 69ms, and the grouping has a
+ * dial on it, so there is nothing here worth storing and a stored answer
+ * would be the wrong shape the moment the slider moved.
+ */
+
+
+/**
+ * Picking on the map.
+ *
+ * It used to put the node's label into the search box, for every node,
+ * including a progression -- which is nonsense twice over. You have
+ * already found the thing you clicked, so searching for it finds it
+ * again; and the search box is gone, because the map is now grouped by
+ * what a progression *is* rather than by what it was tagged with.
+ *
+ * A leaf is a progression: it fills the panel, and with Auto-select on it
+ * also goes into the chart -- without closing the book, because trying one
+ * shape after another against the song is the whole reason to be on the
+ * map. A branch is a shape rather than a progression and there is nothing
+ * to select; the map is where you go further in.
+ */
+function pickNode(node) {
+  if (!node || !node.leaf) return
+  const found = rows.value.find((one) => one.name === node.label)
+    || allProgressions().find((one) => one.name === node.label)
+  if (!found) return
+
+  selected.value = found
+  if (autoSelect.value) {
+    insertProgression(found, {
+      mode: mode.value, targetPc: targetPc.value, spelling: spelling.value,
+      keepOpen: true,
+    })
   }
 }
 
+/**
+ * Auto-select: picking one puts it in the chart.
+ *
+ * Off to begin with, unlike the phrase book's. A phrase is an overlay --
+ * turn it on, turn it off, the chart is untouched -- and a progression
+ * *is* the chart: the default insert replaces the whole song. Something
+ * that rewrites what you wrote should be reached for, not arrived at.
+ */
+const autoSelect = ref(false)
 
-/** A progression is chosen outright; a group searches for its name. */
-function pickNode(node) {
-  if (!node) return
-  search.value = node.label
-}
+/**
+ * How many chords deep the map groups.
+ *
+ * One level is every shape that starts on the four; three is ii-V-I
+ * standing apart from ii-V-iii. It is a slider rather than a dropdown
+ * because it is moved while looking, and the map redraws under it.
+ * @see core/degrees.js
+ */
+const chords = ref(2)
 
 const search = ref('')
 const page = ref(1)
 const rows = ref([])
-/** Which nodes of the map the filters point at. @see store.markGraphRows */
-const marked = ref(null)
+
 const total = ref(0)
 const partial = ref(false)
 const loading = ref(false)
@@ -347,15 +384,14 @@ function saveCurrent(text, label) {
  * attempts put it near the top and threw exactly that.
  */
 /**
- * The tree for whatever is being looked at.
+ * The tree, which has one shape.
  *
- * Unfiltered and with a bulk library imported, it is the stored one -- drawn
- * now if there is not one yet, rather than offered behind a button.
- *
- * Filtered, it is built from everything the filters match, asked for again
- * rather than taken from `rows`, which is the page the list is showing. A tree
- * of twelve progressions looks like a working graph and is a lie about the
- * library.
+ * Every progression hangs at its own first few chords read as degrees, so
+ * `D-7 G7 Cmaj7` and `F-7 Bb7 Ebmaj7` -- the same progression in two keys,
+ * sharing no chord symbol -- are one branch. Built from everything rather
+ * than from what the list's filters match: a tree of twelve progressions
+ * looks like a working graph and is a lie about the library.
+ * @see core/degrees.js
  */
 let drawing = 0
 
@@ -374,69 +410,51 @@ async function refreshTree() {
    * `activeFilters` already knows what counts as set, and is what the panel
    * shows; one answer, in one place.
    */
-  const narrowed = Boolean(search.value) || activeFilters.value > 0
-
-  if (state.bulk.count > 0 && !sortBy.value) {
-    const kept = await storedGraph('progressions')
+  /*
+   * Built here, always, and never from the stored map.
+   *
+   * The stored one is a tree of genre / decade / length, which is what the
+   * map used to be grouped by and is not what it is grouped by now -- and
+   * could not be, because the grouping has a dial on it. Degrees are cheap
+   * to read and cached on the progression's text: four thousand of them
+   * parse in 69ms cold and nothing at all warm, so moving the slider
+   * rebuilds under your hand. @see core/degrees.js
+   */
+  reading.value = true
+  try {
+    const rows = state.bulk.count > 0
+      ? (await progressionPage(0, MOST_GRAPH_ROWS, '', {})).rows
+      : allProgressions()
     if (mine !== drawing) return
-    if (kept) graph.value = kept
-    else await drawTheMap()
-    if (mine !== drawing) return
-    await refreshMarks(mine, { bulk: true })
-    return
+    graph.value = treeOf('progressions', rows, '', { chords: chords.value })
+  } finally {
+    if (mine === drawing) reading.value = false
   }
-
-  if (state.bulk.count > 0) {
-    reading.value = true
-    try {
-      // Grouped by something, which re-roots the catalogue -- so it is a
-      // different tree rather than a filtered view, and it is built from
-      // everything. Narrowing marks it; it does not rebuild it.
-      const found = await progressionPage(0, MOST_GRAPH_ROWS, '', {})
-      if (mine !== drawing) return
-      graph.value = treeOf('progressions', found.rows, sortBy.value)
-      await refreshMarks(mine, { bulk: false })
-    } finally {
-      if (mine === drawing) reading.value = false
-    }
-    return
-  }
-
-  graph.value = treeOf('progressions', allProgressions(), sortBy.value)
-  await refreshMarks(mine, { bulk: false })
 }
 
-/**
- * Which nodes the filters light up, without touching the layout.
+/*
+ * Nothing marks the progression map.
  *
- * A filter is not a different catalogue. It used to build one -- the map
- * was rebuilt from the rows that matched, so every touch of a dropdown was
- * a different tree in a different arrangement -- and the map is now the
- * catalogue with the matching part lit. @see store.js markGraphRows
+ * Marking says "the filters are pointing here", and the map has no
+ * filters: the ones it had narrowed by genre and decade, which are facts
+ * about where a progression was found rather than about the progression,
+ * and the grouping is now the progression itself. Lighting it from the
+ * list's filters -- which are not on screen here -- would be the map
+ * reacting to controls nobody can see.
  */
-async function refreshMarks(mine, { bulk }) {
-  const narrowed = Boolean(search.value) || activeFilters.value > 0
-  if (!narrowed) { marked.value = null; return }
-
-  const found = state.bulk.count > 0
-    ? (await progressionPage(0, MOST_GRAPH_ROWS, search.value,
-        { genre: genre.value,
-          decade: decade.value,
-          fits: onlyFitting.value ? songBars.value : 0 })).rows
-    : rows.value
-  if (mine !== drawing) return
-  marked.value = markGraphRows('progressions', graph.value, found,
-    { sortBy: sortBy.value, bulk })
-}
 
 // Not during setup: `rows` is declared below, and a const used before its
 // declaration is a ReferenceError. @see components/DrumBook.vue for the same
 // trap, fallen into twice.
 // Getters, not the refs: a watch source array is built when `watch` is called,
 // so naming `rows` in it reads a const declared further down.
-watch([asGraph, sortBy, () => state.bulk.count, () => rows.value,
-       () => search.value, () => genre.value, () => decade.value, () => onlyFitting.value],
-      refreshTree)
+/*
+ * The map answers to two things now: whether it is showing, and how many
+ * chords deep it groups. Not the filters -- it has none, and rebuilding it
+ * when the list's narrowed was what made every touch of a dropdown throw
+ * the picture away.
+ */
+watch([asGraph, chords, () => state.bulk.count], refreshTree)
 onMounted(refreshTree)
 
 </script>
@@ -513,21 +531,33 @@ onMounted(refreshTree)
               v-if="asGraph"
               :tree="graph"
               book="progressions"
-              :marked="marked"
-              :busy="building || reading"
+              :busy="reading"
               :found="total"
               label="progressions"
               @pick="pickNode"
             >
+              <!--
+                No search and no filters.
+
+                They narrowed by genre and decade, which are facts about
+                where a progression was found rather than about the
+                progression -- and on the map they did nothing, because the
+                map was built from the filtered rows and then rebuilt, so
+                the narrowing was the layout rather than a mark on it. What
+                is left is the one control the grouping has: how many
+                chords deep it goes.
+              -->
               <template #filters>
-                <v-text-field v-model="search" label="Search" prepend-inner-icon="mdi-magnify"
-                              clearable density="compact" variant="solo-filled" flat hide-details />
-                <v-select v-model="sortBy" :items="sorts"
-                          density="compact" variant="solo-filled" flat hide-details />
-                <v-select v-model="genre" :items="genreItems"
-                          density="compact" variant="solo-filled" flat hide-details />
-                <v-select v-model="decade" :items="decadeItems"
-                          density="compact" variant="solo-filled" flat hide-details />
+                <div class="jamin-map-slider">
+                  <span class="text-caption">
+                    Grouped by the first {{ chords }} chord{{ chords === 1 ? '' : 's' }}
+                  </span>
+                  <v-slider v-model="chords" :min="1" :max="5" :step="1" hide-details
+                            density="compact" />
+                </div>
+                <v-switch v-model="autoSelect" density="compact" hide-details
+                          color="primary" label="Auto-select"
+                          class="jamin-map-switch" />
               </template>
 
               <template #detail>
@@ -536,12 +566,31 @@ onMounted(refreshTree)
                 </div>
                 <div v-else>
                   <div class="text-body-1 mb-1">{{ selected.name }}</div>
+                  <!-- Counted, not read: a hand-written progression carries
+                       no bar count and said "bars" with nothing in front of
+                       it. @see barsOf -->
                   <div class="text-caption text-medium-emphasis mb-3">
-                    {{ selected.bars }} bar{{ selected.bars === 1 ? '' : 's' }}
+                    {{ barsOf(selected) }} bar{{ barsOf(selected) === 1 ? '' : 's' }}
                     <span v-if="selected.genre"> · {{ selected.genre }}</span>
                     <span v-if="selected.decade"> · {{ selected.decade }}s</span>
                   </div>
                   <pre class="jamin-map-chords">{{ preview }}</pre>
+
+                  <!--
+                    And a way to use it, which the map had no version of at
+                    all: picking one filled nothing and there was nothing to
+                    press. The same three controls as the list, because it
+                    is the same act. @see insertProgression
+                  -->
+                  <v-select v-model="targetPc" :items="keyOptions" label="Transpose to"
+                            density="compact" hide-details class="mt-3 mb-2" />
+                  <v-select v-model="mode" :items="modes" label="Insert"
+                            density="compact" hide-details class="mb-3" />
+                  <v-btn size="small" class="text-none" :disabled="autoSelect"
+                         @click="insertProgression(selected, {
+                           mode, targetPc, spelling, keepOpen: true })">
+                    {{ autoSelect ? 'Auto-select is doing this' : 'Insert' }}
+                  </v-btn>
                 </div>
               </template>
             </CatalogueMap>
