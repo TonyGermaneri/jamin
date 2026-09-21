@@ -672,8 +672,13 @@ def kitPanel(page):
     for wrong in ['Set the Map Preset', 'played on a Roland TD-11', 'fourteen voices']:
         if wrong in said:
             raise Missing(f"the kit panel still says {wrong!r}")
-    if 'General MIDI numbers, unchanged' not in said:
-        raise Missing("the kit panel does not say that AD2 sends plain General MIDI")
+    # AD2's own layout now, read off the keymap XLN ship with it -- so the
+    # panel has to stop calling it General MIDI and has to own up to the
+    # percussion it cannot play.
+    if 'General MIDI numbers, unchanged' in said:
+        raise Missing("the kit panel still calls Addictive Drums 2 plain General MIDI")
+    if 'nowhere to go on this kit' not in said:
+        raise Missing("the kit panel does not say what AD2 cannot play")
     return "ok   the kit panel says what it sends and nothing about your sampler"
 
 

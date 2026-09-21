@@ -96,11 +96,22 @@ check('a note out of range is not a note',
 check('and text that is a number is one', cleanKitMap({ kick: '36' }), { kick: 36 })
 check('nothing at all is survivable', cleanKitMap(null), {})
 
-/* ---------------- every kit can play every voice ------------------------- */
-// A kit map with a hole in it is a drum that silently never sounds, which is
-// the hardest kind of wrong to notice.
+/* ---------------- every kit can play every kit piece --------------------- */
+/*
+ * A kit map with a hole in it is a drum that silently never sounds, which
+ * is the hardest kind of wrong to notice -- for the kick, the snare and
+ * the hats, which are on every drum kit there is.
+ *
+ * Percussion is a question per instrument and the answers differ. A TD-11
+ * has no congas and leaves the General MIDI percussion numbers empty, so
+ * sending a conga to 63 harms nothing and may land. Addictive Drums 2 has
+ * no congas either and *uses* 63 for a ride choke, so the same reasoning
+ * ends the other way: nowhere to send it, so it is not sent and the note
+ * is dropped. A hole there is a decision, not an oversight.
+ */
 for (const kit of DRUM_KITS) {
-  const missing = DRUM_VOICES.filter((voice) => !Number.isInteger(kit.map[voice.id]))
+  const missing = DRUM_VOICES.filter((voice) =>
+    !voice.percussion && !Number.isInteger(kit.map[voice.id]))
   if (missing.length) {
     failed++
     console.log(`FAIL ${kit.name} has no note for: ${missing.map((v) => v.id).join(', ')}`)

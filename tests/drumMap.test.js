@@ -278,18 +278,76 @@ check('and nothing at all is not General MIDI', sameAsGeneralMidi(null), false)
 
 // Which of the shipped kits are is a fact worth having written down, so
 // that changing one is a deliberate act with a failing check attached.
-check('four of the six shipped kits send plain General MIDI',
+check('three of the six shipped kits send plain General MIDI',
       DRUM_KITS.filter(sameAsGeneralMidi).map((one) => one.id),
-      ['gm', 'ableton', 'addictive2', 'abbeyroad'])
+      ['gm', 'ableton', 'abbeyroad'])
 
-/* Every voice reaches a note on every kit. A voice with no number is a drum
-   that silently never sounds, which is the one failure nobody can see. */
+/* ---------------- what a kit has to reach, and what it may not ---------
+ *
+ * Every kit piece, on every kit. A voice with no number is a drum that
+ * silently never sounds, which is the one failure nobody can see -- and
+ * the kick, the snare and the hats are on every drum kit there is.
+ *
+ * Percussion is a different question and the answer is per instrument. A
+ * TD-11 has no congas and leaves the General MIDI percussion numbers
+ * empty, so sending a conga to 63 might land on something downstream and
+ * certainly harms nothing. Addictive Drums 2 has no congas either and
+ * *uses* 63 for a ride choke, so the same reasoning gives the opposite
+ * answer: nowhere to send it, so it is not sent.
+ */
+const pieces = DRUM_VOICES.filter((one) => !one.percussion).map((one) => one.id)
+const percussion = DRUM_VOICES.filter((one) => one.percussion).map((one) => one.id)
+check('the vocabulary is fourteen kit pieces and the rest percussion',
+      [pieces.length, percussion.length], [14, 26])
+
 for (const kit of DRUM_KITS) {
-  const missing = ids.filter((id) => !Number.isInteger(kit.map[id]))
-  check(`${kit.id} sends every voice somewhere`, missing, [])
-  const out = ids.filter((id) => kit.map[id] < 0 || kit.map[id] > 127)
+  const missing = pieces.filter((id) => !Number.isInteger(kit.map[id]))
+  check(`${kit.id} sends every kit piece somewhere`, missing, [])
+  const out = ids.filter((id) => Number.isInteger(kit.map[id])
+    && (kit.map[id] < 0 || kit.map[id] > 127))
   check(`${kit.id} sends them all inside the MIDI range`, out, [])
 }
+
+/*
+ * Two voices on one note is a fold, and a fold is allowed where the
+ * instrument really has one thing.
+ *
+ * General MIDI has no rimshot, so the rimshot goes where the snare goes;
+ * the TR-8S has no rim, pedal hat or bell and folds four. Both are stated
+ * in the kits themselves. What is worth checking is that AD2, which has a
+ * separate sample for every one of these, does not fold any of them --
+ * that is the whole reason for reading its keymap rather than sending it
+ * General MIDI.
+ */
+const ad2 = DRUM_KITS.find((one) => one.id === 'addictive2')
+const folds = (kit) => {
+  const notes = pieces.map((id) => kit.map[id])
+  return notes.length - new Set(notes).size
+}
+check('General MIDI folds the rimshot onto the snare', folds(kitById('gm')), 1)
+check('and the TR-8S folds four', folds(kitById('tr8s')), 4)
+check('Addictive Drums 2 folds nothing', folds(ad2), 0)
+
+/* AD2 is the one that omits, and it omits exactly the percussion. Read off
+   the keymap XLN ship with the product, so the numbers are a citation
+   rather than a recollection. @see core/drumKits.js */
+check('Addictive Drums 2 reaches every kit piece',
+      pieces.filter((id) => !Number.isInteger(ad2.map[id])), [])
+check('and none of the percussion, because it has none',
+      percussion.filter((id) => Number.isInteger(ad2.map[id])), [])
+check('its toms are AD2 Tom 1, 2 and 3',
+      [ad2.map.tomHigh, ad2.map.tomMid, ad2.map.tomFloor], [71, 69, 67])
+check('its ride is the tip and its bell the bell',
+      [ad2.map.ride, ad2.map.rideBell], [60, 61])
+check('and its side stick is not its rimshot',
+      ad2.map.sideStick !== ad2.map.snareRim, true)
+
+// And what that costs, said out loud: a note the kit cannot play is left
+// behind rather than sent somewhere wrong. @see mapDrumNotes
+const conga = mapDrumNotes([{ at: 0, note: 63, velocity: 100 }], ad2.map, GENERAL_MIDI_IN)
+check('a conga is dropped on a kit with no congas', conga.length, 0)
+const snare = mapDrumNotes([{ at: 0, note: 38, velocity: 100 }], ad2.map, GENERAL_MIDI_IN)
+check('and the snare still arrives', snare.map((one) => one.note), [38])
 
 // A kit somebody worked out themselves is a plain map, and has to survive
 // the same cleaning as any other. @see store.js kitFor

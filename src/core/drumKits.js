@@ -61,32 +61,32 @@ export const DRUM_VOICES = [
    * to disagree with the thing it is describing, and the standard is not
    * ambiguous about these.
    */
-  { id: 'clap', name: 'Hand clap' },
-  { id: 'tambourine', name: 'Tambourine' },
-  { id: 'cowbell', name: 'Cowbell' },
-  { id: 'vibraslap', name: 'Vibraslap' },
-  { id: 'bongoHigh', name: 'High bongo' },
-  { id: 'bongoLow', name: 'Low bongo' },
-  { id: 'congaMute', name: 'Muted conga' },
-  { id: 'congaHigh', name: 'High conga' },
-  { id: 'congaLow', name: 'Low conga' },
-  { id: 'timbaleHigh', name: 'High timbale' },
-  { id: 'timbaleLow', name: 'Low timbale' },
-  { id: 'agogoHigh', name: 'High agogo' },
-  { id: 'agogoLow', name: 'Low agogo' },
-  { id: 'cabasa', name: 'Cabasa' },
-  { id: 'maracas', name: 'Maracas' },
-  { id: 'whistleShort', name: 'Short whistle' },
-  { id: 'whistleLong', name: 'Long whistle' },
-  { id: 'guiroShort', name: 'Short guiro' },
-  { id: 'guiroLong', name: 'Long guiro' },
-  { id: 'claves', name: 'Claves' },
-  { id: 'woodBlockHigh', name: 'High wood block' },
-  { id: 'woodBlockLow', name: 'Low wood block' },
-  { id: 'cuicaMute', name: 'Muted cuica' },
-  { id: 'cuicaOpen', name: 'Open cuica' },
-  { id: 'triangleMute', name: 'Muted triangle' },
-  { id: 'triangleOpen', name: 'Open triangle' },
+  { id: 'clap', name: 'Hand clap', percussion: true },
+  { id: 'tambourine', name: 'Tambourine', percussion: true },
+  { id: 'cowbell', name: 'Cowbell', percussion: true },
+  { id: 'vibraslap', name: 'Vibraslap', percussion: true },
+  { id: 'bongoHigh', name: 'High bongo', percussion: true },
+  { id: 'bongoLow', name: 'Low bongo', percussion: true },
+  { id: 'congaMute', name: 'Muted conga', percussion: true },
+  { id: 'congaHigh', name: 'High conga', percussion: true },
+  { id: 'congaLow', name: 'Low conga', percussion: true },
+  { id: 'timbaleHigh', name: 'High timbale', percussion: true },
+  { id: 'timbaleLow', name: 'Low timbale', percussion: true },
+  { id: 'agogoHigh', name: 'High agogo', percussion: true },
+  { id: 'agogoLow', name: 'Low agogo', percussion: true },
+  { id: 'cabasa', name: 'Cabasa', percussion: true },
+  { id: 'maracas', name: 'Maracas', percussion: true },
+  { id: 'whistleShort', name: 'Short whistle', percussion: true },
+  { id: 'whistleLong', name: 'Long whistle', percussion: true },
+  { id: 'guiroShort', name: 'Short guiro', percussion: true },
+  { id: 'guiroLong', name: 'Long guiro', percussion: true },
+  { id: 'claves', name: 'Claves', percussion: true },
+  { id: 'woodBlockHigh', name: 'High wood block', percussion: true },
+  { id: 'woodBlockLow', name: 'Low wood block', percussion: true },
+  { id: 'cuicaMute', name: 'Muted cuica', percussion: true },
+  { id: 'cuicaOpen', name: 'Open cuica', percussion: true },
+  { id: 'triangleMute', name: 'Muted triangle', percussion: true },
+  { id: 'triangleOpen', name: 'Open triangle', percussion: true },
 ]
 
 /**
@@ -320,8 +320,69 @@ export const DRUM_KITS = [
   {
     id: 'addictive2',
     name: 'Addictive Drums 2',
-    map: { ...GENERAL_MIDI },
     in: { ...GENERAL_MIDI_IN },
+    /*
+     * AD2's own layout, read off the keymap XLN ship with the product.
+     *
+     * Source: `Addictive Drums 2 Keymap.pdf`, dated 2 June 2021, installed
+     * at `/Library/Application Support/XLN Audio/Addictive Drums 2/App/
+     * ADBV0002/Manuals/`. Not a guess and not a recollection -- every number
+     * below is a row of that table.
+     *
+     * This is the *Addictive Drums* map, which is what AD2 is on unless
+     * somebody changed it. If your copy is set to the General MIDI preset
+     * in its MIDI Mapping window, choose General MIDI here instead.
+     *
+     * Two judgements, both of them stated because they are judgements:
+     *
+     * AD2 has four toms and this vocabulary has three, so high/mid/floor go
+     * to Tom 1, Tom 2 and Tom 3 rather than skipping to Tom 4. Contiguous,
+     * and an AD2 kit with only three toms loaded still sounds all three.
+     *
+     * The hats and ride have several articulations each and one of them has
+     * to be the plain one: Closed 1 Tip for closed, Open A for open, Pedal
+     * Closed for the foot, Ride 1 Tip for the ride. The louder shafts,
+     * bells, chokes and double hits are the rows this vocabulary has no
+     * word for, which is the honest shape of the difference between AD2 and
+     * a fourteen-voice description of a drummer.
+     */
+    map: {
+      kick: 36,
+      snare: 38,        // Snare Open Hit
+      snareRim: 37,     // Snare Rimshot
+      sideStick: 42,    // Snare SideStick
+      tomHigh: 71,      // Tom 1 Open Hit
+      tomMid: 69,       // Tom 2 Open Hit
+      tomFloor: 67,     // Tom 3 Open Hit
+      hatClosed: 49,    // HiHat Closed 1 Tip
+      hatOpen: 54,      // HiHat Open A
+      hatPedal: 48,     // HiHat Pedal Closed
+      crash1: 77,       // Cymbal 1 Hit
+      crash2: 79,       // Cymbal 2 Hit
+      ride: 60,         // Ride 1 Tip
+      rideBell: 61,     // Ride 1 Bell
+
+      /*
+       * And no percussion, because AD2 has none.
+       *
+       * Not an omission to be filled in later. AD2 is a drum kit: there is
+       * no conga in it, no tambourine, no cowbell, and no note that would
+       * make one. The V-Drums kit sends its percussion at General MIDI
+       * numbers on the reasoning that an unmapped voice is silent and a
+       * standard number is the best guess -- true there, because a TD-11
+       * leaves those numbers empty. It is false here. AD2's own layout
+       * *occupies* the General MIDI percussion range with real kit pieces:
+       * 63 is a ride choke, 56 an open hat, 39 a snare rimshot. Sending a
+       * conga to 63 is not a guess that might land, it is a ride choke in
+       * the middle of the bar.
+       *
+       * So they are left unmapped and dropped, which is what a kit with no
+       * congas sounds like. It costs: 14.6% of every note in a real
+       * collection is General MIDI percussion. The Flexi slots are where
+       * somebody who has loaded a tambourine into one points this table at
+       * it. @see mapDrumNotes, which leaves behind what the kit cannot play
+       */
+    },
     /*
      * The same notes as General MIDI, and it says so.
      *
@@ -337,9 +398,36 @@ export const DRUM_KITS = [
      * jamin can read. Correct the notes below against your own copy and
      * save it, and the saved one is what plays. @see components/DrumKit.vue
      */
-    notes: 'AD2 has a General MIDI preset in its MIDI Mapping window and these '
-         + 'are those numbers. Its own layout carries far more articulations '
-         + 'than these voices, and is not something jamin can read.',
+    /*
+     * What the notes are called on the instrument, for the fourteen this
+     * vocabulary reaches. Same source as the numbers.
+     *
+     * The column beside the number exists to catch a mapping that is
+     * plausible and wrong -- a rimshot sent to "Electric Snare" is obvious
+     * in words and invisible in numbers. Naming them in General MIDI's
+     * vocabulary only works while the kit *is* General MIDI: on AD2's own
+     * layout note 71 is Tom 1 and General MIDI calls 71 a short whistle,
+     * so the column that was there to catch mistakes was inventing them.
+     */
+    calls: {
+      36: 'Kick',
+      37: 'Snare Rimshot',
+      38: 'Snare Open Hit',
+      42: 'Snare SideStick',
+      48: 'HiHat Pedal Closed',
+      49: 'HiHat Closed 1 Tip',
+      54: 'HiHat Open A',
+      60: 'Ride 1 Tip',
+      61: 'Ride 1 Bell',
+      67: 'Tom 3 Open Hit',
+      69: 'Tom 2 Open Hit',
+      71: 'Tom 1 Open Hit',
+      77: 'Cymbal 1 Hit',
+      79: 'Cymbal 2 Hit',
+    },
+    notes: 'AD2\u2019s own layout, read off the keymap XLN ship with it. If your '
+         + 'copy is on the General MIDI preset in its MIDI Mapping window, '
+         + 'choose General MIDI here instead.',
   },
   {
     id: 'abbeyroad',
