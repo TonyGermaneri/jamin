@@ -98,15 +98,28 @@ function(jamin_bundle_web target)
       could not have been caught here, because on macOS all three formats are
       bundles and the question never comes up.
 
-      Asked of the target rather than of the platform. MACOSX_BUNDLE is the
-      property an .app carries and BUNDLE is the one a plugin bundle carries;
-      a target with neither has its resources beside the executable.
+      Asked of the platform, because that is the actual rule. CMake answers
+      TARGET_BUNDLE_CONTENT_DIR from IsBundleOnApple(), and every branch of
+      that begins by checking APPLE -- so off Apple it is an error for every
+      target there is, whatever properties the target carries.
+
+      Asking the target instead was the first attempt at this and got it half
+      right, which is worse than wrong because it looked fixed: JUCE sets
+      BUNDLE only on Apple, so the VST3 started taking the right branch, and
+      it sets MACOSX_BUNDLE unconditionally, so the standalone went on taking
+      the wrong one. Three generate errors became one.
     ]]
-    get_target_property(_bundle     ${target} BUNDLE)
-    get_target_property(_app_bundle ${target} MACOSX_BUNDLE)
-    if(_bundle OR _app_bundle)
+    if(APPLE)
+        # The AU, the VST3 and the standalone .app are all real bundles.
         set(_web_dest "$<TARGET_BUNDLE_CONTENT_DIR:${target}>/Resources/web")
     else()
+        # Beside the binary, for both formats that exist here. For a standalone
+        # that is next to the .exe. For a VST3 it is inside Contents/<arch>/,
+        # which is not where the format would put a resource -- but it is where
+        # the plugin looks first relative to its own binary, the whole .vst3
+        # folder ships as one thing, and inventing a path from CMake's idea of
+        # the output directory would be guessing at a layout JUCE owns.
+        # @see plugin/PluginPaths.cpp, which reads both.
         set(_web_dest "$<TARGET_FILE_DIR:${target}>/Resources/web")
     endif()
 
@@ -147,7 +160,10 @@ function(jamin_bundle_web target)
     # seal remade. The build tree was always right and the installed plugin was
     # always one build behind, which is invisible until somebody wonders why a
     # fix they watched being built is not in the plugin they just opened.
-    if(JAMIN_INSTALL_AFTER_BUILD AND _dest)
+    # APPLE for the same reason as above: TARGET_BUNDLE_DIR is the same
+    # generate-time error off Apple, and this block is one option away from
+    # being the next thing to break a Windows configure.
+    if(APPLE AND JAMIN_INSTALL_AFTER_BUILD AND _dest)
         add_custom_command(TARGET ${target}_web POST_BUILD
             COMMAND "${CMAKE_COMMAND}"
                     -DBUNDLE=$<TARGET_BUNDLE_DIR:${target}>
