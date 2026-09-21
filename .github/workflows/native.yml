@@ -400,15 +400,18 @@ jobs:
           path: artifacts
 
       - name: Package
+        id: package
         run: |
           mkdir -p release
           # macOS: the notarised zips if notarisation ran, otherwise the plain bundles zipped
           # here — which install fine and simply warn on first open.
           if [ -d artifacts/jamin-macos-release ]; then
             cp artifacts/jamin-macos-release/*.zip release/
+            echo "notarized=true" >> "$GITHUB_OUTPUT"
           else
             (cd artifacts/jamin-macos-universal && ditto -c -k --keepParent --sequesterRsrc . \
               "$GITHUB_WORKSPACE/release/jamin-macos-${GITHUB_REF_NAME}-unsigned.zip")
+            echo "notarized=false" >> "$GITHUB_OUTPUT"
           fi
 
           # Only if the Windows job actually produced one. It is continue-on-error while the
@@ -418,12 +421,19 @@ jobs:
           if [ -d artifacts/jamin-windows-x64 ]; then
             (cd artifacts/jamin-windows-x64 && zip -qr \
               "$GITHUB_WORKSPACE/release/jamin-windows-x64-${GITHUB_REF_NAME}.zip" .)
+            echo "windows=true" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::no Windows artefact — releasing macOS only"
+            echo "windows=false" >> "$GITHUB_OUTPUT"
           fi
 
           ls -1 release
 
+      # Whether these bundles are signed is not a property of the prose, it is a property of
+      # what the macOS job was able to do — a fork has no certificate, and a release that says
+      # "signed and notarised" over an unsigned zip is worse than one that says nothing. Same
+      # for Windows: notes describing a download that is not in the release are worse than
+      # notes that leave it out.
       - name: Release notes
         run: |
           notes=native/packaging/release-notes.md
@@ -431,7 +441,19 @@ jobs:
             echo "## jamin ${GITHUB_REF_NAME}"
             echo ""
             [ -f "$notes" ] && cat "$notes"
+            echo ""
+            if [ "${{ steps.package.outputs.notarized }}" = "true" ]; then
+              echo "The macOS builds are signed and notarised, so they open without a warning."
+            else
+              echo "These macOS builds are **not notarised**: right-click ▸ Open the first time,"
+              echo "or \`xattr -dr com.apple.quarantine\` the bundle."
+            fi
+            if [ "${{ steps.package.outputs.windows }}" = "true" ]; then
+              echo ""
+              echo "The Windows build is not signed, so SmartScreen will warn on first run."
+            fi
           } > release-notes.txt
+          cat release-notes.txt
 
       - uses: softprops/action-gh-release@v2
         with:

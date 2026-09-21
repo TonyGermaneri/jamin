@@ -1,6 +1,6 @@
 A chord chart that plays along with your DAW, and that several machines can share.
 
-**macOS** — universal, signed and notarised. Drag into place:
+**macOS** — universal. Drag into place:
 
 | | |
 | --- | --- |
