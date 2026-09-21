@@ -58,7 +58,16 @@ jobs:
         # sibling build is untested.
         run: npm run build
 
+      # `enablement` rather than a setting somebody has to remember. The repo
+      # reports has_pages true while the API still has no site record for it,
+      # which is the state this action refuses — it wants a site whose build
+      # type is "workflow", and a Pages that was switched on without one, or
+      # pointed at a branch, is not that. With this it creates or converts the
+      # site itself; where the site is already right it does nothing. The
+      # workflow already grants pages: write, which is all that needs.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
