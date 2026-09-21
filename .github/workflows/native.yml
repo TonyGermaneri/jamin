@@ -380,9 +380,28 @@ jobs:
           key: deps-windows-${{ hashFiles('native/CMakeLists.txt') }}
           restore-keys: deps-windows-
 
+      # The editor is the page, and on Windows JUCE serves a page to a
+      # WebBrowserComponent only through WebView2 -- the default backend there
+      # is Internet Explorer, which has no resource provider at all.
+      # @see plugin/PluginEditor.cpp
+      #
+      # JUCE's FindWebView2 downloads nothing. It globs a local NuGet package
+      # directory, so the package has to be on disk before configure runs and
+      # CMake has to be told where. -ExcludeVersion keeps the path stable
+      # across releases of the SDK, and the glob it has to match is
+      # *Microsoft.Web.WebView2*.
+      - name: WebView2 SDK
+        shell: pwsh
+        run: |
+          nuget install Microsoft.Web.WebView2 `
+            -OutputDirectory "$env:RUNNER_TEMP\nuget" -ExcludeVersion
+          "WEBVIEW2_DIR=$env:RUNNER_TEMP\nuget" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Configure
         shell: bash
-        run: cmake -B native/build -S native -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        run: |
+          cmake -B native/build -S native -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DJUCE_WEBVIEW2_PACKAGE_LOCATION="$WEBVIEW2_DIR"
 
       - name: Build
         shell: bash

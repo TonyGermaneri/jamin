@@ -75,10 +75,47 @@ static juce::String asBase64 (const juce::MemoryBlock& block)
     return encoded.toString();
 }
 
+/*
+ * The backend, which is only a question on Windows.
+ *
+ * jamin's editor *is* the page, handed to the browser through JUCE's
+ * ResourceProvider over a juce:// origin -- and that origin is what makes it a
+ * secure context, which is what makes localStorage, IndexedDB and WebGL work
+ * at all. @see ../../docs/plugin.md
+ *
+ * On Windows the default backend is Internet Explorer, which has no resource
+ * provider to hand it to. JUCE declares withResourceProvider only when
+ * JUCE_WEB_BROWSER_RESOURCE_PROVIDER_AVAILABLE, and on Windows that is
+ * spelled JUCE_USE_WIN_WEBVIEW2 -- so without WebView2 this file does not
+ * compile rather than quietly producing an editor that cannot load its page,
+ * which is the better of the two failures.
+ *
+ * Named rather than left to the default even so: the enum's own comment says
+ * the Windows default "may change to webview2 in the future", and a plugin
+ * that works only once somebody else changes their mind is not working.
+ *
+ * The user data folder is not a nicety either. WebView2 writes beside the host
+ * executable by default, and a plugin's host lives where a plugin cannot
+ * write -- JUCE's documentation on this option says as much. Without it the
+ * editor comes up blank and nothing anywhere says why.
+ */
+static juce::WebBrowserComponent::Options withPlatformBackend (juce::WebBrowserComponent::Options options)
+{
+   #if JUCE_WINDOWS
+    return options
+        .withBackend (juce::WebBrowserComponent::Options::Backend::webview2)
+        .withWinWebView2Options (
+            juce::WebBrowserComponent::Options::WinWebView2 {}
+                .withUserDataFolder (juce::File::getSpecialLocation (juce::File::tempDirectory)));
+   #else
+    return options;
+   #endif
+}
+
 JaminEditor::JaminEditor (JaminProcessor& p)
     : juce::AudioProcessorEditor (&p),
       plugin (p),
-      browser (juce::WebBrowserComponent::Options {}
+      browser (withPlatformBackend (juce::WebBrowserComponent::Options {}
                    .withNativeIntegrationEnabled()
                    .withKeepPageLoadedWhenBrowserIsHidden()
                    .withResourceProvider ([this] (const auto& path) { return provide (path); })
@@ -551,7 +588,7 @@ JaminEditor::JaminEditor (JaminProcessor& p)
 
                            plugin.requestCompile (args[0].toString());
                            complete (juce::var (true));
-                       }))
+                       })))
 {
     // Edits from other machines, pushed at the page as they arrive.
     plugin.onNetworkOps = [this] (const juce::String& envelope)

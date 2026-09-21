@@ -23,6 +23,15 @@ string(REGEX REPLACE "<!--.*-->" "" JAMIN_EXTRA_PLIST "${JAMIN_EXTRA_PLIST}")
 string(REGEX REPLACE "[\r\n]+" " " JAMIN_EXTRA_PLIST "${JAMIN_EXTRA_PLIST}")
 string(REGEX REPLACE " +" " " JAMIN_EXTRA_PLIST "${JAMIN_EXTRA_PLIST}")
 
+# Windows is the only platform where the editor needs a backend brought in
+# from outside. Computed once rather than inside the function, so both plugins
+# get the same answer and there is one place to look for it.
+if(WIN32)
+    set(JAMIN_NEEDS_WEBVIEW2 TRUE)
+else()
+    set(JAMIN_NEEDS_WEBVIEW2 FALSE)
+endif()
+
 function(jamin_add_plugin target)
     cmake_parse_arguments(ARG "MIDI_EFFECT;SYNTH" "CODE;PRODUCT" "FORMATS" ${ARGN})
 
@@ -38,6 +47,18 @@ function(jamin_add_plugin target)
         NEEDS_MIDI_INPUT          TRUE
         NEEDS_MIDI_OUTPUT         TRUE
         EDITOR_WANTS_KEYBOARD_FOCUS TRUE      # the chart is typed into
+
+        # Windows only, and not a preference: the editor is the page, served
+        # through JUCE's ResourceProvider, and on Windows JUCE offers a
+        # resource provider only with WebView2 -- the default backend there is
+        # Internet Explorer, which has none. Without this the editor cannot
+        # load its own page. @see PluginEditor.cpp
+        #
+        # This makes CMake `find_package(WebView2 REQUIRED)`, which does not
+        # download anything: it globs the local NuGet package directory, or
+        # JUCE_WEBVIEW2_PACKAGE_LOCATION if that is set. The workflow installs
+        # the package and points this at it.
+        NEEDS_WEBVIEW2            ${JAMIN_NEEDS_WEBVIEW2}
 
         FORMATS                   ${ARG_FORMATS}
 
@@ -65,6 +86,15 @@ function(jamin_add_plugin target)
         JUCE_WEB_BROWSER=1              # the editor is the web app
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0)
+
+    # The module flag that actually gates the resource provider. NEEDS_WEBVIEW2
+    # above brings in the SDK and links it; this is what makes
+    # JUCE_WEB_BROWSER_RESOURCE_PROVIDER_AVAILABLE true in the header, and the
+    # two have to agree or the plugin links against a WebView2 it was compiled
+    # as though it did not have.
+    if(WIN32)
+        target_compile_definitions(${target} PUBLIC JUCE_USE_WIN_WEBVIEW2=1)
+    endif()
 
     # QuickJS runs jamin's own music code headless, so the plugin keeps no
     # implementation of the harmony at all. @see Compiler.cpp
