@@ -5,6 +5,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <system_error>
 #include <thread>
 
 using namespace jamin;
@@ -236,7 +237,17 @@ void endpointTests()
     check ("it stops", endpoint.isRunning(), false);
     check ("and the port is no longer answering", get (port, "/", 200).empty());
 
-    ::unlink ((dir + "/index.html").c_str());
-    ::unlink ((dir + "/thing.json").c_str());
-    ::rmdir (dir.c_str());
+    // The same library that made it, rather than the POSIX calls that cannot
+    // take it away everywhere. MSVC has no ::rmdir at all -- it spells that
+    // one _rmdir in <direct.h> -- and it was the only one of the three the
+    // compiler objected to, because it does carry a deprecated ::unlink. A
+    // fix that added <direct.h> and an #ifdef would have been three lines
+    // where remove_all is one, and create_directories above is already the
+    // other half of this pair.
+    //
+    // error_code rather than the throwing overload: this is teardown of a
+    // temporary directory, and a test that has already reported its result
+    // should not turn a failure to tidy up into an exception.
+    std::error_code ignored;
+    std::filesystem::remove_all (dir, ignored);
 }
