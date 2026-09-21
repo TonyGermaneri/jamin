@@ -54,6 +54,36 @@ function keepIt() {
   if (saveMyKit(newName.value)) { newName.value = ''; naming.value = false }
 }
 
+/**
+ * The layout as something to work from at the other end.
+ *
+ * Programming a sampler to receive this means sitting in front of its
+ * mapping window typing forty numbers, and reading them off a screen
+ * behind the DAW is how the tambourine ends up on the cowbell. Tab
+ * separated, so it pastes into anything.
+ *
+ * What is sent, not what the kit says: if a note has been changed here,
+ * the changed one is the one the instrument has to be set to.
+ */
+function copyLayout() {
+  const rows = DRUM_VOICES
+    .filter((one) => !silent(one.id))
+    .map((one) => [one.name, noteFor(one.id), gmName(noteFor(one.id))].join('\t'))
+  const missing = DRUM_VOICES.filter((one) => silent(one.id))
+  const text = [
+    `${chosenKit.value.name} — what jamin sends`,
+    'Voice\tNote\tGeneral MIDI name',
+    ...rows,
+    ...(missing.length
+      ? ['', `Not on this kit: ${missing.map((one) => one.name).join(', ')}`]
+      : []),
+  ].join('\n')
+
+  navigator.clipboard?.writeText(text).then(
+    () => toast(`${rows.length} voices copied`),
+    () => toast('Could not reach the clipboard'))
+}
+
 /** The drums struck since the last frame, so the table lights up in time. */
 const playingVoices = computed(() => new Set(state.playing.voices))
 
@@ -305,6 +335,8 @@ function resetMap() {
       their sampler's mapping window can, and this is where that goes so it
       survives the kit dropdown moving. @see store.js saveMyKit
     -->
+    <v-btn size="small" variant="text" class="text-none"
+           @click="copyLayout">Copy the layout</v-btn>
     <v-btn size="small" variant="tonal" class="text-none"
            @click="naming = !naming">Save as my own kit</v-btn>
   </div>

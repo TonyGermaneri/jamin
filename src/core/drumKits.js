@@ -438,6 +438,44 @@ export const DRUM_KITS = [
          + 'for, and is not something jamin can read.',
   },
   {
+    /*
+     * One layout to point every drum program at.
+     *
+     * The other way round from the rest of this list. Those try to match an
+     * instrument's own numbering, which jamin cannot read and can only be
+     * told; this is a layout to *configure an instrument to*, so that one
+     * setting works across all of them and nothing has to be guessed again.
+     *
+     * It is General MIDI with one note moved, and that is not a compromise
+     * -- it is the answer. General MIDI already names every one of these
+     * forty voices and gives thirty-nine of them their own number; the one
+     * exception is the rimshot, which the standard has no instrument for
+     * and which therefore folds onto the snare. Move it to 40 and the map
+     * is one note per voice with nothing lost.
+     *
+     * 40 rather than one of the empty numbers above 81, because a layout
+     * that is General MIDI everywhere it can be degrades well: point a
+     * sampler at this, and a *different* sampler that was never configured
+     * still plays every drum correctly bar one -- and that one lands on
+     * Electric Snare, which is at least a snare. A rimshot parked at 94
+     * would be silence on everything that had not been told.
+     *
+     * Free in General MIDI and deliberately left free here: 35 acoustic
+     * bass drum, 41 low floor tom, 45 low tom, 48 hi-mid tom, 52 Chinese,
+     * 55 splash, 59 ride 2. They are room for voices this vocabulary does
+     * not have yet, and filling them with nothing to send would be a chart
+     * that lies about what jamin can play.
+     */
+    id: 'maximal',
+    name: 'Jamin Maximal',
+    in: { ...GENERAL_MIDI_IN },
+    map: { ...GENERAL_MIDI, snareRim: 40 },
+    notes: 'One note per voice, with nothing folded. General MIDI everywhere '
+         + 'it can be, so an instrument that was never told still plays it — '
+         + 'only the rimshot moves, to 40. Set your drum programs to this and '
+         + 'the same setting works for all of them.',
+  },
+  {
     id: 'vdrums',
     name: 'Roland V-Drums (TD-11)',
     /*

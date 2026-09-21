@@ -278,7 +278,7 @@ check('and nothing at all is not General MIDI', sameAsGeneralMidi(null), false)
 
 // Which of the shipped kits are is a fact worth having written down, so
 // that changing one is a deliberate act with a failing check attached.
-check('three of the six shipped kits send plain General MIDI',
+check('three of the seven shipped kits send plain General MIDI',
       DRUM_KITS.filter(sameAsGeneralMidi).map((one) => one.id),
       ['gm', 'ableton', 'abbeyroad'])
 
@@ -325,6 +325,26 @@ const folds = (kit) => {
   return notes.length - new Set(notes).size
 }
 check('General MIDI folds the rimshot onto the snare', folds(kitById('gm')), 1)
+/* ---------------- the one layout to point everything at -----------------
+ *
+ * The other kits try to match an instrument's numbering. This is a layout
+ * to configure an instrument *to*, so the thing that has to be true of it
+ * is that there is somewhere for every voice and no two share a note --
+ * otherwise "set your sampler to this" is an instruction that cannot be
+ * followed.
+ */
+const most = kitById('maximal')
+check('the maximal layout reaches every voice',
+      ids.filter((id) => !Number.isInteger(most.map[id])), [])
+check('and folds nothing', ids.length - new Set(ids.map((id) => most.map[id])).size, 0)
+check('so it is one note per voice', new Set(ids.map((id) => most.map[id])).size, 40)
+// General MIDI everywhere it can be, so an instrument that was never told
+// still plays it. Exactly one voice moves, and it is the one the standard
+// has no instrument for.
+const moved = ids.filter((id) => most.map[id] !== GENERAL_MIDI[id])
+check('only the rimshot differs from General MIDI', moved, ['snareRim'])
+check('and it lands on a snare', most.map.snareRim, 40)
+check('which is Electric Snare', gmName(40), 'Electric Snare')
 check('and the TR-8S folds four', folds(kitById('tr8s')), 4)
 check('Addictive Drums 2 folds nothing', folds(ad2), 0)
 

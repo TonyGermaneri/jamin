@@ -679,7 +679,25 @@ def kitPanel(page):
         raise Missing("the kit panel still calls Addictive Drums 2 plain General MIDI")
     if 'nowhere to go on this kit' not in said:
         raise Missing("the kit panel does not say what AD2 cannot play")
-    return "ok   the kit panel says what it sends and nothing about your sampler"
+
+    # And the layout there is to point every drum program at, which is the
+    # other way round from every other entry in that dropdown.
+    page.evaluate("() => { window.__jaminApp.state.settings.drums.kit = 'maximal' }")
+    page.wait_for_timeout(600)
+    most = page.evaluate(
+        "() => document.querySelector('.jamin-settings"
+        " .v-window-item--active').innerText")
+    if 'nowhere to go' in most:
+        raise Missing("the maximal layout leaves a voice with nowhere to go")
+    if 'only the rimshot moves' not in most:
+        raise Missing("the maximal layout does not say what it is")
+
+    # Photographed on AD2, which is the interesting one: a real vendor
+    # layout, named in the vendor's own words, with the percussion it
+    # cannot play saying so.
+    page.evaluate("() => { window.__jaminApp.state.settings.drums.kit = 'addictive2' }")
+    page.wait_for_timeout(600)
+    return "ok   the kit panel says what it sends, and offers a layout to aim at"
 
 
 def libraries(page, which):
