@@ -221,6 +221,11 @@ def reachTools(page):
       const app = window.__jaminApp
       app.state.ui.book = null
       app.state.ui.progressions = false
+      // Off by default now: the chart is written by typing, so a menu that
+      // keeps appearing over the words is in the way for anybody who is
+      // not learning. Turned on here, because this is the check that it
+      // can be reached once it is. @see core/settings.js display.hoverTools
+      app.state.settings.display.hoverTools = true
       app.setText('| Dmi7 G7 | Cmaj7 Ami7 |')
     }""")
     page.wait_for_timeout(600)
@@ -230,6 +235,21 @@ def reachTools(page):
     page.wait_for_timeout(250)
     if page.locator(".jamin-token-tools").count() == 0:
         return "FAIL the icons never appeared over the chord"
+
+    # And off, they do not. A setting that changes nothing is worse than no
+    # setting: it is a switch somebody flicks and then wonders about.
+    page.evaluate("() => { window.__jaminApp.state.settings.display.hoverTools = false }")
+    page.mouse.move(spot["x"] + 40, spot["y"] + 40)
+    page.wait_for_timeout(200)
+    page.mouse.move(spot["x"], spot["y"])
+    page.wait_for_timeout(300)
+    if page.locator(".jamin-token-tools").count() != 0:
+        return "FAIL the icons still appear with the hover menu turned off"
+    page.evaluate("() => { window.__jaminApp.state.settings.display.hoverTools = true }")
+    page.mouse.move(spot["x"] + 40, spot["y"] + 40)
+    page.wait_for_timeout(150)
+    page.mouse.move(spot["x"], spot["y"])
+    page.wait_for_timeout(300)
 
     box = page.locator(".jamin-token-tools").bounding_box()
     if not box:

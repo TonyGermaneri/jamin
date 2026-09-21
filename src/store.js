@@ -5298,6 +5298,9 @@ if (typeof window !== 'undefined') {
     // The store's own query layer, so a harness can time it at a realistic
     // size without going through the interface. @see scripts/shots.py
     putGrooves,
+    // The two halves of a grid load, so a probe can time them apart: the
+    // await, and the unpacking that follows it. @see streamDrumRows
+    unpackGroove,
     putSet,
     refreshDrumSets,
     searchGrooves,

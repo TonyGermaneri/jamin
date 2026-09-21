@@ -616,8 +616,20 @@
       // And the cursor still decides after an edit -- the playing index would be stale.
       store.setText('Dm7 G7 Cmaj7')
       await mirrored()
-      field.setSelectionRange(5, 5)
-      await settle(200)
+      /*
+       * Waited for, not slept through -- the same fault as the insert
+       * check further down and the same cause. The caret is published from
+       * the canvas's animation-frame loop, and a headless browser with
+       * nothing moving stops producing frames, so a fixed sleep here
+       * decides the result by the frame rate.
+       */
+      const second = document.querySelector('.jamin-input')
+      second.focus()
+      second.setSelectionRange(5, 5)
+      for (let i = 0; i < 60 && state.status.selection.join(',') !== '5,5'; i++) {
+        requestAnimationFrame(() => {})
+        await settle(50)
+      }
       is('cursor on the second chord', store.targetChord().text, 'G7')
       field.setSelectionRange(0, 0)
       await settle(200)

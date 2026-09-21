@@ -101,6 +101,17 @@ export function defaultSettings() {
       font: theme.font,
       minFontSize: 18,
       maxFontSize: 190,
+      /**
+       * The quick-edit menu that follows the pointer over a chord.
+       *
+       * Off. It is a good way in for somebody learning what a chord can be
+       * asked to do, and a thing that keeps appearing over the text for
+       * anybody who already knows -- and typing is how a chart is written
+       * here, so most of the time the pointer is passing through rather
+       * than aiming at anything. Right-click still opens the same menu on
+       * purpose. @see components/ChartTokenTools.vue
+       */
+      hoverTools: false,
       lineHeight: 1.22,
       padding: 28,
       // Every line at the size the longest one needs, so the chart reads as a

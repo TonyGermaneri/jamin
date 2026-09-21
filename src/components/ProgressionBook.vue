@@ -7,7 +7,7 @@
  * selected is shown in full on the right, converted and transposed only then --
  * doing that to every row of every page would be work thrown away.
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, shallowRef, triggerRef, watch } from 'vue'
 import {
   state,
   saveProgression,
@@ -133,7 +133,15 @@ const chords = ref(2)
 
 const search = ref('')
 const page = ref(1)
-const rows = ref([])
+/*
+ * Shallow, and grown in place. The same fault as the drum book's, for the
+ * same two reasons: `concat` copies the whole list on every batch, and a
+ * plain `ref` makes a reactive proxy of everything assigned to it -- to
+ * drive a grid that paints onto a canvas and reads the array itself.
+ * Measured there at 151,150 rows: 27.5 seconds with the thread 10% free,
+ * against 2.8 seconds and 89%. @see components/DrumBook.vue everyRow
+ */
+const rows = shallowRef([])
 
 const total = ref(0)
 const partial = ref(false)
@@ -269,13 +277,15 @@ async function load() {
   const mine = ++loadRun
   loading.value = true
   streaming.value = true
-  rows.value = []
+  const all = []
+  rows.value = all
   try {
     await streamProgressions((batch, count, some) => {
       if (mine !== loadRun) return false
-      // A new array each time: the grid remeasures on assignment, not on a
-      // push into the one it already has.
-      rows.value = rows.value.concat(batch)
+      for (const one of batch) all.push(one)
+      // The same array with more in it, so the ref is told rather than
+      // replaced. @see components/DataGrid.vue, which watches the length.
+      triggerRef(rows)
       total.value = count
       partial.value = some
       loading.value = false

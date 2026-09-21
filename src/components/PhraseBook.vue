@@ -69,14 +69,23 @@ const marked = computed(() => {
   return markGraphRows('phrases', graph.value, matches.value, { sortBy: sortBy.value })
 })
 
-/** A phrase is chosen outright; a folder searches for its name. */
+/**
+ * Picking on the map.
+ *
+ * A phrase is chosen; a folder is a place and picking one does nothing but
+ * leave the map where it is.
+ *
+ * It used to put the node's label into the search box, which is a filter,
+ * which rebuilt the tree and refitted the view -- so clicking a folder
+ * threw away the picture you were reading in order to search for the thing
+ * you had just found. The map is where you go further in; that is what
+ * opening a node is for.
+ */
 function pickNode(node) {
-  if (!node) return
-  if (node.leaf) {
-    const found = matches.value.find((one) => one.name === node.label)
-    if (found) { pick(found); return }
-  }
-  search.value = node.label
+  if (!node || !node.leaf) return
+  const found = matches.value.find((one) => one.name === node.label)
+    || catalogue().find((one) => one.name === node.label)
+  if (found) pick(found)
 }
 
 const search = ref('')

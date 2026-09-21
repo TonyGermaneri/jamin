@@ -427,14 +427,36 @@ function build() {
 onMounted(build)
 
 /*
- * The array grows while it is being read.
+ * The array grows while it is being read, and is handed over a few times a
+ * second rather than on every batch.
  *
- * `data` is reassigned rather than mutated because that is what tells the
- * grid to remeasure; handing it the same array with more in it leaves the
- * scroll bar describing the length it had when it last looked.
+ * `data =` is what makes the grid remeasure, and remeasuring is O(the whole
+ * list). Doing it once per batch of two thousand is that cost seventy-six
+ * times over a list that is getting longer each time, which is most of the
+ * twenty-seven seconds a hundred and fifty thousand rows used to take.
+ *
+ * Nobody can read a list that is growing at forty thousand rows a second
+ * anyway. Four times a second is a list that is visibly filling and a
+ * thread that is free in between; the trailing call is what makes the last
+ * batch arrive rather than being swallowed by the wait.
+ *
+ * The length as well as the identity: the book grows one array in place
+ * now, so the reference no longer changes. @see components/DrumBook.vue
  */
-watch(() => props.rows, (rows) => {
-  if (grid.value) grid.value.data = rows
+const SETTLE = 250
+let handing = 0
+let pending = false
+
+function handOver() {
+  pending = false
+  if (grid.value) grid.value.data = props.rows
+}
+
+watch(() => [props.rows, props.rows.length], () => {
+  if (pending) return
+  pending = true
+  clearTimeout(handing)
+  handing = setTimeout(handOver, SETTLE)
 })
 
 watch(() => props.columns, (columns) => {
@@ -465,6 +487,7 @@ watch(() => props.chosen, () => {
 watch(() => JSON.stringify(state.settings.theme), dress)
 
 onBeforeUnmount(() => {
+  clearTimeout(handing)
   const one = grid.value
   grid.value = null
   if (one && one.parentNode) one.parentNode.removeChild(one)

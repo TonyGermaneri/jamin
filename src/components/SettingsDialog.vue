@@ -534,6 +534,19 @@ async function retryMidi() {
                   </InfoTip>
                 </div>
                 <v-switch v-model="state.settings.display.showReadout" label="Show the bar/tempo readout" />
+                <div class="d-flex align-center">
+                  <v-switch v-model="state.settings.display.hoverTools" density="compact"
+                            hide-details label="Show the quick edit hover menu on the notepad" />
+                  <InfoTip>
+                    A little menu that follows the pointer over a chord — transpose it, give it
+                    an articulation, take it out. Off by default: the chart is written by typing,
+                    so most of the time the pointer is crossing the text rather than aiming at
+                    it, and a menu that keeps appearing over the words is in the way.
+                    <br /><br />
+                    Everything it offers is on the right-click menu either way, so turning this
+                    off takes nothing away.
+                  </InfoTip>
+                </div>
               </v-col>
             </v-row>
           </v-window-item>

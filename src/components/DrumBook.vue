@@ -13,7 +13,7 @@
  * which is a thing nobody wants to think about until the day the snare is a
  * cowbell.
  */
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, shallowRef, triggerRef, watch } from 'vue'
 import {
   state,
   toast,
@@ -623,7 +623,25 @@ const found = computed(() => state.drumSearch.total)
  * leaves the groove itself intact for everything that already takes one --
  * choosing it, dragging it out, playing it.
  */
-const everyRow = ref([])
+/*
+ * Shallow, and grown in place.
+ *
+ * Measured on 151,150 rows: the list took 26.9 seconds to arrive and the
+ * main thread was 7% free for the whole of it -- while the database read
+ * underneath was 1.1 seconds and left the thread 100% free. None of the
+ * cost was the catalogue. It was here.
+ *
+ * Two things, both quadratic. `everyRow.value = everyRow.value.concat(...)`
+ * copies the whole list on every batch, which over seventy-six batches is
+ * about five and a half million element copies. And a plain `ref` makes a
+ * reactive proxy of everything assigned to it, so each of those copies
+ * re-proxied a hundred and fifty thousand objects -- to drive a grid that
+ * paints onto a canvas and reads the array itself.
+ *
+ * So: one array, pushed into, and `shallowRef` because nothing watches a
+ * groove's fields. The grid is told there is more by `triggerRef`.
+ */
+const everyRow = shallowRef([])
 const streaming = ref(false)
 let loading = 0
 
@@ -638,14 +656,17 @@ function flatten(groove) {
 
 async function loadEveryRow() {
   const mine = ++loading
-  everyRow.value = []
+  const all = []
+  everyRow.value = all
   streaming.value = true
   try {
     await streamDrumRows((rows) => {
       if (mine !== loading) return false
-      // A new array each time: handing the grid the same one with more in
-      // it leaves its scroll bar describing the length it last measured.
-      everyRow.value = everyRow.value.concat(rows.map(flatten))
+      for (const row of rows) all.push(flatten(row))
+      // The same array with more in it. Nothing can see that by comparing
+      // references, so the ref is told. @see components/DataGrid.vue, which
+      // watches the length for the same reason.
+      triggerRef(everyRow)
       return true
     })
   } finally {

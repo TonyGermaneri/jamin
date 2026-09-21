@@ -380,11 +380,23 @@ function removePhrase() {
 const hover = ref(-1)
 const picker = ref(null)
 
+/**
+ * Whether the quick-edit menu follows the pointer at all.
+ *
+ * A setting, off by default. It is a good way in for somebody learning
+ * what a chord can be asked to do, and a thing that keeps appearing over
+ * the words for anybody who already knows -- and this chart is written by
+ * typing, so most of the time the pointer is crossing the text rather
+ * than aiming at it. Everything the menu offers is still on the
+ * right-click menu. @see core/settings.js display.hoverTools
+ */
+const hoverTools = computed(() => state.settings.display.hoverTools === true)
+
 const hoverToken = computed(() =>
-  (hover.value >= 0 ? state.score.tokens[hover.value] : null))
+  (hoverTools.value && hover.value >= 0 ? state.score.tokens[hover.value] : null))
 
 const hoverRect = computed(() => {
-  if (hover.value < 0) return null
+  if (!hoverTools.value || hover.value < 0) return null
   ensureLayout()
   return rectForToken(layout, hover.value)
 })
