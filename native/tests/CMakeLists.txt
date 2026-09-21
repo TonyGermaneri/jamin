@@ -35,7 +35,10 @@ if(APPLE AND TARGET jamin-boot AND TARGET JaminInstrument_AU)
     add_test(NAME jamin-boot
              COMMAND jamin-boot
                      "$<TARGET_BUNDLE_CONTENT_DIR:JaminInstrument_AU>/Resources/web")
-    set_tests_properties(jamin-boot PROPERTIES TIMEOUT 60)
+    # Comfortably past the probe's own backstop, which is the deadline that
+    # should fire: it names what it was doing, where ctest can only say the
+    # test was killed.
+    set_tests_properties(jamin-boot PROPERTIES TIMEOUT 200)
 
     # And the bridge: a stand-in for window.__JUCE__, a playhead driven past it,
     # and the chart checked for having followed. The page half of phase 1, which
@@ -49,7 +52,7 @@ if(APPLE AND TARGET jamin-boot AND TARGET JaminInstrument_AU)
                  COMMAND jamin-boot
                          "$<TARGET_BUNDLE_CONTENT_DIR:JaminInstrument_AU>/Resources/web"
                          --host --size ${_size})
-        set_tests_properties(jamin-host-${_size} PROPERTIES TIMEOUT 90)
+        set_tests_properties(jamin-host-${_size} PROPERTIES TIMEOUT 200)
     endforeach()
 endif()
 

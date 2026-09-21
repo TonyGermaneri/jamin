@@ -350,11 +350,18 @@ jobs:
         run: cmake --build native/build --config RelWithDebInfo
 
       # The networking is Winsock here and BSD sockets on the macOS job, from one
-      # set of sources. This is the run that says the Windows half of that works:
-      # two nodes find each other over multicast, a chart passes between them,
-      # and the shared segment carries an edit from one process to another. There
-      # is no way to check any of that from a Mac, so a break here would
-      # otherwise only ever be found by somebody on Windows trying to share.
+      # set of sources, and this is the run that would say the Windows half
+      # works: two nodes finding each other, a chart passing between them, the
+      # shared segment carrying an edit from one process to another.
+      #
+      # Would, because the discovery and node suites skip themselves where
+      # multicast does not work, and on a hosted runner it does not — that is
+      # what fifteen failures on the first macOS run turned out to be. What
+      # still runs here is everything that needs no peer: the sequence, the
+      # segment, the endpoint and the roster, compiled by MSVC rather than by
+      # clang, which is most of what this job was for. The peer-to-peer half is
+      # proved by running the suite on a real network — `JAMIN_REQUIRE_MULTICAST=1`
+      # turns the skip back into a failure for exactly that.
       - name: Tests
         shell: bash
         run: ctest --test-dir native/build -C RelWithDebInfo --output-on-failure -LE installed

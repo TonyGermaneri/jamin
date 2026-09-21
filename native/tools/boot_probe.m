@@ -113,13 +113,19 @@ static NSString *const kFakeHost =
 
 int main(int argc, const char **argv) {
     @autoreleasepool {
-        if (argc < 2) { printf("usage: jamin-boot <web root> [--host]\n"); return 1; }
+        if (argc < 2) {
+            printf("usage: jamin-boot <web root> [--host] [--size WxH] [--timeout SECONDS]\n");
+            return 1;
+        }
         gRoot = [NSString stringWithUTF8String:argv[1]];
         CGFloat width = 1200, height = 800;
+        NSTimeInterval probeTimeout = 150;
         for (int i = 2; i < argc; ++i) {
             if (strcmp(argv[i], "--host") == 0) gHostMode = YES;
             else if (strcmp(argv[i], "--size") == 0 && i + 1 < argc)
                 sscanf(argv[++i], "%lgx%lg", &width, &height);
+            else if (strcmp(argv[i], "--timeout") == 0 && i + 1 < argc)
+                probeTimeout = atof(argv[++i]);
         }
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
@@ -275,11 +281,30 @@ int main(int argc, const char **argv) {
               @"    }"
               @"    return el();"
               @"  };"
+              /* 700ms was long enough on the machine this was written on and
+                 is not long enough on a CI runner, where the drum book streams
+                 1,150 grooves out of IndexedDB before its grid has a row to
+                 draw. Caught mid-stream the list is simply absent, which the
+                 bounded-list check below reads as a book with no list at all --
+                 a green suite locally and three red ones on the first push.
+                 So it is waited for, the same way `settled` waits: poll for the
+                 scroller and give up after eight seconds rather than guess. A
+                 book whose catalogue really is empty never grows one, and falls
+                 through to the check, which is where that belongs. */
               @"  const openBook = async (title) => {"
               @"    const button = [...document.querySelectorAll('button')].find(b => b.title === title);"
               @"    if (!button) return null;"
               @"    button.click();"
+              /* The 700 stays: it covers v-window's 300ms slide and the layout
+                 that follows, and measuring inside it reports a card that does
+                 not fit a window it fits perfectly well once it stops moving.
+                 The polling is on top of that, not instead of it. */
               @"    await wait(700);"
+              @"    for (let n = 0; n < 160; n++) {"
+              @"      const card = document.querySelector('.jamin-book .v-card');"
+              @"      if (card && card.querySelector('.jamin-book-scroll')) break;"
+              @"      await wait(50);"
+              @"    }"
               @"    return document.querySelector('.jamin-book .v-card');"
               @"  };"
               /* The drum book was not in this list, which is how it came to be
@@ -312,7 +337,14 @@ int main(int argc, const char **argv) {
               @"        lines.push('    ' + sel + ' = ' + (el ? Math.round(el.getBoundingClientRect().height) + 'px' : 'MISSING'));"
               @"      }"
               @"      const scroller = card.querySelector('.jamin-book-scroll');"
-              @"      const loading = /Loading the catalogue/.test(card.innerText);"
+              /* Three books, three ways of saying "not yet". The phrase book
+                 says "Loading the catalogue"; the drum book shows a spinner and
+                 a running "N of M loaded" count and never says the word. Only
+                 the first was matched here, so a drum book still streaming was
+                 indistinguishable from one with no list to show -- which is
+                 exactly what the runner caught it doing. */
+              @"      const loading = /Loading the catalogue|of [\\d,]+ loaded/i.test(card.innerText)"
+              @"                      || !!card.querySelector('.v-progress-circular, .v-progress-linear');"
               @"      lines.push('  shows: ' + JSON.stringify(card.innerText.slice(0, 90).replace(/\\s+/g, ' ')));"
               @"      check(title + ' has a bounded list', !!scroller || loading);"
               @"      if (scroller) {"
@@ -564,8 +596,15 @@ int main(int argc, const char **argv) {
                 if (e) { printf("probe failed: %s\n", e.localizedDescription.UTF8String); exit(1); }
             }];
         }];
-        [NSTimer scheduledTimerWithTimeInterval:40 repeats:NO block:^(NSTimer *t) {
-            printf("timed out\n"); exit(1); }];
+        /* A backstop against a hang, not a budget to finish inside. It exits
+           the moment the report arrives, so a generous number costs a healthy
+           run nothing at all -- and 40 seconds, which was roomy against the
+           23 these take on a developer's Mac, is not roomy against a hosted
+           runner that writes 20,000 IndexedDB rows in four of them. That is
+           what failed the first CI run, at 40.41 seconds, having done nothing
+           wrong. Override with --timeout for a machine slower still. */
+        [NSTimer scheduledTimerWithTimeInterval:probeTimeout repeats:NO block:^(NSTimer *t) {
+            printf("timed out after %.0fs\n", probeTimeout); exit(1); }];
         [NSApp run];
     }
 }
