@@ -158,7 +158,18 @@ export const ADAPTERS = {
      * shapes with variations under them instead of four thousand names.
      * @see core/degrees.js
      */
-    treePath: (one, { chords = 2 } = {}) => degreePath(one.text, chords).join('/'),
+    /*
+     * The shape, and then the progression itself.
+     *
+     * The degrees are the branches and the progression is the leaf, the
+     * same way a drum library is folders and then clips. Without the name
+     * on the end the deepest node *is* a degree, so every progression
+     * sharing a prefix collapses onto one dot -- there is nothing on the
+     * map that is a progression, and clicking never selected one. Which
+     * is exactly how it shipped.
+     */
+    treePath: (one, { chords = 2 } = {}) =>
+      [...degreePath(one.text, chords), one.name || '(unnamed)'].join('/'),
     facet: (one, by) => {
       if (by === 'genre') return one.genre || ''
       if (by === 'decade') return one.decade ? `${one.decade}s` : ''

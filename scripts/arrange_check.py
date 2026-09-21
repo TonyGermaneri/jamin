@@ -102,6 +102,15 @@ STATE = r"""
 # name, the path the tree is built from, and the facet fields. Small --
 # forty clips is enough to make a branch on the map and nothing here is
 # about size. @see core/drumStore.js
+# Where the named nodes are on screen, so a click can be aimed at one.
+SPOTS = r"""
+([names]) => {
+  const want = new Set(names)
+  return window.__jaminTreeProbe.places().filter((one) => want.has(one.label))
+}
+"""
+
+
 SECOND_LIBRARY = r"""
 async () => {
   const app = window.__jaminApp
@@ -464,6 +473,55 @@ def main():
             else:
                 print(f"ok    and changing it re-applies — {other['dim']} dim, "
                       f"{other['lit']} lit")
+
+        # ---- and the progression map answers a click --------------------
+        #
+        # Reported as "the right aside does not get updated with the
+        # selected progression", and it could not be: the map is grouped by
+        # the first few chords as degrees, and without the progression's
+        # own name on the end of that path the deepest node *is* a degree.
+        # Every progression sharing a prefix collapsed onto one dot, so
+        # there was nothing on the map that was a progression to click.
+        page.evaluate("""() => {
+          const app = window.__jaminApp
+          app.state.ui.book = null
+          app.state.settings.graph.progressions = true
+          app.state.ui.progressions = true
+        }""")
+        page.wait_for_timeout(3500)
+        if not page.evaluate("() => Boolean(window.__jaminTreeProbe)"):
+            failures.append("FAIL the progression map never drew")
+        else:
+            for _ in range(4):
+                page.evaluate(DIG)
+                page.wait_for_timeout(450)
+            page.evaluate("() => window.__jaminTreeProbe.rest()")
+            page.wait_for_timeout(400)
+
+            leaves = page.evaluate("() => window.__jaminTreeProbe.leaves()")
+            spots = page.evaluate(SPOTS, [leaves])
+            inside = [one for one in spots
+                      if 200 < one["y"] < TALL - 160 and 120 < one["x"] < WIDE - 420]
+            if not inside:
+                failures.append(f"FAIL none of the {len(leaves)} progressions "
+                                f"landed anywhere clickable")
+            else:
+                target = inside[0]
+                page.mouse.click(target["x"], target["y"])
+                page.wait_for_timeout(1200)
+                said = page.evaluate("""() => {
+                  const all = [...document.querySelectorAll('.jamin-map-detail')]
+                  const shown = all.filter((one) => one.getClientRects().length)
+                  return (shown[0] || { innerText: '' }).innerText.trim()
+                }""")
+                if target["label"] not in said:
+                    failures.append(f"FAIL clicking {target['label']!r} left the panel "
+                                    f"saying {said[:70]!r}")
+                elif "Insert" not in said:
+                    failures.append("FAIL the panel names it but offers no way to use it")
+                else:
+                    print(f"ok    clicking {target['label']!r} fills the panel, "
+                          f"with a way to insert it")
 
         if trouble:
             failures.append("FAIL the page threw: " + "; ".join(trouble[:3]))

@@ -57,16 +57,38 @@ check('one captured here says so',
  * symbols have nothing in common. @see core/degrees.js
  */
 check('a progression hangs at its first chords as degrees',
-      ADAPTERS.progressions.treePath({ text: '| D-7 | G7 | Cmaj7 | % |' }, { chords: 3 }),
-      'ii7/V7/Imaj7')
+      ADAPTERS.progressions.treePath(
+        { name: 'in C', text: '| D-7 | G7 | Cmaj7 | % |' }, { chords: 3 }),
+      'ii7/V7/Imaj7/in C')
 check('the same progression in another key is the same branch',
-      ADAPTERS.progressions.treePath({ text: '| F-7 | Bb7 | Ebmaj7 | % |' }, { chords: 3 }),
+      ADAPTERS.progressions.treePath(
+        { name: 'in Eb', text: '| F-7 | Bb7 | Ebmaj7 | % |' }, { chords: 3 })
+        .split('/').slice(0, 3).join('/'),
       'ii7/V7/Imaj7')
 check('how deep it groups is the dial',
-      ADAPTERS.progressions.treePath({ text: '| D-7 | G7 | Cmaj7 | % |' }, { chords: 1 }),
-      'ii7')
+      ADAPTERS.progressions.treePath(
+        { name: 'in C', text: '| D-7 | G7 | Cmaj7 | % |' }, { chords: 1 }),
+      'ii7/in C')
+
+/*
+ * And the progression is the leaf, not the degree.
+ *
+ * Without its name on the end the deepest node *is* a degree, so every
+ * progression sharing a prefix collapses onto one dot: there is nothing
+ * on the map that is a progression, and clicking one selects nothing.
+ * Which is how it shipped, and what the right-hand panel staying empty
+ * was.
+ */
+const shape = ADAPTERS.progressions.treePath(
+  { name: 'ii–V–I major', text: '| D-7 | G7 | Cmaj7 | % |' }, { chords: 2 })
+check('the last level is the progression', shape.split('/').pop(), 'ii–V–I major')
+check('and the levels above it are the shape', shape.split('/').slice(0, -1), ['ii7', 'V7'])
+check('an unnamed one still has a leaf of its own',
+      ADAPTERS.progressions.treePath({ text: '| C |' }, { chords: 1 }).split('/').pop(),
+      '(unnamed)')
 check('and a progression with no chords in it says so',
-      ADAPTERS.progressions.treePath({ text: '' }, { chords: 2 }), '(no chords)')
+      ADAPTERS.progressions.treePath({ name: 'x', text: '' }, { chords: 2 }),
+      '(no chords)/x')
 
 /* ---------------- what "group the graph by" means ----------------------- */
 // Choosing a facet re-roots the tree: that facet becomes the top level and the
@@ -155,7 +177,8 @@ check('one bar is singular', ADAPTERS.progressions.facet({ bars: 1 }, 'bars'), '
    The depth, not the names: which key `| C | G |` is in is a coin flip on
    two chords and the detector's business, not this check's. */
 check('a short progression is as deep as it is long',
-      ADAPTERS.progressions.treePath({ text: '| C | G |' }, { chords: 4 }).split('/').length,
-      2)
+      ADAPTERS.progressions.treePath({ name: 'x', text: '| C | G |' }, { chords: 4 })
+        .split('/').length,
+      3)
 
 console.log(failed ? `graph-view: ${failed} FAILED` : 'graph-view: all checks passed')
