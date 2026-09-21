@@ -24,8 +24,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # macOS rather than ubuntu, and not for the build — for the test step below it. The suites run
+  # under JavaScriptCore by way of `osascript -l JavaScript` (see scripts/jsrun.py), which exists
+  # on no other platform, so the same `npm test` that gates the plugin cannot gate the page from
+  # a Linux runner. The alternative was to drop the tests here and let native.yml carry them,
+  # which would deploy a page nothing had checked.
+  #
+  # actions/upload-pages-artifact branches on runner.os and reaches for gtar on macOS, so the
+  # GNU-only tar flags it packs with are not a problem here.
   build:
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 

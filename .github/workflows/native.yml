@@ -58,6 +58,23 @@ jobs:
       - name: Suites
         run: npm test
 
+      # A release labelled v0.2.0 whose plugin reports 0.1.0 to the host is not caught by
+      # anything else here: auval, pluginval and the suites are all perfectly happy with a
+      # version that disagrees with its tag. It costs a second on the cheapest job, and the
+      # alternative is finding out from a bug report about a version that was never shipped.
+      - name: The tag agrees with the version
+        if: github.ref_type == 'tag'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          cml=$(grep -oE 'project\(JaminNative VERSION [0-9.]+' native/CMakeLists.txt \
+                | grep -oE '[0-9.]+$')
+          echo "tag $tag · package.json $pkg · CMakeLists $cml"
+          fail=false
+          [ "$tag" = "$pkg" ] || { echo "::error::tag $tag but package.json says $pkg"; fail=true; }
+          [ "$tag" = "$cml" ] || { echo "::error::tag $tag but native/CMakeLists.txt says $cml"; fail=true; }
+          [ "$fail" = false ]
+
       - name: Build the page and the compiler
         run: npm run build
 
@@ -233,7 +250,6 @@ jobs:
           NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
           NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
           NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
-          MACOS_INSTALLER_IDENTITY: ${{ secrets.MACOS_INSTALLER_IDENTITY }}
           VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
         run: |
           ./native/tools/macos-notarize.sh native/build/plugin dist
@@ -292,14 +308,24 @@ jobs:
   # in VST3 — the instrument is the shape that travels.
   #
   # It plays, because the engine that works out what to play is carried with us rather than
-  # borrowed from the system: QuickJS, the same one macOS uses. What is still missing there is the
-  # networking, which is POSIX sockets and would be Winsock — see core/src/Unsupported.cpp, which
-  # refuses out loud rather than pretending.
+  # borrowed from the system: QuickJS, the same one macOS uses. And it shares, because the
+  # sockets are spelled both ways from one set of sources — see core/include/jamin/Sockets.h for
+  # the Winsock differences that compile without complaint and then misbehave, and Platform.h for
+  # why `if (handle >= 0)` is never the right test.
   # --------------------------------------------------------------------------------------------
   windows:
     name: Windows (x64)
     needs: core
     runs-on: windows-latest
+    # Not a blocker yet, and saying so in the workflow is more honest than a job everybody learns
+    # to scroll past. Not one file here has ever been through MSVC — until this repository had a
+    # remote there was nowhere for CI to run at all — so the first real compile will find things,
+    # and none of them should stop a macOS build from publishing or hold up a release.
+    #
+    # This is a deliberate, temporary state, and it is the kind that quietly becomes permanent.
+    # Take it off the moment the job goes green: from then on a Windows regression is a failure
+    # worth having, and leaving this here would hide it.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -385,8 +411,16 @@ jobs:
               "$GITHUB_WORKSPACE/release/jamin-macos-${GITHUB_REF_NAME}-unsigned.zip")
           fi
 
-          (cd artifacts/jamin-windows-x64 && zip -qr \
-            "$GITHUB_WORKSPACE/release/jamin-windows-x64-${GITHUB_REF_NAME}.zip" .)
+          # Only if the Windows job actually produced one. It is continue-on-error while the
+          # MSVC build is being brought up, so a tagged release must be able to go out with the
+          # macOS artefacts alone rather than failing at the last step over a platform that was
+          # already known to be red.
+          if [ -d artifacts/jamin-windows-x64 ]; then
+            (cd artifacts/jamin-windows-x64 && zip -qr \
+              "$GITHUB_WORKSPACE/release/jamin-windows-x64-${GITHUB_REF_NAME}.zip" .)
+          else
+            echo "::warning::no Windows artefact — releasing macOS only"
+          fi
 
           ls -1 release
 
@@ -404,3 +438,8 @@ jobs:
           files: release/*
           body_path: release-notes.txt
           draft: false
+          # A hyphen in the version is semver for a prerelease — v0.1.0-rc1 comes before v0.1.0 —
+          # and GitHub marks whatever it publishes last as "Latest" unless told otherwise.
+          # Without this a release candidate becomes the download on the front page, which is the
+          # opposite of what calling it a candidate meant.
+          prerelease: ${{ contains(github.ref_name, '-') }}

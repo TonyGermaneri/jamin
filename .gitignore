@@ -8,3 +8,7 @@ tests/browser/shots/
 native/build*
 tests/browser/corpora/
 __pycache__/
+
+# Local signing configuration. Not secret — an issuer ID identifies an account and is useless
+# without the .p8 — but not something to publish either, and it is per-developer.
+native/.signing.env
