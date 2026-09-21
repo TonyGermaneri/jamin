@@ -648,6 +648,35 @@ def eachCatalogue(page):
     return "  |  ".join(out)
 
 
+def kitPanel(page):
+    """The far end of the only translation jamin does.
+
+    It said the wrong things for a long time -- it told people to go and
+    reconfigure their sampler, and explained itself with a story about the
+    corpus that ships rather than the library they imported. Words on a
+    screen, which is the one thing a unit test cannot look at.
+    """
+    page.evaluate("""() => {
+      const app = window.__jaminApp
+      app.state.ui.book = null
+      app.state.ui.progressions = false
+      app.state.settings.drums.kit = 'addictive2'
+      app.state.ui.settingsTab = 'kit'
+      app.state.ui.settings = true
+    }""")
+    page.wait_for_timeout(800)
+    said = page.evaluate("""() => {
+      const panel = document.querySelector('.jamin-settings .v-window-item--active')
+      return panel ? panel.innerText : ''
+    }""")
+    for wrong in ['Set the Map Preset', 'played on a Roland TD-11', 'fourteen voices']:
+        if wrong in said:
+            raise Missing(f"the kit panel still says {wrong!r}")
+    if 'General MIDI numbers, unchanged' not in said:
+        raise Missing("the kit panel does not say that AD2 sends plain General MIDI")
+    return "ok   the kit panel says what it sends and nothing about your sampler"
+
+
 def libraries(page, which):
     """The one place all three catalogues are loaded from."""
     page.evaluate("""(which) => {
@@ -828,6 +857,7 @@ VIEWS = [
     ("libraries-phrases", lambda page: libraries(page, "Articulations")),
     ("libraries-drums", lambda page: libraries(page, "Drum patterns")),
     ("library-notes", libraryNotes),
+    ("settings-kit", kitPanel),
     ("chart-tools", lambda page: onChart(page, "tools")),
     ("chart-picker-roots", lambda page: onChart(page, "picker")),
     ("chart-picker-colours", lambda page: onChart(page, "colours")),

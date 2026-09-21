@@ -239,3 +239,60 @@ const argued = learnInbound(new Map([
 ]), GENERAL_MIDI_IN)
 check('a contested note is not suggested', argued.hints[24], undefined)
 check('but where it lives is still reported', argued.where[24].length, 2)
+
+/* ---------------- what the kit dropdown actually offers ------------------
+ *
+ * Six names, and four of them send exactly General MIDI. That is the right
+ * answer for all four -- General MIDI is the only layout an instrument can
+ * be assumed to take, and jamin has no way to read what is loaded on the
+ * other end of a MIDI cable -- but it is indistinguishable from the
+ * dropdown being ignored unless something says so. Reported as
+ * "General MIDI (GM)" was not a thing the panel could have said, because
+ * it did not know.
+ *
+ * The check is not that AD2 *should* be General MIDI. It is that
+ * `sameAsGeneralMidi` tells the truth about whichever kits are, so the day
+ * one of them gets a real vendor layout the panel stops claiming it.
+ */
+const ids = DRUM_VOICES.map((one) => one.id)
+
+/*
+ * Against kits made here, not against a second copy of the function.
+ *
+ * The first version of this asked whether `sameAsGeneralMidi(kit)` agreed
+ * with a reimplementation of `sameAsGeneralMidi` over the same kit, which
+ * is two expressions of one idea and passes whatever either of them says.
+ * Moving AD2's kick to note 24 did not fail it. These have known answers.
+ */
+check('a map that is General MIDI says so',
+      sameAsGeneralMidi({ map: { ...GENERAL_MIDI } }), true)
+check('one voice moved and it does not',
+      sameAsGeneralMidi({ map: { ...GENERAL_MIDI, kick: 24 } }), false)
+check('nor does one with a voice missing',
+      sameAsGeneralMidi({ map: (() => {
+        const map = { ...GENERAL_MIDI }
+        delete map.ride
+        return map
+      })() }), false)
+check('and nothing at all is not General MIDI', sameAsGeneralMidi(null), false)
+
+// Which of the shipped kits are is a fact worth having written down, so
+// that changing one is a deliberate act with a failing check attached.
+check('four of the six shipped kits send plain General MIDI',
+      DRUM_KITS.filter(sameAsGeneralMidi).map((one) => one.id),
+      ['gm', 'ableton', 'addictive2', 'abbeyroad'])
+
+/* Every voice reaches a note on every kit. A voice with no number is a drum
+   that silently never sounds, which is the one failure nobody can see. */
+for (const kit of DRUM_KITS) {
+  const missing = ids.filter((id) => !Number.isInteger(kit.map[id]))
+  check(`${kit.id} sends every voice somewhere`, missing, [])
+  const out = ids.filter((id) => kit.map[id] < 0 || kit.map[id] > 127)
+  check(`${kit.id} sends them all inside the MIDI range`, out, [])
+}
+
+// A kit somebody worked out themselves is a plain map, and has to survive
+// the same cleaning as any other. @see store.js kitFor
+check('a hand-made map cleans to notes',
+      cleanKitMap({ kick: '36', snare: 38, nonsense: 9, ride: 999 }),
+      { kick: 36, snare: 38 })

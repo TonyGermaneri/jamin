@@ -15,7 +15,7 @@ import { nodeAvailable, Session, httpTransport, hostTransport, localTransport } 
 import { loadDrums, loadedDrums, drumReport, buildDrumTrack, matchingFill, fitsBars } from './core/drums.js'
 import {
   kitById, cleanKitMap, cleanInMap, classifyFolders, learnInbound,
-  mapDrumNotes, DRUM_VOICES,
+  mapDrumNotes, DRUM_VOICES, DRUM_KITS,
 } from './core/drumKits.js'
 import {
   readGrooveFile, describeSet, packGroove, unpackGroove, spread, planPacks, slashes, reservoir, walkLibrary,
@@ -3619,7 +3619,70 @@ export async function prepareDrumFilters() {
  */
 export function kitMapFor() {
   const drums = state.settings.drums
-  return { ...kitById(drums.kit).map, ...cleanKitMap(drums.customMap) }
+  return { ...kitFor(drums.kit).map, ...cleanKitMap(drums.customMap) }
+}
+
+/**
+ * A kit by id, whether it shipped with jamin or was worked out here.
+ *
+ * The built-in kits are a guess and cannot be anything else -- jamin has no
+ * way to read the layout of a plugin on the other end of a MIDI cable, and
+ * four of the six send plain General MIDI because that is the only layout
+ * an instrument can be assumed to take. The person at the keyboard can read
+ * it, so what they worked out is a kit like any other.
+ * @see components/DrumKit.vue, core/settings.js myKits
+ */
+export function kitFor(id) {
+  const mine = (state.settings.drums.myKits || {})[id]
+  if (mine && mine.map) {
+    return { id, name: mine.name || id, map: cleanKitMap(mine.map), mine: true,
+      notes: 'Yours, worked out against the instrument itself rather than guessed at.' }
+  }
+  return kitById(id)
+}
+
+/** Every kit that can be chosen: the built-in ones, then whatever was kept. */
+export function everyKit() {
+  const mine = state.settings.drums.myKits || {}
+  return [
+    ...DRUM_KITS.map((one) => ({ id: one.id, name: one.name, mine: false })),
+    ...Object.keys(mine).map((id) => ({ id, name: mine[id].name || id, mine: true })),
+  ]
+}
+
+/**
+ * Keep the table as it stands, under a name.
+ *
+ * The whole map, not the handful of notes that were changed: a saved kit is
+ * an answer about an instrument, and an answer that is "General MIDI except
+ * for these three" stops being true the moment the kit it was built on is
+ * chosen differently.
+ */
+export function saveMyKit(name) {
+  const called = String(name || '').trim()
+  if (!called) { toast('Give it a name first'); return '' }
+
+  const drums = state.settings.drums
+  const id = `my:${called.toLowerCase().replace(/\s+/g, '-')}`
+  drums.myKits = { ...(drums.myKits || {}), [id]: { name: called, map: kitMapFor() } }
+  // Chosen, and the overrides folded in -- they are the saved kit now, and
+  // leaving them on top of it would show every voice as "changed".
+  drums.kit = id
+  drums.customMap = {}
+  toast(`Saved as ${called}`)
+  return id
+}
+
+/** Forget one. Falls back to General MIDI if it was the one in use. */
+export function deleteMyKit(id) {
+  const drums = state.settings.drums
+  const mine = { ...(drums.myKits || {}) }
+  const called = mine[id] && mine[id].name
+  if (!(id in mine)) return
+  delete mine[id]
+  drums.myKits = mine
+  if (drums.kit === id) drums.kit = 'gm'
+  toast(`${called || 'That kit'} forgotten`)
 }
 
 /**

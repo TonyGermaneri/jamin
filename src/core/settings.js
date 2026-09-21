@@ -210,6 +210,21 @@ export function defaultSettings() {
       // Voice -> note, overriding the chosen kit. Where a hand-built Drum Rack
       // gets fixed.
       customMap: {},
+      /**
+       * Maps somebody worked out and kept, by name.
+       *
+       * The built-in kits are a guess and cannot be anything else: jamin
+       * has no way to read the layout of a plugin on the other end of a
+       * MIDI cable, and four of the six send plain General MIDI because
+       * that is the only layout an instrument can be assumed to take.
+       *
+       * The person at the keyboard *can* read it -- it is on screen in
+       * front of them in their sampler's mapping window -- so once they
+       * have corrected the table, this is where that answer lives instead
+       * of being lost the next time the kit dropdown moves.
+       * @see components/DrumKit.vue
+       */
+      myKits: {},
       // A fill in the bar before every section change, which is what a drum
       // chart has meant since long before there were corpora to draw on.
       fillOnEveryBoundary: true,

@@ -1,15 +1,29 @@
 <script setup>
 /**
- * Which note each drum comes out on.
+ * Which note each drum goes out on.
  *
- * A fact about the instrument loaded on this track, which is why it is a
- * setting rather than a tab in the catalogue: nobody adjusts their note map
- * while choosing a groove, and everybody adjusts it once on the day the snare
- * turns out to be a cowbell.
+ * The far end of the only translation jamin does. Every library is read into
+ * forty named voices on the way in -- kick, snare, side stick, high conga --
+ * because a note number means whatever the kit it was recorded on says it
+ * means, and two libraries rarely agree. Nothing downstream ever sees those
+ * names: this table turns each one back into a note, and it is the only place
+ * a note leaves.
+ *
+ * Which makes this a fact about the instrument loaded on this track, and it is
+ * a setting rather than a tab in the catalogue because nobody adjusts their
+ * note map while choosing a groove and everybody adjusts it once, on the day
+ * the snare turns out to be a cowbell.
+ *
+ * What it cannot do is know what is on the other end. A plugin's layout is not
+ * readable over a MIDI cable, so the built-in kits send General MIDI -- the one
+ * layout anything can be assumed to take -- and anyone who can see their own
+ * mapping window corrects the table and keeps it. @see store.js saveMyKit
  */
-import { computed } from 'vue'
-import { state, toast, tapDrum } from '../store.js'
-import { DRUM_KITS, DRUM_VOICES, kitById, gmName, TD11_TO_VOICE } from '../core/drumKits.js'
+import { computed, ref } from 'vue'
+import {
+  state, toast, tapDrum, kitFor, everyKit, saveMyKit, deleteMyKit,
+} from '../store.js'
+import { DRUM_VOICES, gmName, TD11_TO_VOICE, sameAsGeneralMidi } from '../core/drumKits.js'
 import InfoTip from './InfoTip.vue'
 
 const settings = computed(() => state.settings.drums)
@@ -18,7 +32,27 @@ const kit = computed({
   get: () => settings.value.kit,
   set: (id) => { settings.value.kit = id },
 })
-const chosenKit = computed(() => kitById(kit.value))
+const chosenKit = computed(() => kitFor(kit.value))
+const kitItems = computed(() => everyKit().map((one) => ({
+  title: one.mine ? `${one.name} — yours` : one.name, value: one.id,
+})))
+
+/*
+ * Whether choosing this kit changed anything at all.
+ *
+ * Four of the six built-in kits send exactly General MIDI, which is the
+ * right answer for all four and looks like a broken dropdown: you pick your
+ * sampler by name, every number stays where it was, and nothing tells you
+ * that is correct rather than ignored.
+ */
+const plainGm = computed(() => !chosenKit.value.mine && sameAsGeneralMidi(chosenKit.value))
+
+const naming = ref(false)
+const newName = ref('')
+
+function keepIt() {
+  if (saveMyKit(newName.value)) { newName.value = ''; naming.value = false }
+}
 
 /** The drums struck since the last frame, so the table lights up in time. */
 const playingVoices = computed(() => new Set(state.playing.voices))
@@ -79,19 +113,45 @@ function resetMap() {
 </script>
 
 <template>
-  <v-select
-    v-model="kit" :items="DRUM_KITS.map((k) => ({ title: k.name, value: k.id }))"
-    label="Kit" density="compact" hide-details class="mb-2"
-  />
-  <div class="text-caption text-medium-emphasis mb-4">
-    {{ chosenKit.notes }}
+  <div class="text-caption text-medium-emphasis mb-3">
+    Which note each drum goes out on — the instrument loaded on this track, not the
+    libraries coming in.
     <InfoTip>
-      The corpus was played on a Roland TD-11 and its note numbers are not General MIDI —
-      48 is a high tom there and a hi-mid tom in GM, 58 is a floor tom rim and a
-      vibraslap. So nothing is sent as it was recorded: every groove is read into a
-      vocabulary of fourteen voices and written back out to whichever kit is chosen here.
-      If a drum is silent or wrong, this table is where it is fixed.
+      A note number means whatever the kit it was recorded on says it means, and two
+      libraries rarely agree: 48 is a high tom on a Roland pad and a hi-mid tom in
+      General MIDI, 58 is a floor tom rim on one and a vibraslap on the other. So
+      nothing is ever sent as it was recorded. Every clip is read into
+      {{ DRUM_VOICES.length }} named voices on the way in — kick, snare, side stick,
+      high conga — and this table turns each name back into a note on the way out.
+      <br /><br />
+      It is the only place a note leaves, so if a drum is silent or wrong, it is
+      fixed here.
     </InfoTip>
+  </div>
+
+  <div class="d-flex align-center ga-2 mb-2">
+    <v-select
+      v-model="kit" :items="kitItems"
+      label="Kit" density="compact" hide-details
+    />
+    <v-btn v-if="chosenKit.mine" size="small" variant="text" class="text-none flex-shrink-0"
+           @click="deleteMyKit(kit)">Forget it</v-btn>
+  </div>
+
+  <div class="text-caption text-medium-emphasis mb-4">
+    <!--
+      Said out loud, because otherwise it reads as a dropdown that does
+      nothing. Four of the six built-in kits send exactly General MIDI --
+      which is the right answer for all four, and indistinguishable from
+      being ignored unless somebody says so. First, because it is the
+      important half; the kit's own note is whatever is particular to it.
+    -->
+    <div v-if="plainGm">
+      These are the General MIDI numbers, unchanged. jamin cannot read the layout of a
+      plugin over a MIDI cable, so it sends the one layout anything can be assumed to
+      take — if yours is laid out differently, correct the notes below and keep it.
+    </div>
+    <div v-if="chosenKit.notes" :class="{ 'mt-1': plainGm }">{{ chosenKit.notes }}</div>
   </div>
 
   <v-table density="compact">
@@ -99,7 +159,22 @@ function resetMap() {
       <tr>
         <th />
         <th class="text-caption">Voice</th>
-        <th class="text-caption">How often</th>
+        <!-- Of the corpus that ships, and it has to say so: on a machine
+             with an imported library of three quarters of a million clips
+             this column is about eleven hundred of them. -->
+        <th class="text-caption">
+          In the built-in corpus
+          <InfoTip>
+            How much of jamin's own bundled corpus lands on each voice, counted once.
+            It is here because when a drum sounds wrong the first question is how much
+            of the music goes through it — the hi-hat foot is one note in eight, so a
+            wrong sample there is heard constantly and a wrong crash is a curiosity.
+            <br /><br />
+            It says nothing about a library you imported. Counting those means reading
+            every row of the catalogue, which on a real collection is a wait for a
+            number nobody asked for.
+          </InfoTip>
+        </th>
         <th class="text-caption">Note</th>
         <th class="text-caption">General MIDI calls it</th>
         <th class="text-caption">{{ chosenKit.name }}</th>
@@ -152,14 +227,34 @@ function resetMap() {
     </tbody>
   </v-table>
 
-  <div class="d-flex align-center mt-3">
+  <div class="d-flex align-center flex-wrap ga-2 mt-3">
     <span class="text-caption text-medium-emphasis">
       <span v-if="overridden">{{ overridden }} voice{{ overridden === 1 ? '' : 's' }} changed from {{ chosenKit.name }}</span>
       <span v-else>Unchanged from {{ chosenKit.name }}</span>
     </span>
     <v-spacer />
-    <v-btn v-if="overridden" size="small" variant="text" @click="resetMap">
+    <v-btn v-if="overridden" size="small" variant="text" class="text-none" @click="resetMap">
       Back to {{ chosenKit.name }}
     </v-btn>
+    <!--
+      And kept, which is the only honest answer to not being able to read
+      the instrument. jamin cannot see the layout; the person looking at
+      their sampler's mapping window can, and this is where that goes so it
+      survives the kit dropdown moving. @see store.js saveMyKit
+    -->
+    <v-btn size="small" variant="tonal" class="text-none"
+           @click="naming = !naming">Save as my own kit</v-btn>
+  </div>
+
+  <div v-if="naming" class="d-flex align-center ga-2 mt-2">
+    <v-text-field v-model="newName" label="Call it" density="compact" hide-details
+                  placeholder="Addictive Drums 2, as mine is set up"
+                  @keyup.enter="keepIt" />
+    <v-btn size="small" class="text-none" :disabled="!newName.trim()" @click="keepIt">Keep</v-btn>
+  </div>
+  <div v-if="naming" class="text-caption text-medium-emphasis mt-1">
+    The whole table as it stands, not only what you changed — a saved kit is an answer
+    about an instrument, and “General MIDI except for three” stops being true the moment
+    the kit under it changes.
   </div>
 </template>

@@ -268,13 +268,28 @@ export const GENERAL_MIDI_IN = {
  * choice rather than buried, because "it plays the wrong drums" is nearly always
  * a map preset left on the wrong setting and nearly never jamin.
  */
+/**
+ * Whether a kit sends exactly what General MIDI sends.
+ *
+ * Four of the six do. That is not a fault -- General MIDI is the one
+ * layout an instrument can be assumed to understand, and naming the
+ * instruments that take it is useful -- but a dropdown with four entries
+ * that do the same thing is a dropdown that looks broken when you pick one
+ * and nothing changes. So the panel says it out loud instead.
+ * @see components/DrumKit.vue
+ */
+export function sameAsGeneralMidi(kit) {
+  if (!kit || !kit.map) return false
+  return DRUM_VOICES.every((voice) => kit.map[voice.id] === GENERAL_MIDI[voice.id])
+}
+
 export const DRUM_KITS = [
   {
     id: 'gm',
     name: 'General MIDI',
     map: { ...GENERAL_MIDI },
     in: { ...GENERAL_MIDI_IN },
-    notes: 'The standard percussion map. The right answer unless you know otherwise.',
+    notes: '',
   },
   {
     id: 'tr8s',
@@ -298,27 +313,41 @@ export const DRUM_KITS = [
     name: 'Ableton Drum Rack',
     map: { ...GENERAL_MIDI },
     in: { ...GENERAL_MIDI_IN },
-    notes: 'A Drum Rack is whatever its pads were filled with. Live names every '
-         + 'pad with its General MIDI equivalent, so a GM-laid-out kit lands '
-         + 'correctly; a hand-built rack may not, and the table below is where to fix it.',
+    notes: 'A Drum Rack is whatever its pads were filled with. Live labels each '
+         + 'pad with its General MIDI name, so a GM-laid-out kit lands correctly '
+         + 'and a hand-built one may not.',
   },
   {
     id: 'addictive2',
     name: 'Addictive Drums 2',
     map: { ...GENERAL_MIDI },
     in: { ...GENERAL_MIDI_IN },
-    notes: 'Set the Map Preset to “General MIDI (GM)” in AD2’s MIDI Mapping '
-         + 'window. Its own map has far more articulations than this vocabulary '
-         + 'has voices, so its GM preset is the accurate route rather than a guess at its layout.',
+    /*
+     * The same notes as General MIDI, and it says so.
+     *
+     * This used to tell somebody to go and set AD2's Map Preset to
+     * "General MIDI" -- which is jamin instructing a plugin it cannot see
+     * about a layout it cannot read, to make true a claim it had already
+     * made. Backwards twice over: jamin does not know what is on the other
+     * end of the cable, so the most it can honestly do is send the one
+     * layout everything understands and let the notes be corrected here.
+     *
+     * Nothing here is AD2's own layout, which has far more articulations
+     * than this vocabulary has voices and is not written down anywhere
+     * jamin can read. Correct the notes below against your own copy and
+     * save it, and the saved one is what plays. @see components/DrumKit.vue
+     */
+    notes: 'AD2 has a General MIDI preset in its MIDI Mapping window and these '
+         + 'are those numbers. Its own layout carries far more articulations '
+         + 'than these voices, and is not something jamin can read.',
   },
   {
     id: 'abbeyroad',
     name: 'Abbey Road Drummer',
     map: { ...GENERAL_MIDI },
     in: { ...GENERAL_MIDI_IN },
-    notes: 'Use the MIDI Mapping page in the instrument to select a General MIDI '
-         + 'layout. As with AD2 its factory map carries articulations this '
-         + 'vocabulary has no voice for.',
+    notes: 'Its factory map carries articulations these voices have no name '
+         + 'for, and is not something jamin can read.',
   },
   {
     id: 'vdrums',
@@ -373,9 +402,9 @@ export const DRUM_KITS = [
       cuicaMute: 78, cuicaOpen: 79,
       triangleMute: 80, triangleOpen: 81,
     },
-    notes: 'The kit the corpus was played on, so the grooves go back out exactly '
-         + 'as they came in. It has no percussion pads, so those voices are sent '
-         + 'at their General MIDI numbers rather than dropped.',
+    notes: 'Roland\u2019s own pad numbers, which differ from General MIDI on the '
+         + 'rimshot and two toms. It has no percussion pads, so those voices go '
+         + 'out at their General MIDI numbers rather than being dropped.',
   },
 ]
 
