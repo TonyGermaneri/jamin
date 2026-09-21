@@ -119,7 +119,12 @@ int main(int argc, const char **argv) {
         }
         gRoot = [NSString stringWithUTF8String:argv[1]];
         CGFloat width = 1200, height = 800;
-        NSTimeInterval probeTimeout = 150;
+        /* Above the sum of the per-probe guards below (60 + 30 + 60) plus the
+           books and the six-second boot wait, so that a wedged probe always
+           loses its own race first and the run still reports everything that
+           did work. This firing at all now means something outside those
+           guards hung, and the STAGE lines say which. */
+        NSTimeInterval probeTimeout = 240;
         for (int i = 2; i < argc; ++i) {
             if (strcmp(argv[i], "--host") == 0) gHostMode = YES;
             else if (strcmp(argv[i], "--size") == 0 && i + 1 < argc)
@@ -185,6 +190,25 @@ int main(int argc, const char **argv) {
             NSString *hostProbe =
               @"void (async () => {"
               @"  const wait = (ms) => new Promise(r => setTimeout(r, ms));"
+              /* Where it got to, said out loud as it goes.
+                 jamin-host-1180x760 hung on a CI runner twice -- once into a
+                 40-second backstop and once into a 150-second one -- and both
+                 times said nothing at all about what it had been doing, which
+                 makes a hang that does not reproduce on the machine you have
+                 essentially undebuggable. The native side prints anything that
+                 is not the final REPORT, so this costs a line each and turns
+                 "it stopped" into "it stopped here". */
+              @"  const stage = (s) => { try { window.webkit.messageHandlers.report.postMessage('STAGE ' + s); } catch (e) {} };"
+              /* A promise that is allowed to take too long, but not forever.
+                 Each of the probes below is already wrapped in try/catch, which
+                 catches a rejection and does nothing whatever for a promise
+                 that simply never settles -- and one that never settles takes
+                 the whole run down with it, reporting none of the work that had
+                 already succeeded. Racing each one means a probe that wedges
+                 costs its own line and nothing else. */
+              @"  const guard = (p, ms, label) => Promise.race(["
+              @"    Promise.resolve(p),"
+              @"    wait(ms).then(() => label + ': gave up after ' + (ms / 1000) + 's')]);"
               @"  const lines = []; let failures = 0;"
               @"  const check = (label, got) => { if (!got) { failures++; lines.push('FAIL ' + label); } };"
               @"  const readout = () => (document.querySelector('.jamin-readout') || {}).innerText || '';"
@@ -313,6 +337,7 @@ int main(int argc, const char **argv) {
                  that checks two of three books is a probe that passes while the
                  third one is broken. */
               @"  for (const title of ['Phrase book', 'Drum book', 'Progression library']) {"
+              @"    stage('open ' + title);"
               @"    const card = await openBook(title);"
               @"    check(title + ' opens', !!card);"
               @"    if (card) {"
@@ -472,6 +497,7 @@ int main(int argc, const char **argv) {
               @"      }"
               @"    } catch (e) { has.push('opfsWrite=threw:' + e.name); }"
               @"    lines.push('storage: ' + has.join(' '));"
+              @"    stage('gpu');"
               /* And what it can draw with. A graph of a million nodes is a
                  WebGL question before it is anything else, and the answer is a
                  fact about this host's WebKit rather than about any library. */
@@ -536,7 +562,8 @@ int main(int argc, const char **argv) {
                  Reported rather than asserted: the machine decides the number,
                  and a test that fails on a slow laptop teaches nobody anything. */
               @"  if (window.__jaminStorageProbe) {"
-              @"    try { lines.push('idb: ' + await window.__jaminStorageProbe(20000)); }"
+              @"    stage('idb');"
+              @"    try { lines.push('idb: ' + await guard(window.__jaminStorageProbe(20000), 60000, 'idb')); }"
               @"    catch (e) { lines.push('idb: threw ' + e.name + ' ' + e.message); }"
               @"  }"
               /* And the graph, actually drawn.
@@ -548,7 +575,8 @@ int main(int argc, const char **argv) {
                  the framing did not, so there are points somewhere off the
                  side of a canvas that looks blank. */
               @"  if (window.__jaminGraphProbe) {"
-              @"    try { lines.push('graph: ' + await window.__jaminGraphProbe()); }"
+              @"    stage('graph');"
+              @"    try { lines.push('graph: ' + await guard(window.__jaminGraphProbe(), 30000, 'graph')); }"
               @"    catch (e) { lines.push('graph: threw ' + e.name + ' ' + e.message); }"
               @"    const said = lines[lines.length - 1];"
               @"    check('the catalogue graph draws', /points=[1-9]/.test(said));"
@@ -559,11 +587,13 @@ int main(int argc, const char **argv) {
                  only that the size the catalogue actually needs -- a few
                  thousand nodes on screen at once -- is reachable. */
               @"    if (window.__jaminGraphStress) {"
-              @"      try { lines.push('stress: ' + await window.__jaminGraphStress()); }"
+              @"      stage('stress');"
+              @"      try { lines.push('stress: ' + await guard(window.__jaminGraphStress(), 60000, 'stress')); }"
               @"      catch (e) { lines.push('stress: threw ' + e.name); }"
               @"      check('a catalogue-sized graph draws', !/^stress: 1000=threw/.test(lines[lines.length - 1]));"
               @"    }"
               @"  }"
+              @"  stage('netOps');"
               @"  lines.push('netOps=' + ((window.__netOps || []).length));"
               @"  check('the plugin joined the network', (window.__netOps || []).length > 0);"
               @"  let sent = null;"
