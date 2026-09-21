@@ -228,15 +228,54 @@ jobs:
       - name: Host cycles
         run: ctest --test-dir native/build --output-on-failure -L installed
 
+      # pluginval prints "FAILURE" at the very end and names the test that
+      # failed two hundred lines earlier, in the middle of a run that logs a
+      # line per sample rate. Read in a browser that collapses long logs, the
+      # answer is the one part you cannot see — the first time this failed the
+      # visible log contained twenty of the twenty-five sections and not the
+      # one that mattered. So the failure is repeated at the end, where the
+      # tail of the log always has it.
       - name: pluginval
         run: |
           curl -fsSL -o pluginval.zip \
             https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip
           unzip -q pluginval.zip
           A=native/build/plugin/JaminInstrument_artefacts/RelWithDebInfo
+          set +e
           ./pluginval.app/Contents/MacOS/pluginval \
             --strictness-level 10 --validate-in-process --timeout-ms 300000 \
-            --validate "$A/VST3/Jamin.vst3"
+            --validate "$A/VST3/Jamin.vst3" 2>&1 | tee pluginval.log
+          status=${PIPESTATUS[0]}
+          set -e
+          [ "$status" -eq 0 ] && exit 0
+
+          echo ""
+          echo "================ what pluginval objected to ================"
+          # -B/-A because the assertion and the section it belongs to are on
+          # different lines, and the section is what makes it actionable.
+          grep -nE '!!!|FAILED|failed|Error|error' pluginval.log | head -40 \
+            || echo "(nothing matched — pluginval failed without naming a test)"
+          echo ""
+          echo "last section entered:"
+          grep -E 'Starting tests in' pluginval.log | tail -1
+          echo "============================================================"
+          {
+            echo "### pluginval failed"
+            echo ""
+            echo '```'
+            grep -nE '!!!|FAILED|failed' pluginval.log | head -30
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      # The whole log, for when the tail is not enough. Only on a failure:
+      # a passing run has nothing anybody needs to read.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: pluginval-macos-log
+          path: pluginval.log
+          if-no-files-found: ignore
 
       - name: Notarise
         id: notarize
