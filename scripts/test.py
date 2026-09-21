@@ -49,6 +49,9 @@ SUITES = [
     # What a node is drawn as, and whether the shapes are the same size as
     # each other -- on this map a node's size is a number, not a flourish.
     (["src/canvas/nodeShapes.js"], "tests/nodeShapes.test.js"),
+    # Where the chord wheel's sectors are and which one the pointer is in.
+    # The painting can be looked at; the hit-testing cannot.
+    (["src/core/chordPicker.js", "src/canvas/chordWheel.js"], "tests/chordWheel.test.js"),
     (["src/core/chordParser.js", "src/core/score.js", "src/core/chartEdit.js",
       "src/core/chordPicker.js"], "tests/chartEdit.test.js"),
     (["src/core/chordParser.js", "src/core/chordDetect.js"], "tests/chordDetect.test.js"),

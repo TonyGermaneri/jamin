@@ -1654,7 +1654,7 @@ body,
   z-index: 8;
   transform: scale(var(--jamin-picker-scale, 1));
   transform-origin: top left;
-  width: 340px;
+  width: 296px;
   padding: 14px;
   border-radius: 12px;
   background: rgba(var(--v-theme-surface), 0.97);
@@ -1662,54 +1662,69 @@ body,
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
 }
 
+/* The wheel is a drawing now. @see canvas/chordWheel.js */
 .jamin-wheel {
   position: relative;
-  width: 312px;
-  height: 312px;
+  width: 268px;
+  height: 268px;
+  margin: 2px auto 0;
 }
 
-.jamin-wheel::before {
-  content: '';
-  position: absolute;
-  inset: 16px;
-  border-radius: 50%;
-  border: 1px solid rgba(var(--v-border-color), 0.16);
-}
-
-.jamin-spoke {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-  padding: 0;
-  background: none;
-  border: 0;
-}
-
-.jamin-spoke-name {
-  font: 600 14px/1.25 ui-monospace, "SF Mono", monospace;
-  color: rgba(var(--v-theme-on-surface), 0.8);
-  padding: 3px 7px;
-  border-radius: 5px;
+.jamin-wheel-canvas {
+  display: block;
   cursor: pointer;
 }
 
-.jamin-spoke-name:hover {
-  background: rgb(var(--v-theme-primary));
-  color: rgb(var(--v-theme-surface));
+/*
+ * The same twelve as real buttons, invisible and on top.
+ *
+ * A canvas has nothing in it to tab to or to read out, and the wheel used
+ * to be twelve buttons -- so losing them to a nicer picture would be a
+ * control that stopped working for anybody not using a mouse. They are
+ * transparent and sized to the type, so a pointer goes through to the
+ * canvas's own handling and a keyboard lands on a real focus ring.
+ */
+.jamin-wheel-hit {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 34px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: transparent;
+  font-size: 1px;
+  pointer-events: none;
 }
 
-.jamin-wheel-hub {
+.jamin-wheel-hit:focus-visible {
+  pointer-events: auto;
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: 1px;
+}
+
+/* The way out. Small, in the corner, and out of the way of the wheel. */
+.jamin-picker-close {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: rgba(var(--v-theme-on-surface), 0.3);
+  top: 4px;
+  right: 6px;
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  font-size: 17px;
+  line-height: 1;
+  color: rgba(var(--v-theme-on-surface), 0.45);
+  cursor: pointer;
+}
+
+.jamin-picker-close:hover {
+  color: rgb(var(--v-theme-on-surface));
+  background: rgba(var(--v-theme-on-surface), 0.08);
 }
 
 /* The things that are not chords, under the wheel. */

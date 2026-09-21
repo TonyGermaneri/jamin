@@ -125,25 +125,32 @@ check('and it can be taken out',
  */
 let offered = 0
 for (const place of WHEEL) {
-  for (const name of place.names) {
-    for (const page of QUALITIES) {
-      for (const cell of page) {
-        if (cell.more || cell.back) continue
-        const symbol = chordSymbol(name, cell.write)
-        const read = parseChord(symbol)
-        offered++
-        if (!read.ok) { failed++; console.log(`FAIL the picker offers ${symbol}, which does not parse`) }
-        // And it is the note that was clicked, not some other one.
-        else if (read.rootPc !== place.pc) {
-          failed++
-          console.log(`FAIL ${symbol} reads as pitch class ${read.rootPc}, not ${place.pc}`)
-        }
+  for (const page of QUALITIES) {
+    for (const cell of page) {
+      if (cell.more || cell.back) continue
+      const symbol = chordSymbol(place.name, cell.write)
+      const read = parseChord(symbol)
+      offered++
+      if (!read.ok) { failed++; console.log(`FAIL the picker offers ${symbol}, which does not parse`) }
+      // And it is the note that was clicked, not some other one.
+      else if (read.rootPc !== place.pc) {
+        failed++
+        console.log(`FAIL ${symbol} reads as pitch class ${read.rootPc}, not ${place.pc}`)
       }
     }
   }
 }
-check('every root has a name', WHEEL.every((one) => one.names.length >= 1), true)
+check('every root has a name', WHEEL.every((one) => Boolean(one.name)), true)
 check('all twelve of them', new Set(WHEEL.map((one) => one.pc)).size, 12)
+/* One name each, not two. Five places used to offer both spellings, which
+   is two tiny targets stacked on each other answering a question nobody
+   asked while pointing at a note. */
+check('and one name each', new Set(WHEEL.map((one) => one.name)).size, 12)
+/* Seven outside, five inside: the naturals ring the accidentals.
+   @see canvas/chordWheel.js */
+check('seven naturals and five accidentals',
+      [WHEEL.filter((one) => one.natural).length,
+       WHEEL.filter((one) => !one.natural).length], [7, 5])
 check('four across and five down, twice', QUALITIES.map((one) => one.length), [20, 20])
 // The way on and the way back, so neither page is a dead end.
 check('the first page opens the second', QUALITIES[0].filter((one) => one.more).length, 1)

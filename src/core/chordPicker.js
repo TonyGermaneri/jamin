@@ -16,24 +16,33 @@
 /**
  * The twelve places on the wheel, clockwise from C.
  *
- * Two names where a place has two: the sharp side and the flat side of the
- * wheel meet at the bottom, and which spelling is right there is a question
- * about the key rather than about the note. Both are offered and the one
- * clicked is the one written.
+ * One name each. It offered both spellings where a place has two -- `B` and
+ * `Cb`, `F#` and `Gb` -- on the reasoning that which is right is a question
+ * about the key. True, and it made five of the twelve places two tiny
+ * targets stacked on each other, to answer a question nobody asked at the
+ * moment of pointing at a note. The chart is text: somebody who wants `Gb`
+ * writes `Gb`.
+ *
+ * The one kept is the one lead sheets use. Sharps up the sharp side as far
+ * as F#, flats down the flat side -- which is where the circle of fifths
+ * has put the join since the eighteenth century.
+ *
+ * `natural` says which ring it is drawn on: the seven naturals outside, the
+ * five accidentals inside. @see canvas/chordWheel.js
  */
 export const WHEEL = [
-  { pc: 0, names: ['C'] },
-  { pc: 7, names: ['G'] },
-  { pc: 2, names: ['D'] },
-  { pc: 9, names: ['A'] },
-  { pc: 4, names: ['E'] },
-  { pc: 11, names: ['B', 'Cb'] },
-  { pc: 6, names: ['F#', 'Gb'] },
-  { pc: 1, names: ['C#', 'Db'] },
-  { pc: 8, names: ['G#', 'Ab'] },
-  { pc: 3, names: ['D#', 'Eb'] },
-  { pc: 10, names: ['A#', 'Bb'] },
-  { pc: 5, names: ['F'] },
+  { pc: 0, name: 'C', natural: true },
+  { pc: 7, name: 'G', natural: true },
+  { pc: 2, name: 'D', natural: true },
+  { pc: 9, name: 'A', natural: true },
+  { pc: 4, name: 'E', natural: true },
+  { pc: 11, name: 'B', natural: true },
+  { pc: 6, name: 'F#', natural: false },
+  { pc: 1, name: 'Db', natural: false },
+  { pc: 8, name: 'Ab', natural: false },
+  { pc: 3, name: 'Eb', natural: false },
+  { pc: 10, name: 'Bb', natural: false },
+  { pc: 5, name: 'F', natural: true },
 ]
 
 /**

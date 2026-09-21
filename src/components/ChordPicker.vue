@@ -17,8 +17,10 @@
  * produce is run through the parser by the test suite: a picker that writes a
  * chord jamin cannot play would be worse than no picker.
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue'
 import { WHEEL, QUALITIES, MARKS, chordSymbol } from '../core/chordPicker.js'
+import { wheelGeometry, sectorAt, drawWheel } from '../canvas/chordWheel.js'
+import { state } from '../store.js'
 
 const props = defineProps({
   /** Where to appear, in client coordinates. */
@@ -51,15 +53,66 @@ const scale = computed(() => {
   return Math.max(0.62, room / 460)
 })
 
-/** The twelve places, laid around a circle. */
-const spokes = computed(() => WHEEL.map((place, at) => {
-  const angle = (at / WHEEL.length) * Math.PI * 2 - Math.PI / 2
-  return {
-    ...place,
-    x: 50 + Math.cos(angle) * 39,
-    y: 50 + Math.sin(angle) * 39,
+/* ---------------- the wheel, drawn ------------------------------------
+ *
+ * It was twelve absolutely positioned buttons on a round div and looked
+ * like it. @see canvas/chordWheel.js for why this is a canvas, and for
+ * everything about where the sectors are.
+ */
+const SIZE = 268
+
+const canvas = ref(null)
+const hovered = ref(-1)
+const geometry = computed(() => wheelGeometry(SIZE, WHEEL))
+
+function paint() {
+  const box = canvas.value
+  if (!box) return
+  const dpr = Math.min(3, window.devicePixelRatio || 1)
+  if (box.width !== SIZE * dpr) {
+    box.width = SIZE * dpr
+    box.height = SIZE * dpr
   }
-}))
+  drawWheel(box.getContext('2d'), geometry.value, {
+    theme: state.settings.theme,
+    hovered: hovered.value,
+    chosen: props.current ? props.current.replace(/[^A-G#b].*$/, '') : '',
+    dpr,
+  })
+}
+
+/** Where the pointer is, in the canvas's own coordinates. */
+function whereIn(event) {
+  const box = canvas.value.getBoundingClientRect()
+  return sectorAt(geometry.value,
+    ((event.clientX - box.left) / box.width) * SIZE,
+    ((event.clientY - box.top) / box.height) * SIZE)
+}
+
+function onMove(event) {
+  const at = whereIn(event)
+  if (at === hovered.value) return
+  hovered.value = at
+  paint()
+}
+
+function onLeave() {
+  if (hovered.value < 0) return
+  hovered.value = -1
+  paint()
+}
+
+function onTap(event) {
+  const at = whereIn(event)
+  if (at >= 0) chooseRoot(WHEEL[at].name)
+}
+
+onMounted(paint)
+onBeforeUnmount(() => { hovered.value = -1 })
+// A fresh opening, a new theme, or coming back from the colour grid: all
+// of them arrive with the canvas either new or stale.
+watch(() => [props.at, props.current, root.value, JSON.stringify(state.settings.theme)],
+  () => nextTick(paint))
 
 function chooseRoot(name) {
   root.value = name
@@ -80,28 +133,41 @@ function chooseQuality(cell) {
     @mousedown.stop
     @click.stop
   >
+    <!-- The way out, at every step. Opening this by clicking a chord and
+         then deciding against it had no answer but pressing Escape or
+         clicking somewhere harmless. -->
+    <button type="button" class="jamin-picker-close" aria-label="Cancel"
+            @click="emit('close')">×</button>
+
     <!-- Step one: the root. -->
     <template v-if="!root">
-      <div class="jamin-wheel" role="group" aria-label="Choose a root">
+      <div class="jamin-wheel">
+        <canvas
+          ref="canvas" class="jamin-wheel-canvas"
+          :style="{ width: `${SIZE}px`, height: `${SIZE}px` }"
+          @mousemove="onMove" @mouseleave="onLeave" @click="onTap"
+        ></canvas>
+
+        <!--
+          And the same twelve as real buttons, for anything that is not a
+          pointer.
+
+          A canvas has nothing in it to tab to or to read out. These sit
+          over their own sectors, invisible and focusable, so the drawing
+          is what a mouse uses and the buttons are what a keyboard and a
+          screen reader use -- rather than the drawing being the only way
+          in and the keyboard losing a control it had.
+        -->
         <button
-          v-for="place in spokes"
+          v-for="place in geometry.sectors"
           :key="place.pc"
           type="button"
-          class="jamin-spoke"
-          :style="{ left: `${place.x}%`, top: `${place.y}%` }"
-        >
-          <!-- Both spellings where a place has two. The sharp side and the
-               flat side of the wheel meet at the bottom, and which one is
-               right is a question about the key rather than about the note --
-               so both are offered and the one clicked is the one written. -->
-          <span
-            v-for="name in place.names"
-            :key="name"
-            class="jamin-spoke-name"
-            @click="chooseRoot(name)"
-          >{{ name.replace('#', '♯').replace('b', '♭') }}</span>
-        </button>
-        <div class="jamin-wheel-hub">fifths</div>
+          class="jamin-wheel-hit"
+          :style="{ left: `${place.x}px`, top: `${place.y}px` }"
+          @focus="hovered = place.at; paint()"
+          @blur="onLeave"
+          @click="chooseRoot(place.name)"
+        >{{ place.name }}</button>
       </div>
 
       <!-- And the things that are not chords. -->

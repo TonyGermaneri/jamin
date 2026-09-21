@@ -858,8 +858,18 @@ def onChart(page, what, small=False):
 
     # The second step of the picker is reached by choosing a root, so the
     # screenshot of it is taken by choosing one -- the same way anybody does.
+    #
+    # By clicking the wheel where a root is, because the wheel is a drawing
+    # now and there is nothing to click by selector. The first sector is C,
+    # at the top, in the outer band. @see canvas/chordWheel.js
     if what == "colours":
-        page.click(".jamin-spoke-name")
+        spot = page.evaluate(
+            "() => { const box = document.querySelector('.jamin-wheel-canvas');"
+            " if (!box) return null; const r = box.getBoundingClientRect();"
+            " return { x: r.left + r.width / 2, y: r.top + r.height * 0.17 } }")
+        if not spot:
+            raise Missing("the chord wheel did not draw")
+        page.mouse.click(spot["x"], spot["y"])
         page.wait_for_timeout(400)
 
 
